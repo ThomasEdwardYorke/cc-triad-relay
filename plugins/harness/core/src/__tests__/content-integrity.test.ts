@@ -602,6 +602,98 @@ describe("slash command frontmatter — Claude Code 公式仕様", () => {
   });
 });
 
+describe("coderabbit-review command の Step 2.6 chat bucket helper", () => {
+  const content = readCommand("coderabbit-review");
+
+  // Step 2.6 section だけを切り出して、その範囲内で不変条件を検証する。
+  // 全 content に対する判定だと別 section の `exit 1` 等を拾って false-positive
+  // するため、scope を限定 (regression guard の `2 要件組合せ で false-positive
+  // 回避` rule に従う)。
+  // 抽出終端は「次の `### Step <数字>.` 見出し全般」(2.7 / 3 / 3.1 等いずれも)、
+  // または `## ` 大見出し、または末尾。`Step 3` 固定にすると将来 `Step 2.7` が
+  // 追加されたときに別 section が混入する。
+  const STEP26_EXTRACTOR =
+    /### Step 2\.6\.[\s\S]*?(?=\n### Step \d+(?:\.\d+)?\.\s|\n## [^#]|$)/;
+  const step26 = (() => {
+    const m = content.match(STEP26_EXTRACTOR);
+    return m?.[0] ?? "";
+  })();
+
+  it("Step 2.6 として chat bucket helper section を持つ", () => {
+    expect(content).toMatch(/^### Step 2\.6\..*[Cc]hat bucket helper/m);
+    expect(step26.length).toBeGreaterThan(200); // section が空でないこと
+  });
+
+  it("4 つの operational chat command を列挙する", () => {
+    expect(step26).toMatch(/@coderabbitai resolve/);
+    expect(step26).toMatch(/@coderabbitai summary/);
+    expect(step26).toMatch(/@coderabbitai configuration/);
+    expect(step26).toMatch(/@coderabbitai help/);
+  });
+
+  it("review bucket command (review / full review) との bucket 境界を明示する", () => {
+    expect(step26).toMatch(/review bucket/i);
+    expect(step26).toMatch(/chat bucket/i);
+    expect(step26).toMatch(/(?:review trigger|誤用)/);
+  });
+
+  it("cr-chat binary を bin/ から起動する", () => {
+    expect(step26).toMatch(/CR_CHAT_BIN/);
+    expect(step26).toMatch(/bin\/cr-chat/);
+  });
+
+  it("HARNESS_PLUGIN_ROOT 環境変数で plugin root override 可能", () => {
+    expect(step26).toMatch(/HARNESS_PLUGIN_ROOT/);
+  });
+
+  it("classify subcommand で bucket 誤用 gate を提供する", () => {
+    expect(step26).toMatch(/classify/);
+    expect(step26).toMatch(/not[\s\S]{0,30}chat-bucket/i);
+    expect(step26).toMatch(/exit\s+1/);
+  });
+
+  it("empirical 検証 caveat を docs に明記する", () => {
+    expect(step26).toMatch(/empirical/i);
+    expect(step26).toMatch(/(?:検証|verification)/);
+  });
+
+  it("rate-limit cooldown 中の活用パスを記載する", () => {
+    expect(step26).toMatch(/rate[\s-]?limit/i);
+    expect(step26).toMatch(
+      /(?:cooldown|temporary block|chat bucket は通常|chat[\s\S]{0,40}独立)/i,
+    );
+  });
+
+  it("STEP26_EXTRACTOR は Step 2.7 / Step 3.1 等の派生見出しでも terminate する", () => {
+    // 将来 `### Step 2.7.` `### Step 3.1.` が追加されたときに、
+    // Step 2.6 の抽出範囲が次見出し直前まで限定されることを synthetic
+    // markdown で固定する。`Step 3` 固定の lookahead では 2.7 / 3.1 を素通し
+    // してしまい false-positive 抽出になる。
+    const synthetic = [
+      "### Step 2.5. previous",
+      "previous body",
+      "",
+      "### Step 2.6. Chat bucket helper",
+      "marker-2.6-only",
+      "more 2.6 body",
+      "",
+      "### Step 2.7. hypothetical future section",
+      "marker-2.7-must-not-leak",
+      "",
+      "### Step 3. next",
+      "marker-3-must-not-leak",
+      "",
+      "## next h2",
+      "h2 body",
+    ].join("\n");
+    const m = synthetic.match(STEP26_EXTRACTOR);
+    expect(m).not.toBeNull();
+    expect(m?.[0]).toContain("marker-2.6-only");
+    expect(m?.[0]).not.toContain("marker-2.7-must-not-leak");
+    expect(m?.[0]).not.toContain("marker-3-must-not-leak");
+  });
+});
+
 describe("coderabbit-review command の clear 判定", () => {
   const content = readCommand("coderabbit-review");
 

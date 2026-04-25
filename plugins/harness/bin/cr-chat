@@ -1,0 +1,62 @@
+#!/usr/bin/env node
+/**
+ * bin/cr-chat — CodeRabbit chat command builder CLI for shell skills
+ *
+ * Wraps `core/dist/cr-chat.js` so shell skills (`/coderabbit-review`,
+ * `/pseudo-coderabbit-loop`) can build `@coderabbitai <cmd>` strings and
+ * classify bucket membership without bundling Node TypeScript runtime.
+ *
+ * Subcommands:
+ *   cr-chat build <command> [body]
+ *     stdout: `@coderabbitai <command>` (with optional body block)
+ *     exit 0: built
+ *     exit 2: invalid command (unknown / review-bucket / missing arg)
+ *
+ *   cr-chat classify <command>
+ *     stdout: chat | review | unknown
+ *     exit 0: always (caller checks the value)
+ *
+ * Test invariants are exercised by core/src/__tests__/cr-chat.test.ts.
+ */
+
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PLUGIN_ROOT = resolve(__dirname, "..");
+const CORE_DIST = resolve(PLUGIN_ROOT, "core", "dist", "cr-chat.js");
+
+let chatModule;
+try {
+  chatModule = await import(CORE_DIST);
+} catch (err) {
+  console.error(
+    `cr-chat: failed to load core/dist/cr-chat.js (run \`npm run build\` in core/): ${err.message}`,
+  );
+  process.exit(2);
+}
+
+const { buildChatCommand, classifyBucket } = chatModule;
+
+function usage() {
+  console.error("Usage: cr-chat <build|classify> <command> [body]");
+  process.exit(2);
+}
+
+const [, , subcommand, command, ...rest] = process.argv;
+if (!subcommand || !command) usage();
+
+if (subcommand === "build") {
+  const body = rest.length > 0 ? rest.join(" ") : undefined;
+  try {
+    const out = buildChatCommand(command, body);
+    process.stdout.write(out);
+  } catch (err) {
+    console.error(`cr-chat build: ${err.message}`);
+    process.exit(2);
+  }
+} else if (subcommand === "classify") {
+  process.stdout.write(classifyBucket(command));
+} else {
+  usage();
+}
