@@ -3,7 +3,7 @@ name: harness-work
 description: "Plans.md 駆動の実装 + merge orchestration ディスパッチャ (v5)。タスク数で Auto Mode Detection (Solo / Parallel / Breezing) し内部的に `/tdd-implement` v2 / `/parallel-worktree` v1 に委譲、また `--merge` flag または detect_merge_orchestration() シグナル成立で `/harness-merge-train` (multi-PR squash merge) に委譲し、TDD + Codex チーム並列 + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオン + skill connectivity の完全品質ゲートを常時強制する。バグ修正・機能追加・複数 PR squash merge orchestration を統合。Use when user mentions: implement, execute, fix bug, add feature, merge multiple PRs, /harness-work, /work, /breezing, /fix-bug, /add-feature, --parallel, --merge. Do NOT load for: planning (use harness-plan), code review (use harness-review), release (use harness-release)."
 description-ja: "Harness v5 統合実行 + merge orchestration ディスパッチャ。Plans.md 駆動で Auto Mode Detection (1件=Solo、2-3件=Parallel、4件以上=Breezing) しつつ、複数 PR の squash merge 局面を `--merge` flag / detect_merge_orchestration() シグナルで検知して `/harness-merge-train` に委譲。内部的に /tdd-implement v2 / /parallel-worktree v1 / /harness-merge-train (v5 で新設) に委譲することで TDD + Codex チーム + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオン (Phase 7) + Skill connectivity 原則 の完全品質ゲートを常時強制。以下で起動: 実装して、バグ修正、機能追加、複数 PR を merge、/harness-work、/work、/breezing、/fix-bug、/add-feature、--parallel、--merge。プランニング・レビュー・リリース・セットアップには使わない。"
 allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput", "Skill"]
-argument-hint: "[all|task-number|N-M|PR# ...] [--fix <説明>|--feature <機能名>] [--parallel N] [--breezing] [--sequential] [--merge] [--no-commit] [--dry-run]"
+argument-hint: "[all|task-number|N-M|PR-number|fix|feature|parallel|breezing|sequential|merge|no-commit|dry-run]"
 ---
 
 # Harness Work (v5) — Plans.md 駆動 + merge orchestration ディスパッチャ
@@ -785,7 +785,7 @@ Auto Mode Detection 結果:
 | Signal 3 (open PR ≥ 2 + guard 通過) | `gh pr list --state=open --author=@me --json=number` の number array を昇順 |
 | Signal 4 (`--merge` flag のみ) | `args.positional` から数字 token、または `--filter` 経由で動的 fetch |
 
-```
+```text
 # テンプレート表記 (<PROFILE> は spec 上のプレースホルダ)
 Skill({skill: "harness-merge-train", args: "<PR# ...> --profile=<PROFILE>"})
 

@@ -116,6 +116,7 @@ plugins/harness/
 │   ├── new-feature-branch.md
 │   ├── coderabbit-review.md
 │   ├── codex-team.md
+│   ├── harness-merge-train.md
 │   ├── parallel-worktree.md
 │   ├── pseudo-coderabbit-loop.md
 │   ├── session-handoff.md

@@ -3,7 +3,7 @@ name: harness-merge-train
 description: "Multi-PR review/merge orchestration skill. Iterates a phase chain (M0-M9) over each PR — Clear judgment, rebase, pre-merge gates (Codex parallel + Pseudo CodeRabbit), push, CI wait, Real CodeRabbit Clear, Codex adversarial second opinion, squash merge, worktree cleanup, handoff sync — with fail-fast on any failure. Use when shipping 2+ open PRs in sequence, or when the user requests merge / merge-train / squash-multiple."
 description-ja: "複数 PR の review/merge orchestration を skill 経路で完遂する統合 skill。各 PR に対して M0-M9 の phase chain (Clear 判定 → rebase → pre-merge gate (Codex 並列 + 疑似 CodeRabbit) → push → CI wait → Real CodeRabbit Clear → Codex 敵対的セカンドオピニオン → squash merge → worktree cleanup → handoff sync) を順次実行し、いずれかで失敗したら fail-fast で停止。`/harness-work` v5 の merge mode から委譲される、または直接 `/harness-merge-train [PR# ...]` で起動可能。"
 allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Skill", "Agent", "Monitor", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"]
-argument-hint: "[PR# ...] [--filter=<gh-pr-list-jq>] [--order=<順序指定>] [--dry-run] [--profile=chill|assertive|strict] [--max-iterations=N] [--no-commit] [--no-skill-fallback]"
+argument-hint: "[PR-number...|filter|order|dry-run|profile|max-iterations|no-commit|no-skill-fallback]"
 ---
 
 # `/harness-merge-train` — Multi-PR squash merge orchestrator (Phase chain M0-M9)
@@ -141,8 +141,16 @@ gh pr checks "$PR" --repo "$REPO" --required 2>&1 | grep -E '(fail|pending)' && 
 
 # 3. Clear 判定 (Step 7.4 マトリクス: APPROVED / unresolved=0 / blocker 不在)
 #    既存 /coderabbit-review skill Step 7.1-7.3 と同一 logic を本 phase で先取り評価
+#    BOT_LOGIN は harness.config.json の codeRabbit.botLogin から load (default: coderabbitai)
+BOT_LOGIN=$(test -f harness.config.json \
+  && jq -r '.codeRabbit.botLogin // "coderabbitai"' harness.config.json 2>/dev/null \
+  || echo "coderabbitai")
+# review API は `[bot]` suffix 付き、issue/PR comment author は suffix なし
+# (GitHub API contract、本 spec は両形式を select で同時 match)
+BOT_LOGIN_REVIEW="${BOT_LOGIN}[bot]"
+
 CR_STATE=$(gh api "repos/${REPO}/pulls/${PR}/reviews" \
-  --jq '[.[] | select(.user.login=="coderabbitai[bot]")] | last | .state // empty')
+  --jq "[.[] | select(.user.login==\"$BOT_LOGIN_REVIEW\")] | last | .state // empty")
 UNRESOLVED=$(gh api graphql -f query='
   query($owner: String!, $name: String!, $pr: Int!) {
     repository(owner: $owner, name: $name) {
@@ -153,13 +161,13 @@ UNRESOLVED=$(gh api graphql -f query='
       }
     }
   }' -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F pr="$PR" \
-  --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
-    | select(.comments.nodes[0].author.login == "coderabbitai")
-    | select(.isResolved == false)] | length')
+  --jq "[.data.repository.pullRequest.reviewThreads.nodes[]
+    | select(.comments.nodes[0].author.login == \"$BOT_LOGIN\")
+    | select(.isResolved == false)] | length")
 
 # 4. rate-limit marker (15 分以内に active なら blocker)
 RATE_LIMITED=$(gh pr view "$PR" --repo "$REPO" --json comments \
-  --jq "[.comments[] | select(.author.login == \"coderabbitai\")
+  --jq "[.comments[] | select(.author.login == \"$BOT_LOGIN\")
          | select(.body | contains(\"rate limited by coderabbit.ai\"))] | last | .createdAt // empty")
 ```
 
@@ -268,7 +276,7 @@ fi
 
 ### M4 — CI wait (Monitor で green まで監視、fail 検出は明示的)
 
-```
+```text
 Monitor({
   description: `CI for PR #<PR> (<PR> は当該 PR 番号に置換)`,
   command: `prev=""

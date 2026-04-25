@@ -42,14 +42,16 @@ describe("/harness-work v5 merge mode (commands/harness-work.md)", () => {
   // -----------------------------------------------------------------
   describe("frontmatter description で v5 / merge mode を宣言", () => {
     it("description に v5 と merge mode の組合せ言及", () => {
-      const fm = content.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+      const fm = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
       // description / description-ja のいずれかで OK (両方が望ましいが)
       expect(fm).toMatch(/v5/);
       expect(fm).toMatch(/merge/i);
     });
 
-    it("argument-hint に --merge flag を含む", () => {
-      expect(content).toMatch(/argument-hint:[^\n]*--merge/);
+    it("argument-hint に merge token を含む (strict pipe form)", () => {
+      // CR consistency: argument-hint は strict bracketed pipe form
+      // (`pseudo-coderabbit-loop.md` 同等)。merge token がそこに含まれること。
+      expect(content).toMatch(/^argument-hint:\s*"\[[^"]*\bmerge\b[^"]*\]"\s*$/m);
     });
   });
 

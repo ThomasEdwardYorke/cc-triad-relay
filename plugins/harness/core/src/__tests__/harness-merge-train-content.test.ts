@@ -65,7 +65,7 @@ describe("/harness-merge-train spec (commands/harness-merge-train.md)", () => {
     });
 
     it("allowed-tools 配列を持つ (Bash / Read / Edit / Skill / Agent / TaskCreate / Monitor 含む)", () => {
-      const fm = content.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+      const fm = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
       expect(fm).toMatch(/allowed-tools:\s*\[[^\]]*"Bash"[^\]]*\]/);
       expect(fm).toMatch(/allowed-tools:\s*\[[^\]]*"Read"[^\]]*\]/);
       expect(fm).toMatch(/allowed-tools:\s*\[[^\]]*"Edit"[^\]]*\]/);
@@ -75,12 +75,20 @@ describe("/harness-merge-train spec (commands/harness-merge-train.md)", () => {
       expect(fm).toMatch(/allowed-tools:\s*\[[^\]]*"Monitor"[^\]]*\]/);
     });
 
-    it("argument-hint を持つ ([PR# ...] [--filter] [--order] [--dry-run] [--profile])", () => {
-      expect(content).toMatch(/argument-hint:[^\n]*PR/);
-      expect(content).toMatch(/argument-hint:[^\n]*--filter/);
-      expect(content).toMatch(/argument-hint:[^\n]*--order/);
-      expect(content).toMatch(/argument-hint:[^\n]*--dry-run/);
-      expect(content).toMatch(/argument-hint:[^\n]*--profile/);
+    it("argument-hint が strict pipe-separated bracketed form (CR consistency)", () => {
+      // CodeRabbit が要求する `argument-hint: [word|word|...]` strict form。
+      // pseudo-coderabbit-loop.md と同等の token-only style。詳細値 (jq syntax /
+      // profile allowlist 等) は本文 ## 入力仕様 section で扱う。
+      expect(content).toMatch(/^argument-hint:\s*"\[[A-Za-z0-9._\- ]+(?:\|[A-Za-z0-9._\- ]+)+\]"\s*$/m);
+      // 主要 token がすべて含まれていること (semantic check)
+      const fm = content.match(/^argument-hint:\s*"([^"]*)"/m)?.[1] ?? "";
+      expect(fm).toMatch(/PR/);
+      expect(fm).toMatch(/filter/);
+      expect(fm).toMatch(/order/);
+      expect(fm).toMatch(/dry-run/);
+      expect(fm).toMatch(/profile/);
+      expect(fm).toMatch(/max-iterations/);
+      expect(fm).toMatch(/no-commit/);
     });
   });
 
