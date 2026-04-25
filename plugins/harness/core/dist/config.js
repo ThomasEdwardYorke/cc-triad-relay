@@ -40,6 +40,13 @@ export const DEFAULT_CONFIG = {
         // Default markers support ja / en projects. Override via harness.config.json.
         assignmentSectionMarkers: ["担当表", "Assignment", "In Progress"],
         handoffFiles: [],
+        // Task source defaults to legacy Plans.md mode. The 4-layer handoff
+        // structure (roadmap / backlog / current / decisions) is genuinely
+        // opt-in — `handoffPaths` is intentionally omitted so the absence of
+        // a configured path set is unambiguously a Plans.md user. Downstream
+        // skills must check `taskTrackerMode === "handoff"` before they
+        // dereference `handoffPaths`.
+        taskTrackerMode: "plans",
         maxParallel: 4,
         labelPriority: [],
         criticalLabels: [],
@@ -161,7 +168,7 @@ export const DEFAULT_CONFIG = {
  */
 function mergeConfig(partial) {
     const partialWork = partial.work ?? {};
-    const mergedWork = {
+    const baseWork = {
         ...DEFAULT_CONFIG.work,
         ...partialWork,
         qualityGates: {
@@ -169,6 +176,21 @@ function mergeConfig(partial) {
             ...(partialWork.qualityGates ?? {}),
         },
     };
+    // handoffPaths uses wholesale-replace semantics. The user-supplied
+    // object (when present) is used verbatim — partial overrides would
+    // produce silently incomplete configs, since each of the four file
+    // paths is required for the handoff dispatch to function.
+    if ("handoffPaths" in partialWork) {
+        if (partialWork.handoffPaths === undefined) {
+            // Spread above carries through `undefined`; normalise so the field
+            // is genuinely absent rather than a sentinel value.
+            delete baseWork.handoffPaths;
+        }
+        else {
+            baseWork.handoffPaths = partialWork.handoffPaths;
+        }
+    }
+    const mergedWork = validateWorkTaskTracker(baseWork);
     return {
         ...DEFAULT_CONFIG,
         ...partial,
@@ -328,7 +350,12 @@ function mergeImageGenerationConfig(partial) {
  *
  */
 function sanitiseConfigValueForStderr(value) {
-    return JSON.stringify(value).replace(
+    // `JSON.stringify(undefined)` returns `undefined` (not the string
+    // `"undefined"`), which would crash the subsequent `.replace` call.
+    // Coerce explicitly so this helper is safe to call with any input —
+    // including missing config keys surfaced via bracket access.
+    const stringified = JSON.stringify(value);
+    return (stringified ?? "undefined").replace(
     // C0 (excluding LF / CR / TAB which JSON.stringify already escapes
     // to \\n / \\r / \\t) + DEL + C1 range. Anything that survives is
     // printable ASCII or properly escaped Unicode.
@@ -448,6 +475,85 @@ function validateImageGeneration(cfg) {
                 ...next,
                 refImageAllowlistPrefixes: cleanPrefixes,
             };
+        }
+    }
+    return next;
+}
+const VALID_TASK_TRACKER_MODES = [
+    "plans",
+    "handoff",
+];
+const HANDOFF_PATH_KEYS = [
+    "roadmap",
+    "backlog",
+    "current",
+    "decisions",
+];
+/**
+ * Guard against `work.taskTrackerMode` / `work.handoffPaths` being set to
+ * shapes that downstream skills (`/harness-work`, `/session-handoff`)
+ * cannot safely consume:
+ *
+ * 1. `taskTrackerMode` outside the allowed enum → fall back to `"plans"`.
+ * 2. `taskTrackerMode === "handoff"` without a fully populated
+ *    `handoffPaths` object → fall back to `"plans"` and drop
+ *    `handoffPaths` so consumers do not see a partial structure.
+ * 3. Any `handoffPaths` field that is not a non-empty string, contains
+ *    `..` segments (path traversal), is absolute (escapes the project
+ *    root), or carries control characters → reject the whole handoff
+ *    override (mirrors the userPromptSubmit.contextFiles rule).
+ *
+ * Validation runs after the work-level merge so legitimate Plans.md
+ * users see zero behaviour change. The `"plans"` mode never validates
+ * `handoffPaths` (the field is a benign forward-compat carry-over).
+ *
+ * stderr output uses `sanitiseConfigValueForStderr` so attacker-
+ * controlled values cannot inject ANSI escape codes / NUL bytes into
+ * harness diagnostics.
+ */
+function validateWorkTaskTracker(cfg) {
+    let next = cfg;
+    // 1. Enum check on taskTrackerMode.
+    if (!VALID_TASK_TRACKER_MODES.includes(next.taskTrackerMode)) {
+        process.stderr.write(`[harness config] work.taskTrackerMode=${sanitiseConfigValueForStderr(next.taskTrackerMode)} is not one of ${JSON.stringify(VALID_TASK_TRACKER_MODES)}; falling back to "${DEFAULT_CONFIG.work.taskTrackerMode}".\n`);
+        next = { ...next, taskTrackerMode: DEFAULT_CONFIG.work.taskTrackerMode };
+    }
+    // 2. handoffPaths shape check is gated on mode === "handoff" so a
+    //    project that sets paths defensively while staying on plans mode
+    //    sees no warning (forward-compat carry-over).
+    if (next.taskTrackerMode === "handoff") {
+        const paths = next.handoffPaths;
+        if (!paths || typeof paths !== "object" || Array.isArray(paths)) {
+            process.stderr.write(`[harness config] work.taskTrackerMode="handoff" requires work.handoffPaths to be a JSON object with all four keys (${JSON.stringify(HANDOFF_PATH_KEYS)}); falling back to "plans" mode.\n`);
+            next = { ...next, taskTrackerMode: "plans" };
+            delete next.handoffPaths;
+            return next;
+        }
+        const issues = [];
+        for (const key of HANDOFF_PATH_KEYS) {
+            const value = paths[key];
+            if (typeof value !== "string" || value.length === 0) {
+                issues.push(`${key}=${sanitiseConfigValueForStderr(value)} (missing / non-string / empty)`);
+                continue;
+            }
+            // Path traversal segments (`..`) and absolute paths both let the
+            // handoff scope escape the project root. Reject either.
+            if (isAbsolute(value) ||
+                value.split(/[\\/]/).some((segment) => segment === "..")) {
+                issues.push(`${key}=${sanitiseConfigValueForStderr(value)} (path traversal / absolute path rejected)`);
+                continue;
+            }
+            // Control characters / NUL byte / DEL / C1 range — same defensive
+            // rule as userPromptSubmit.contextFiles.
+            if (/[\x00-\x1f\x7f-\x9f]/.test(value)) {
+                issues.push(`${key}=${sanitiseConfigValueForStderr(value)} (control characters rejected)`);
+                continue;
+            }
+        }
+        if (issues.length > 0) {
+            process.stderr.write(`[harness config] work.handoffPaths invalid: ${issues.join("; ")}; falling back to "plans" mode.\n`);
+            next = { ...next, taskTrackerMode: "plans" };
+            delete next.handoffPaths;
         }
     }
     return next;
