@@ -108,7 +108,10 @@ else
   gh pr comment "$PR" --repo "$REPO" --body "$BODY"
 
   # 運用例 2: bucket 誤用 gate (review trigger を chat helper 経由で送らない)
-  CMD="$1"
+  # CMD は caller が必ず指定する (例: caller skill が "$1" を validate 済の値として渡す)。
+  # standalone 実行で `$1` が empty になると classify "" が error になるため、
+  # 本 helper を spec から呼ぶ場合も `${CMD:?usage: ... <command>}` 等で fail-fast する。
+  CMD="${CMD:?cr-chat classify usage: provide a chat-bucket command name (e.g. resolve / summary / configuration / help)}"
   BUCKET=$(node "$CR_CHAT_BIN" classify "$CMD")
   if [ "$BUCKET" != "chat" ]; then
     echo "ERROR: '$CMD' is not a chat-bucket command (got: $BUCKET); use Step 4 review trigger instead" >&2
