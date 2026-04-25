@@ -71,6 +71,106 @@ fi
 **Cooldown 中の推奨アクション**:
 - `/pseudo-coderabbit-loop <pr-number>` を起動して Codex 疑似レビューで空き時間を活用
 - Cooldown 経過後に自動再試行するか、手動で `/coderabbit-review <pr>` を再起動
+- **Step 2.6 (chat bucket helper) を試行** — chat 50/h は review 5/h と独立 bucket と推定されており、rate-limited 中も `@coderabbitai resolve` / `summary` / `configuration` / `help` を発行可能
+
+### Step 2.6. Chat bucket helper (operational chat 経路、NEW)
+
+CodeRabbit Pro plan には 2 つの rate-limit bucket があり、operational chat command は review bucket 5/h と独立で 50/h 利用可能と推定されている (公式 docs は bucket mapping を explicit に明示していないため empirical 検証が必要、本 skill 初回採用 PR で 2-3 件試走推奨):
+
+| Command | 用途 | Review bucket への影響 |
+|---|---|---|
+| `@coderabbitai resolve` | 既存 reviewable thread を一括 resolve mark | 消費しない (推定) |
+| `@coderabbitai summary` | PR summary を再生成 | 消費しない (推定) |
+| `@coderabbitai configuration` | effective `.coderabbit.yaml` 設定を bot から発行 | 消費しない (推定) |
+| `@coderabbitai help` | 利用可能な bot command を表示 | 消費しない (推定) |
+
+review trigger commands (`@coderabbitai review` / `full review`) は **review bucket を確実に消費**するため、本 helper 経由では送れない (誤用検出として throw)。Step 4 の通常 review-trigger flow を使うこと。
+
+#### 2.6.1 シェルからの呼出
+
+`bin/cr-chat` で正しい syntax の `@coderabbitai <cmd>` を構築できる。bucket 分類は `cr-chat classify <cmd>` で確認:
+
+```bash
+HARNESS_PLUGIN_ROOT="${HARNESS_PLUGIN_ROOT:-$HOME/.claude/plugins/marketplaces/cc-triad-relay/plugins/harness}"
+CR_CHAT_BIN="${HARNESS_PLUGIN_ROOT}/bin/cr-chat"
+
+if [ ! -x "$CR_CHAT_BIN" ]; then
+  echo "WARN: cr-chat binary not found; chat helper unavailable" >&2
+else
+  # 運用例 1: 全 thread を chat bucket で resolve
+  BODY=$(node "$CR_CHAT_BIN" build resolve)
+  gh pr comment "$PR" --repo "$REPO" --body "$BODY"
+
+  # 運用例 2: bucket 誤用 gate (review trigger を chat helper 経由で送らない)
+  CMD="$1"
+  BUCKET=$(node "$CR_CHAT_BIN" classify "$CMD")
+  if [ "$BUCKET" != "chat" ]; then
+    echo "ERROR: '$CMD' is not a chat-bucket command (got: $BUCKET); use Step 4 review trigger instead" >&2
+    exit 1
+  fi
+fi
+```
+
+#### 2.6.2 適用シナリオ
+
+- **rate-limit 中の活用**: Step 2.5 で `RATE_LIMITED_COOLDOWN` が発火している間でも chat bucket は通常通り消費可能。`@coderabbitai summary` で PR 現状把握を維持
+- **resolve 一括処理**: 大量 thread の resolve を chat bucket 経由で行い、review bucket 5/h を温存
+- **設定確認**: `@coderabbitai configuration` で `.coderabbit.yaml` の effective 値を bot から取得 (local parse と diff 検証)
+- **help discoverability**: 新メンバーが `@coderabbitai help` で利用可能 command を発見
+
+#### 2.6.3 empirical 検証手順 (escape hatch 付き、最大 5 試行で bucket 確定)
+
+**目的**: chat bucket 想定の 4 commands (resolve / summary / configuration / help) が実際に review bucket を消費しないことを controlled test で確認。
+
+**注意**: 検証自体が review bucket を 5 回消費する。**運用 PR では実施せず、検証専用の test PR (例: README typo 修正だけの PR) で実施**。万一 5 回中で rate-limit に到達したら escape hatch (Step 2.6.4) で `/pseudo-coderabbit-loop <pr> --local` に切替、cooldown 中に Codex で代替レビュー継続可能。
+
+##### 検証手順 (1 chat command につき 1 試行)
+
+```bash
+# 例: resolve の bucket 帰属を確認する 1 試行
+TEST_PR=<n>; REPO=<owner/name>
+
+# Step A: chat command を 1 回送信
+node "$CR_CHAT_BIN" build resolve | xargs -I{} gh pr comment "$TEST_PR" --repo "$REPO" --body {}
+
+# Step B: 直後に @coderabbitai review を **連続 5 回** 送信 (review bucket を埋める)
+for i in 1 2 3 4 5; do
+  gh pr comment "$TEST_PR" --repo "$REPO" --body "@coderabbitai review"
+  sleep 30  # bot の応答を待つ
+done
+
+# Step C: rate-limit marker 検出
+RATE_LIMITED=$(gh pr view "$TEST_PR" --repo "$REPO" --json comments \
+  --jq "[.comments[] | select(.author.login == \"coderabbitai\")
+         | select(.body | contains(\"rate limited by coderabbit.ai\"))] | length")
+
+# Step D: 結果記録 — 後述の empirical 検証ログ section に追記
+#  - rate_limit_count == 0 (5 review 全通) → chat と review bucket は独立 (chat assumption ✅)
+#  - rate_limit_count == 1 (4 review 通って 5 回目で rate-limit) → bucket 共有 (chat assumption ❌)
+echo "rate-limit markers: $RATE_LIMITED"
+```
+
+##### 検証ログ template (本 PR description / 別 docs に append)
+
+```markdown
+### empirical 検証ログ (chat bucket attribution)
+
+| 検証日 | command | test PR | review attempts | rate-limit markers | bucket 確定 | confidence |
+|---|---|---|---|---|---|---|
+| YYYY-MM-DD | resolve | #N | 5 | 0 | chat ✅ | High |
+| YYYY-MM-DD | summary | #M | 5 | 1 | review ❌ → revert assumption | High |
+| ... |
+```
+
+検証で bucket 帰属が外れた command は `CHAT_BUCKET_COMMANDS` から除外する revert PR を出すこと。
+
+#### 2.6.4 検証中の escape hatch
+
+検証 5 試行で review bucket が枯渇 (5/5 hit) した場合、cooldown 15 分間は本 skill が rate-limited fallback path に入る。**この間も chat bucket は仮定通りなら独立で稼働中**なので:
+
+- chat helper 経由の operational command (`build resolve` 等) は引き続き発行可能
+- review trigger 系の検証は cooldown 後に再開
+- `/pseudo-coderabbit-loop <pr> --local` に切替て Codex 代替レビューで時間活用可能
 
 ### Step 3. Background watch
 
