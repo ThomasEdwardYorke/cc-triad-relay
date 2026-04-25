@@ -393,7 +393,14 @@ if [ -x "$CR_CLI_BIN" ]; then
     # coderabbit-mimic fallback に進む。
     echo "WARN: python3 not on PATH — cannot parse CR CLI detection JSON; assuming CR CLI unavailable" >&2
   else
-    CR_DETECTION=$(node "$CR_CLI_BIN" detect 2>/dev/null || echo '{"available":false,"reason":"detect-failed"}')
+    # CodeRabbit review #32 nitpick 4: stderr を完全 suppress すると診断
+    # message が消える。tmp file に capture して、失敗時のみ stderr に echo する。
+    CR_DETECT_STDERR=$(mktemp -t pseudo-cr-detect-stderr-XXXXXX) 2>/dev/null || CR_DETECT_STDERR=""
+    if [ -n "$CR_DETECT_STDERR" ]; then
+      CR_DETECTION=$(node "$CR_CLI_BIN" detect 2>"$CR_DETECT_STDERR" || echo '{"available":false,"reason":"detect-failed"}')
+    else
+      CR_DETECTION=$(node "$CR_CLI_BIN" detect 2>/dev/null || echo '{"available":false,"reason":"detect-failed"}')
+    fi
     CR_AVAILABLE=""
     CR_AVAILABLE=$(echo "$CR_DETECTION" | python3 -c "import sys, json; d=json.load(sys.stdin); print('true' if d.get('available') else 'false')" 2>/dev/null || true)
     if [ -z "$CR_AVAILABLE" ]; then
@@ -405,7 +412,13 @@ if [ -x "$CR_CLI_BIN" ]; then
     else
       CR_REASON=$(echo "$CR_DETECTION" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('reason','unknown'))" 2>/dev/null || echo "unknown")
       echo "CR CLI unavailable (reason=$CR_REASON) — falling back to coderabbit-mimic agent"
+      # 失敗時 (CR_AVAILABLE != "true") は capture した stderr を出力して診断補助
+      if [ -n "${CR_DETECT_STDERR:-}" ] && [ -s "$CR_DETECT_STDERR" ]; then
+        echo "DEBUG: cr-cli detect stderr:" >&2
+        cat "$CR_DETECT_STDERR" >&2
+      fi
     fi
+    [ -n "${CR_DETECT_STDERR:-}" ] && rm -f "$CR_DETECT_STDERR"
   fi
 fi
 ```
@@ -434,11 +447,13 @@ if [ "$USE_CR_CLI" = "true" ]; then
     # NDJSON を findings JSON 構造に変換 (line-by-line に finding 抽出)
     # Codex review #5 fix: parse error は stderr に WARN 出力して silent failure
     # を回避。parse_errors > 0 なら caller (Step 3 finding 対応) に明示。
-    FINDINGS_JSON=$(python3 -c "
-import json, sys
+    # CodeRabbit review #32 nitpick 5: bash heredoc 内 `'$TMP_NDJSON'` は path
+    # に `'` を含むと壊れる。env var 経由で os.environ 参照する safer pattern。
+    FINDINGS_JSON=$(TMP_NDJSON="$TMP_NDJSON" python3 -c "
+import json, os, sys
 findings = []
 parse_errors = 0
-with open('$TMP_NDJSON') as f:
+with open(os.environ['TMP_NDJSON']) as f:
     for line_no, line in enumerate(f, start=1):
         line = line.strip()
         if not line: continue

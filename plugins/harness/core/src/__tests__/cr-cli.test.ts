@@ -204,12 +204,15 @@ describe("cr-cli detector", () => {
     });
 
     it("does not throw when spawn itself throws (graceful)", () => {
+      // CodeRabbit review #32 nitpick 6: 二度の detectCrCli 呼出を統合
       const spawn = (_argv: string[]): CrSpawnResult => {
         throw new Error("spawn ENOENT");
       };
-      expect(() => detectCrCli({ spawn })).not.toThrow();
-      const result = detectCrCli({ spawn });
-      expect(result.available).toBe(false);
+      let result: ReturnType<typeof detectCrCli> | undefined;
+      expect(() => {
+        result = detectCrCli({ spawn });
+      }).not.toThrow();
+      expect(result?.available).toBe(false);
     });
   });
 
