@@ -185,6 +185,15 @@ function shellQuote(value) {
     return `'${value.replace(/'/g, "'\\''")}'`;
 }
 function defaultCommandDetector(cmd) {
+    // Defensive validation: although `resolveMultiplexer` only feeds the
+    // hard-coded names "cmux" and "tmux" today, accepting arbitrary
+    // strings would let a future caller smuggle shell metacharacters
+    // through the `command -v ${cmd}` interpolation. Restricting the
+    // input to a strict allowlist closes that path without changing the
+    // behaviour for the in-tree call sites.
+    if (!/^[a-zA-Z0-9_-]+$/.test(cmd)) {
+        return false;
+    }
     try {
         execSync(`command -v ${cmd}`, { stdio: "ignore", shell: "/bin/sh" });
         return true;

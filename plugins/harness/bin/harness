@@ -574,15 +574,39 @@ async function cmdMigrate(fromDir) {
 }
 
 function parseWorktreeMuxArgs(rest) {
+  const VALID_MUX = new Set(["cmux", "tmux", "auto"]);
   let multiplexer = "auto";
   let withClaude = false;
-  for (const arg of rest) {
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
     if (arg === "--with-claude") {
       withClaude = true;
       continue;
     }
-    if (arg === "--multiplexer=cmux" || arg === "--multiplexer=tmux" || arg === "--multiplexer=auto") {
-      multiplexer = arg.slice("--multiplexer=".length);
+    // Accept the equals form (--multiplexer=cmux).
+    if (arg.startsWith("--multiplexer=")) {
+      const value = arg.slice("--multiplexer=".length);
+      if (!VALID_MUX.has(value)) {
+        process.stderr.write(
+          `harness worktree-mux: --multiplexer expects cmux|tmux|auto (got '${value}')\n`,
+        );
+        return { error: 2 };
+      }
+      multiplexer = value;
+      continue;
+    }
+    // Also accept the space-separated form (--multiplexer cmux) for
+    // consistency with other CLIs (gh, git, etc.).
+    if (arg === "--multiplexer") {
+      const value = rest[i + 1];
+      if (!value || !VALID_MUX.has(value)) {
+        process.stderr.write(
+          `harness worktree-mux: --multiplexer expects cmux|tmux|auto (got '${value ?? "<missing>"}')\n`,
+        );
+        return { error: 2 };
+      }
+      multiplexer = value;
+      i++;
       continue;
     }
     if (arg === "--help" || arg === "-h") {
