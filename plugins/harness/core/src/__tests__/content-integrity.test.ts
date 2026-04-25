@@ -606,9 +606,9 @@ describe("coderabbit-review command の Step 2.6 chat bucket helper", () => {
   const content = readCommand("coderabbit-review");
 
   // Step 2.6 section だけを切り出して、その範囲内で不変条件を検証する。
-  // CodeRabbit review #31 で「全 content に対する判定だと別 section の `exit 1`
-  // 等を拾って false-positive する」と指摘され、scope を限定 (regression guard
-  // の `2 要件組合せ で false-positive 回避` rule に従う)。
+  // 全 content に対する判定だと別 section の `exit 1` 等を拾って false-positive
+  // するため、scope を限定 (regression guard の `2 要件組合せ で false-positive
+  // 回避` rule に従う)。
   const step26 = (() => {
     const m = content.match(
       /### Step 2\.6\.[\s\S]*?(?=\n### Step 3\.|\n## [^#]|$)/,
