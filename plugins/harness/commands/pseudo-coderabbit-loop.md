@@ -1,6 +1,7 @@
 ---
 name: pseudo-coderabbit-loop
 description: "Codex による疑似 CodeRabbit レビューを内部ループで回し、本物 CodeRabbit へは絞り込んだ状態で push する統合スキル。CodeRabbit の rate limit (Pro: 5/h) を回避しつつレビュー品質を維持する。Use after implementing a feature, before requesting real CodeRabbit review, especially in parallel worktree workflows. Also used to resume a loop when CodeRabbit is rate-limited."
+description-ja: "Codex による疑似 CodeRabbit レビューを内部ループで実行し、本物 CodeRabbit には絞り込んだ状態で渡す統合スキル。"
 allowed-tools: ["Read", "Grep", "Glob", "Bash", "Edit", "Write", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput"]
 argument-hint: "[pr-number|local|profile|worktree|max-codex-parallel|no-cache]"
 ---
@@ -302,16 +303,34 @@ CACHE_HIT="false"
 FINDINGS_JSON=""
 
 if [ "$CLI_NO_CACHE" != "yes" ]; then
-  # Plugin root を取得 (本 skill は plugin install 経由で発火するため、HARNESS_PLUGIN_ROOT
-  # 環境変数優先、未設定なら .claude/plugins/marketplaces/cc-triad-relay 既定)。
-  HARNESS_PLUGIN_ROOT="${HARNESS_PLUGIN_ROOT:-$HOME/.claude/plugins/marketplaces/cc-triad-relay/plugins/harness}"
-  CR_CACHE_BIN="${HARNESS_PLUGIN_ROOT}/bin/cr-cache"
+  # CR_CACHE_BIN の解決 3 段 fallback (CodeRabbit review #30 line 307):
+  #   1. 環境変数 CR_CACHE_BIN が指定されていればそれを使う
+  #   2. PATH 上に cr-cache があれば command -v で発見 (npm install -g 等)
+  #   3. HARNESS_PLUGIN_ROOT/bin/cr-cache (env var、または既定の generic placeholder)
+  # plugin install path はマーケットプレイス毎に異なるため、shipped spec では
+  # `<your-marketplace>` を placeholder として明示する。
+  if [ -z "${CR_CACHE_BIN:-}" ]; then
+    CR_CACHE_BIN=$(command -v cr-cache 2>/dev/null || true)
+  fi
+  if [ -z "$CR_CACHE_BIN" ]; then
+    HARNESS_PLUGIN_ROOT="${HARNESS_PLUGIN_ROOT:-$HOME/.claude/plugins/marketplaces/<your-marketplace>/plugins/harness}"
+    CR_CACHE_BIN="${HARNESS_PLUGIN_ROOT}/bin/cr-cache"
+  fi
 
   if [ ! -x "$CR_CACHE_BIN" ]; then
     echo "WARN: cr-cache binary not found at $CR_CACHE_BIN; skipping cache layer" >&2
   else
-    # diff text と yaml を hash 化して fingerprint 計算
-    DIFF_TEXT=$(git diff "$BASE_BRANCH"..HEAD 2>/dev/null || git diff "$BASE_BRANCH" 2>/dev/null || echo "")
+    # diff text 取得 + 失敗時の fallback (CodeRabbit review #30 line 314):
+    # silent な空文字 fallback だと false cache hit を招くため、DIFF_FAILED flag で
+    # cache bypass を明示する。git diff が non-zero exit したら cache layer を skip。
+    DIFF_TEXT=""
+    DIFF_FAILED="false"
+    if ! DIFF_TEXT=$(git diff "$BASE_BRANCH"..HEAD 2>/dev/null) || [ -z "$DIFF_TEXT" ]; then
+      if ! DIFF_TEXT=$(git diff "$BASE_BRANCH" 2>/dev/null); then
+        echo "WARN: git diff failed against $BASE_BRANCH; cache layer skipped to avoid false hits" >&2
+        DIFF_FAILED="true"
+      fi
+    fi
     CRY_HASH=""
     if [ -f .coderabbit.yaml ]; then
       # POSIX shasum (macOS / BSD) と GNU sha256sum の両対応
@@ -326,10 +345,13 @@ if [ "$CLI_NO_CACHE" != "yes" ]; then
     # に備える。現状は yaml hash と同値で OK。
     PI_HASH="$CRY_HASH"
 
-    FINGERPRINT=$(printf '%s' "$DIFF_TEXT" | node "$CR_CACHE_BIN" compute-fingerprint \
-      --diff-stdin --profile "$PROFILE" \
-      --coderabbit-yaml-hash "$CRY_HASH" \
-      --path-instructions-hash "$PI_HASH" 2>/dev/null || true)
+    FINGERPRINT=""
+    if [ "$DIFF_FAILED" != "true" ]; then
+      FINGERPRINT=$(printf '%s' "$DIFF_TEXT" | node "$CR_CACHE_BIN" compute-fingerprint \
+        --diff-stdin --profile "$PROFILE" \
+        --coderabbit-yaml-hash "$CRY_HASH" \
+        --path-instructions-hash "$PI_HASH" 2>/dev/null || true)
+    fi
 
     if [ -n "$FINGERPRINT" ]; then
       # Lookup. exit 0 = hit (stdout に JSON), exit 1 = miss (stdout 空)
