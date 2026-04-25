@@ -1,0 +1,165 @@
+#!/usr/bin/env node
+/**
+ * bin/cr-cli — CodeRabbit CLI detector helper for shell skills
+ *
+ * Wraps `core/dist/cr-cli.js` and runs `which cr` / `cr --version` /
+ * `cr auth status --agent` via child_process.spawnSync.
+ *
+ * Subcommands:
+ *   cr-cli detect
+ *     stdout: JSON { available, version?, authenticatedUser?, reason?, binaryPath? }
+ *     exit 0: detection completed (regardless of available true/false)
+ *
+ *   cr-cli review --base <branch> --dir <path> [--config <files...>]
+ *     stdout: NDJSON output of `cr --agent` (passthrough)
+ *     exit code: passthrough from `cr` invocation
+ *     exit 1 + stderr message when CLI not available
+ *
+ * Test invariants for the detector logic are exercised by
+ * core/src/__tests__/cr-cli.test.ts (DI'd spawn fake).
+ */
+
+import { spawnSync } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PLUGIN_ROOT = resolve(__dirname, "..");
+const CORE_DIST = resolve(PLUGIN_ROOT, "core", "dist", "cr-cli.js");
+
+let cliModule;
+try {
+  cliModule = await import(CORE_DIST);
+} catch (err) {
+  console.error(
+    `cr-cli: failed to load core/dist/cr-cli.js (run \`npm run build\` in core/): ${err.message}`,
+  );
+  process.exit(2);
+}
+
+const { detectCrCli } = cliModule;
+
+function realSpawn(argv) {
+  const [cmd, ...args] = argv;
+  const r = spawnSync(cmd, args, {
+    encoding: "utf-8",
+    timeout: 10_000, // 10s per invocation
+  });
+  if (r.error) {
+    throw r.error;
+  }
+  // timeout / external SIGTERM 等の signal 終了を silent に exit 0 として通せない
+  // ため、明示的に non-zero exit + stderr で通知する (caller の safeRun が catch
+  // するため throw でも OK だが、signal name を message に残すため return 経路)。
+  if (r.signal) {
+    return {
+      exitCode: 1,
+      stdout: r.stdout ?? "",
+      stderr: `${r.stderr ?? ""}\nterminated by signal: ${r.signal}`,
+    };
+  }
+  return {
+    exitCode: r.status ?? 1,
+    stdout: r.stdout ?? "",
+    stderr: r.stderr ?? "",
+  };
+}
+
+function usage() {
+  console.error("Usage: cr-cli <detect|review> [flags]");
+  process.exit(2);
+}
+
+const [, , subcommand, ...rest] = process.argv;
+if (!subcommand) usage();
+
+/**
+ * Validate review-subcommand argv.
+ *
+ * Codex review #1 fix: `--base` / `--dir` を直接 spawn に渡す前に minimal
+ * validation を実施。path traversal (`..` 含む) と shell metachar を reject
+ * する。これにより attacker-controlled directory への CR 起動経路を閉じる。
+ *
+ * NOTE: 本 validation は **defensive layer** であり最終境界ではない。本 binary
+ * が直接呼び出される pattern は harness skill 経由のみで、call site も TT 検証
+ * 済み入力を渡す。妙な input が万が一来たときの fail-safe として機能する。
+ */
+function validateReviewArgs(argv) {
+  const SAFE_FLAGS = new Set([
+    "--base",
+    "--base-commit",
+    "--dir",
+    "--config",
+    "--type",
+    "--no-color",
+  ]);
+  for (let i = 0; i < argv.length; i++) {
+    const tok = argv[i];
+    if (tok.startsWith("--")) {
+      const eq = tok.indexOf("=");
+      const flag = eq > 0 ? tok.slice(0, eq) : tok;
+      if (!SAFE_FLAGS.has(flag)) {
+        console.error(
+          `cr-cli review: unsupported flag '${flag}' (allowed: ${[...SAFE_FLAGS].join(", ")})`,
+        );
+        process.exit(2);
+      }
+      // values for known flags
+      const value = eq > 0 ? tok.slice(eq + 1) : argv[i + 1];
+      if (
+        value !== undefined &&
+        (flag === "--base" || flag === "--base-commit" || flag === "--dir" || flag === "--config")
+      ) {
+        // shell metachar / NUL / CR / LF reject (Windows CRLF 入力でも CR 単体
+        // で取りこぼさない)
+        if (/[\0\r\n;&|`$<>]/.test(value)) {
+          console.error(
+            `cr-cli review: rejecting flag value with shell metachar/NUL: ${flag}=${JSON.stringify(value)}`,
+          );
+          process.exit(2);
+        }
+        // path traversal reject (relative paths with `..` segments)
+        if (flag === "--dir" || flag === "--config") {
+          const segments = value.split("/");
+          if (segments.includes("..")) {
+            console.error(
+              `cr-cli review: rejecting flag with parent-directory traversal: ${flag}=${JSON.stringify(value)}`,
+            );
+            process.exit(2);
+          }
+        }
+      }
+    }
+  }
+}
+
+if (subcommand === "detect") {
+  const result = detectCrCli({ spawn: realSpawn });
+  process.stdout.write(JSON.stringify(result));
+} else if (subcommand === "review") {
+  validateReviewArgs(rest);
+  const detection = detectCrCli({ spawn: realSpawn });
+  if (!detection.available) {
+    console.error(
+      `cr-cli review: CR CLI not available (reason: ${detection.reason}). Run \`brew install --cask coderabbit\` and \`cr auth login\`.`,
+    );
+    process.exit(1);
+  }
+  // Passthrough invocation: `cr --agent <flags>` (rest は validateReviewArgs で済)。
+  // stdio を ["inherit", "inherit", "inherit"] にすると親 shell の redirect で
+  // stdout 取得は機能するが、`pseudo-coderabbit-loop.md` Step 2.0.1 で stdout
+  // を NDJSON tmp file に redirect する workflow との意図整合のため、stdout を
+  // 明示 inherit (parent の redirect が直接子 process に伝わる) のまま、stderr
+  // のみ inherit する形に維持する (workflow との意図整合)。
+  // Note: spawnSync の stdio "inherit" は POSIX 親 fd を継承するため
+  // `node ... > out.ndjson` で out.ndjson に直接書ける。"pipe" にすると
+  // r.stdout に取得後 caller が write する 2 段経路になるが、本 CLI の
+  // passthrough 用途では不要 (parent shell redirect で十分)。
+  const r = spawnSync("cr", ["--agent", ...rest], {
+    encoding: "utf-8",
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  process.exit(r.status ?? 1);
+} else {
+  usage();
+}

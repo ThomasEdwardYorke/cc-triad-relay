@@ -375,9 +375,108 @@ fi
 - rebase で `--force-with-lease` push: 異なる commit hash でも diff 同一なら cache hit
 - 概算 30-40% の review request を skip 可能 (実装 PR で empirical 検証推奨)
 
-### Step 2. Codex 疑似レビュー実行
+### Step 2. Pseudo CR 実行 (CR CLI 直呼出 → coderabbit-mimic fallback chain)
 
-`coderabbit-mimic` agent を Agent tool で呼び出し。入力 (公式 tools-reference: `Agent` tool が subagent spawn 用、旧称 `Task` は現行 catalog 未掲載):
+#### Step 2.0. CR CLI 検出 (NEW、上位優先)
+
+CodeRabbit CLI (`cr`) が install + auth 済の場合、**`cr --agent` 直呼出**を優先する。これは CodeRabbit 公式 reviewer 自身を local で動かすため、findings の品質と再現性が高い。CLI 不在 / 未 auth の場合は従来通り `coderabbit-mimic` agent (Codex 模倣) に fallback する。
+
+```bash
+HARNESS_PLUGIN_ROOT="${HARNESS_PLUGIN_ROOT:-$HOME/.claude/plugins/marketplaces/cc-triad-relay/plugins/harness}"
+CR_CLI_BIN="${HARNESS_PLUGIN_ROOT}/bin/cr-cli"
+USE_CR_CLI="false"
+
+if [ -x "$CR_CLI_BIN" ]; then
+  if ! command -v python3 >/dev/null 2>&1; then
+    # Codex review #3 fix: python3 不在を silent fallback すると CR CLI 不具合
+    # (auth missing vs binary missing) と区別できない。明示 WARN を出して
+    # coderabbit-mimic fallback に進む。
+    echo "WARN: python3 not on PATH — cannot parse CR CLI detection JSON; assuming CR CLI unavailable" >&2
+  else
+    # stderr を完全 suppress すると診断 message が消える。tmp file に capture
+    # して、失敗時のみ stderr に echo する。
+    CR_DETECT_STDERR=$(mktemp -t pseudo-cr-detect-stderr-XXXXXX) 2>/dev/null || CR_DETECT_STDERR=""
+    if [ -n "$CR_DETECT_STDERR" ]; then
+      CR_DETECTION=$(node "$CR_CLI_BIN" detect 2>"$CR_DETECT_STDERR" || echo '{"available":false,"reason":"detect-failed"}')
+    else
+      CR_DETECTION=$(node "$CR_CLI_BIN" detect 2>/dev/null || echo '{"available":false,"reason":"detect-failed"}')
+    fi
+    CR_AVAILABLE=""
+    CR_AVAILABLE=$(echo "$CR_DETECTION" | python3 -c "import sys, json; d=json.load(sys.stdin); print('true' if d.get('available') else 'false')" 2>/dev/null || true)
+    if [ -z "$CR_AVAILABLE" ]; then
+      echo "WARN: failed to parse CR CLI detection JSON (python3 -c failed); assuming unavailable" >&2
+    elif [ "$CR_AVAILABLE" = "true" ]; then
+      USE_CR_CLI="true"
+      CR_VERSION=$(echo "$CR_DETECTION" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('version','unknown'))" 2>/dev/null || echo "unknown")
+      echo "CR CLI detected (version=$CR_VERSION) — using direct invocation"
+    else
+      CR_REASON=$(echo "$CR_DETECTION" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('reason','unknown'))" 2>/dev/null || echo "unknown")
+      echo "CR CLI unavailable (reason=$CR_REASON) — falling back to coderabbit-mimic agent"
+      # 失敗時 (CR_AVAILABLE != "true") は capture した stderr を出力して診断補助
+      if [ -n "${CR_DETECT_STDERR:-}" ] && [ -s "$CR_DETECT_STDERR" ]; then
+        echo "DEBUG: cr-cli detect stderr:" >&2
+        cat "$CR_DETECT_STDERR" >&2
+      fi
+    fi
+    [ -n "${CR_DETECT_STDERR:-}" ] && rm -f "$CR_DETECT_STDERR"
+  fi
+fi
+```
+
+**Bucket 帰属の caveat (Codex CLI auth research 済)**: PR review と CLI review の rate-limit bucket が独立か共有かは公式 docs で **未確認**。保守的に共有 5/h 想定で運用し、CLI 直呼出時に `error.code=RATE_LIMITED` / exit 429 を検出したら同 iteration で `coderabbit-mimic` agent に automatic fallback する。
+
+#### Step 2.0.1. CR CLI 直呼出 path (USE_CR_CLI=true)
+
+```bash
+if [ "$USE_CR_CLI" = "true" ]; then
+  # NDJSON output を tmp directory に capture (Codex review #2 fix: mktemp -d
+  # で macOS / GNU portability + concurrent run race 回避、trap cleanup)
+  TMP_DIR=$(mktemp -d -t pseudo-cr-cli-XXXXXX)
+  trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
+  TMP_NDJSON="$TMP_DIR/output.ndjson"
+  TMP_PARSE_LOG="$TMP_DIR/parse.log"
+  CR_EXIT=0
+  node "$CR_CLI_BIN" review --base "$BASE_BRANCH" --dir "$WORKTREE" \
+    ${CRY_PATH:+--config "$CRY_PATH"} > "$TMP_NDJSON" 2>&1 || CR_EXIT=$?
+
+  # rate-limit 検出 (公式 docs 04-cli-auth-ci.md: exit 429 or `error.code=RATE_LIMITED`)
+  if [ "$CR_EXIT" -eq 429 ] || grep -q '"code":"RATE_LIMITED"' "$TMP_NDJSON" 2>/dev/null; then
+    echo "CR CLI rate-limited — falling back to coderabbit-mimic agent for this iteration"
+    USE_CR_CLI="false"
+  else
+    # NDJSON を findings JSON 構造に変換 (line-by-line に finding 抽出)
+    # Codex review #5 fix: parse error は stderr に WARN 出力して silent failure
+    # を回避。parse_errors > 0 なら caller (Step 3 finding 対応) に明示。
+    # bash heredoc 内で `'$TMP_NDJSON'` は path に `'` を含むと壊れる。env var
+    # 経由で os.environ 参照する safer pattern にする。
+    FINDINGS_JSON=$(TMP_NDJSON="$TMP_NDJSON" python3 -c "
+import json, os, sys
+findings = []
+parse_errors = 0
+with open(os.environ['TMP_NDJSON']) as f:
+    for line_no, line in enumerate(f, start=1):
+        line = line.strip()
+        if not line: continue
+        try:
+            ev = json.loads(line)
+            if ev.get('type') == 'finding':
+                findings.append(ev)
+        except json.JSONDecodeError as e:
+            parse_errors += 1
+            print(f'WARN: NDJSON parse error at line {line_no}: {e}', file=sys.stderr)
+print(json.dumps({'source':'cr-cli','findings':findings,'parse_errors':parse_errors}))
+" 2> "$TMP_PARSE_LOG") || FINDINGS_JSON='{"source":"cr-cli","findings":[],"parse_errors":-1}'
+    if [ -s "$TMP_PARSE_LOG" ]; then
+      echo "WARN: NDJSON parse errors detected — see $TMP_PARSE_LOG (carbon copied to stderr below):" >&2
+      cat "$TMP_PARSE_LOG" >&2
+    fi
+  fi
+fi
+```
+
+#### Step 2.0.2. coderabbit-mimic fallback path (USE_CR_CLI=false)
+
+`coderabbit-mimic` agent を Agent tool で呼び出し (従来パス、CLI 不在時 / rate-limited 時の fallback)。入力 (公式 tools-reference: `Agent` tool が subagent spawn 用、旧称 `Task` は現行 catalog 未掲載):
 
 ```json
 {
