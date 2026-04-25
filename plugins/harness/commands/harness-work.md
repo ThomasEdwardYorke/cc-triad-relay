@@ -57,7 +57,21 @@ argument-hint: "[all|task-number|N-M] [--fix <説明>|--feature <機能名>] [--
 >
 > 完全な DAG 判定は Claude Agent SDK or dedicated Python/TS parser で実装予定 (次セッション以降)。
 
-### Step 0 — タスクソースの判定 (4 層 handoff 対応、v4.2 追加)
+### Step 0a — Session orient (`/session-handoff check` 必須実行、v4.3 追加)
+
+**重要**: Step 0b (タスクソースの判定) より前に、必ず `/session-handoff check`
+を実行してセッション再開可否を 3-gate (構造 + 内容把握 + 再開判定) で確認する。
+
+| 結果 | 次のアクション |
+|---|---|
+| `PASS` | そのまま Step 0b へ進む |
+| `WARN` | 出力に並ぶ staleness signal を確認、軽微なら進む / 重大 (S-12 / S-13 等) は事前に解消 |
+| `FAIL` | `/session-handoff update` または `archive` で先に修正、再 check が `PASS` / `WARN` になってから Step 0b |
+| `INIT_REQUIRED` | `/session-handoff init` を案内 (handoff 構造が未整備) |
+
+`harness-work-essence` 不変条件 #3 (引継資料から最優先タスクを確認、構造化チームを編成) と #11 (諦めない / 妥協しない) を含む 13 項目の workflow contract は `docs/harness-work-essence.md` 参照。`harness.config.json` の `work.qualityGates.enforceHarnessWorkEssence: true` を設定すると、stop hook が turn 境界で同 contract の bird's-eye reminder を additionalContext として注入する (default-off、明示的 opt-in)。
+
+### Step 0b — タスクソースの判定 (4 層 handoff 対応、v4.2 追加)
 
 依存グラフ判定の前に、まず**どこからタスクを取り出すか**を決定する。`harness.config.json`
 の `work.taskTrackerMode` を読み、handoff モードの場合は backlog parser、
@@ -694,7 +708,19 @@ Auto Mode Detection 結果:
 4. `current.md` 担当表から行削除 + `backlog.md` の entry を `status: done` に書換 (heading 不変、entry 自体は archive 切出時に削除可)
 5. `/session-handoff archive` を呼び出し `archive/session-<YYYY-MM-DD>-<slug>.md` に当該セッションの全 commit / design decision / open issue を切り出し (archive 内 footer に design-decisions.md への append 可否を ask)
 6. worktree cleanup (`/parallel-worktree` が実施済)
-7. `current.md` の Latest state / Top priority / Quick-start を `/session-handoff update` で最新化 (next session が即着手可能な状態に保つ)
+7. `/session-handoff update` で `current.md` の Latest state / Top priority / Quick-start を最新化 (next session が即着手可能な状態に保つ)
+
+#### Closing ritual (mode を問わず必須、v4.3 追加)
+
+Plans-mode / Handoff-mode どちらでも、session の最後で**必ず**以下を実行する:
+
+1. **Final report** — チェックリスト達成状況、計画 vs 実績、変更 file 一覧、留保点 (申送) を整理する。`harness-work-essence` 不変条件 #13 に対応。
+2. **Handoff persistence** — プロジェクトが 4-layer handoff を採用している場合 (`.docs/handoff/` 等):
+   - `/session-handoff archive` で当該セッションを archive 切出
+   - `/session-handoff update` で `current.md` を次セッション着手用 snapshot に書換
+3. **Plans.md fallback** — handoff 不採用プロジェクトでも、`Plans.md` の完了セクション + プロジェクト固有 handoff file (`harness.config.json` の `work.handoffFiles`) を最新化する
+
+`harness.config.json` で `work.qualityGates.enforceHarnessWorkEssence: true` を設定しているプロジェクトは、stop hook が turn 境界で本 ritual の reminder (`[harness-work essence] ... 終了時 handoff archive+update`) を additionalContext として注入するので skip 検出が容易。詳細な workflow contract は `docs/harness-work-essence.md` 参照。
 
 ---
 

@@ -104,6 +104,51 @@ export interface QualityGatesConfig {
     enforceRealCoderabbit: boolean;
     /** Phase 7 Codex adversarial second-opinion review. */
     enforceCodexSecondOpinion: boolean;
+    /**
+     * `harness-work-essence` discipline reminder. When true, the Stop hook
+     * appends a generic "session essence" reminder summarising the 13-item
+     * workflow contract documented in `docs/harness-work-essence.md`
+     * (broad-scope task analysis, TDD + Codex parallel team, never-give-up
+     * rule, end-of-session report + handoff archive/update). Default-off so
+     * that projects already standardised on `/harness-work` see the
+     * reminder only when they opt in.
+     */
+    enforceHarnessWorkEssence: boolean;
+}
+/**
+ * Task tracker source identifier consumed by `/harness-work` and related
+ * skills. `"plans"` (default) reads the legacy flat `Plans.md` markdown
+ * file. `"handoff"` opts the project into the 4-layer handoff structure
+ * (`roadmap.md` / `backlog.md` / `current.md` / `decisions.md`) so the
+ * skills can dispatch from the structured backlog while the roadmap layer
+ * holds Phase / Week / AC source-of-truth.
+ *
+ * When set to `"handoff"`, `WorkConfig.handoffPaths` MUST be populated
+ * with all four file paths. Missing or malformed entries cause
+ * `validateWorkTaskTracker` to silently fall back to `"plans"` with a
+ * stderr warning so consumers (skills, hooks) never see an undefined
+ * dispatch source.
+ */
+export type TaskTrackerMode = "plans" | "handoff";
+/**
+ * 4-layer handoff document paths. All four fields are required when
+ * `WorkConfig.taskTrackerMode === "handoff"`. Paths are project-relative
+ * (anchored at `projectRoot`); absolute paths and `..` segments are
+ * rejected by the loader to keep the handoff scope contained.
+ *
+ * Wholesale-replace semantics — the user-supplied object is used verbatim
+ * (no merge with defaults) because partial overrides would yield silently
+ * incomplete configs.
+ */
+export interface HandoffPathsConfig {
+    /** Phase / Week / Task definition with YAML frontmatter (source-of-truth). */
+    roadmap: string;
+    /** Priority-ordered dispatchable view consumed by `/harness-work`. */
+    backlog: string;
+    /** Bird's-eye index file consumed by `/session-handoff check`. */
+    current: string;
+    /** Append-only design decisions log. */
+    decisions: string;
 }
 /**
  * Task tracker source identifier consumed by `/harness-work` and related

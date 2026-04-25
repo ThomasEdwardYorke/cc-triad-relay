@@ -128,6 +128,7 @@ describe("loadConfig / loadConfigSafe", () => {
         enforcePseudoCoderabbit: true,
         enforceRealCoderabbit: true,
         enforceCodexSecondOpinion: true,
+        enforceHarnessWorkEssence: false,
       });
       // testCommand / changeLogFile remain optional-undefined.
       expect(DEFAULT_CONFIG.work.testCommand).toBeUndefined();
@@ -236,6 +237,7 @@ describe("loadConfig / loadConfigSafe", () => {
         enforcePseudoCoderabbit: true,
         enforceRealCoderabbit: true,
         enforceCodexSecondOpinion: true,
+        enforceHarnessWorkEssence: false,
       });
     });
 

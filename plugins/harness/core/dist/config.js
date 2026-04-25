@@ -55,6 +55,12 @@ export const DEFAULT_CONFIG = {
             enforcePseudoCoderabbit: true,
             enforceRealCoderabbit: true,
             enforceCodexSecondOpinion: true,
+            // Off by default. Projects opt in by setting this true to receive
+            // the cross-cutting workflow reminder alongside the four phase-
+            // specific gates. The flag is intentionally orthogonal so a mature
+            // project can keep the per-phase reminders without re-enabling the
+            // bird's-eye summary.
+            enforceHarnessWorkEssence: false,
         },
         failFast: true,
     },
