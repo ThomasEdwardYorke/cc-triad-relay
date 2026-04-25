@@ -30,7 +30,7 @@ phase-specific quality gates emitted by `hooks/stop.ts`.
 | 3 | Read the handoff documents first, identify the highest-priority task, and stand up a structured team | `/harness-work` Step 0 chains `/session-handoff check` automatically |
 | 4 | Issues uncovered along the way must be addressed within the session, never deferred silently | LLM discipline + handoff backlog chain in Step 5 |
 | 5 | Verify behaviour against Anthropic and harness official docs to keep both global and local rules satisfied | `/ask-codex` invocation + `claude-code-guide` agent |
-| 6 | Manage work as a checklist so nothing slips | `/harness-work` Step 0 mandates `TaskCreate` |
+| 6 | Manage work as a checklist so nothing slips | `/harness-work` Step 0a chains `/session-handoff check` and Step 0b judges the task source (handoff backlog / Plans.md) before the dependency graph runs; the closing step (and the Stop hook reminder) restates the same checklist discipline at every turn boundary |
 | 7 | Implement using the TDD loop (Red → Green → Refactor) | `/tdd-implement` v2 (delegated by `/harness-work`) makes phases mandatory |
 | 8 | Use Codex as both worker and reviewer in a parallel team | `/tdd-implement` Phases 4 (parallel implementation), 5 (review loop), 7 (adversarial) |
 | 9 | Never break existing systems | Full test suite + content-integrity assertions + grep-based generality check |

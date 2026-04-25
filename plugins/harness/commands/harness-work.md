@@ -66,7 +66,7 @@ argument-hint: "[all|task-number|N-M] [--fix <説明>|--feature <機能名>] [--
 |---|---|
 | `PASS` | そのまま Step 0b へ進む |
 | `WARN` | 出力に並ぶ staleness signal を確認、軽微なら進む / 重大 (S-12 / S-13 等) は事前に解消 |
-| `FAIL` | `/session-handoff update` または `archive` で先に修正、再 check が `PASS` / `WARN` になってから Step 0b |
+| `FAIL` | `/session-handoff update` または `/session-handoff archive` で先に修正、再 check が `PASS` / `WARN` になってから Step 0b |
 | `INIT_REQUIRED` | `/session-handoff init` を案内 (handoff 構造が未整備) |
 
 `harness-work-essence` 不変条件 #3 (引継資料から最優先タスクを確認、構造化チームを編成) と #11 (諦めない / 妥協しない) を含む 13 項目の workflow contract は `docs/harness-work-essence.md` 参照。`harness.config.json` の `work.qualityGates.enforceHarnessWorkEssence: true` を設定すると、stop hook が turn 境界で同 contract の bird's-eye reminder を additionalContext として注入する (default-off、明示的 opt-in)。
