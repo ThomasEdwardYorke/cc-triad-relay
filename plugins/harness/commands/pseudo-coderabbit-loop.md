@@ -303,7 +303,7 @@ CACHE_HIT="false"
 FINDINGS_JSON=""
 
 if [ "$CLI_NO_CACHE" != "yes" ]; then
-  # CR_CACHE_BIN の解決 3 段 fallback (CodeRabbit review #30 line 307):
+  # CR_CACHE_BIN の解決 3 段 fallback:
   #   1. 環境変数 CR_CACHE_BIN が指定されていればそれを使う
   #   2. PATH 上に cr-cache があれば command -v で発見 (npm install -g 等)
   #   3. HARNESS_PLUGIN_ROOT/bin/cr-cache (env var、または既定の generic placeholder)
@@ -320,7 +320,7 @@ if [ "$CLI_NO_CACHE" != "yes" ]; then
   if [ ! -x "$CR_CACHE_BIN" ]; then
     echo "WARN: cr-cache binary not found at $CR_CACHE_BIN; skipping cache layer" >&2
   else
-    # diff text 取得 + 失敗時の fallback (CodeRabbit review #30 line 314):
+    # diff text 取得 + 失敗時の fallback:
     # silent な空文字 fallback だと false cache hit を招くため、DIFF_FAILED flag で
     # cache bypass を明示する。git diff が non-zero exit したら cache layer を skip。
     DIFF_TEXT=""

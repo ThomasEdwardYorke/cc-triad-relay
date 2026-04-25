@@ -40,8 +40,7 @@ const CORE_DIST = resolve(PLUGIN_ROOT, "core", "dist", "cr-cache.js");
 
 let cacheModule;
 try {
-  // Windows 互換: ESM import は絶対 path を file:// URL 形式に変換する必要がある
-  // (CodeRabbit review #30 line 43)
+  // ESM dynamic import requires file:// URLs for absolute paths on Windows.
   cacheModule = await import(pathToFileURL(CORE_DIST).href);
 } catch (err) {
   console.error(
@@ -157,10 +156,10 @@ function cmdWrite(flags) {
 
 function cmdInvalidate(flags) {
   const workdir = requireFlag(flags, "workdir");
-  // CodeRabbit review #30 line 158: bare `--fingerprint` (value なし) を
-  // undefined にすると invalidate が全 cache を削除する surprising 挙動。
-  // 明示的な usage error で fail-fast する。`--fingerprint` 自体を渡さない
-  // (key 不在) のは「全 cache invalidate」の正規 path として残す。
+  // Bare `--fingerprint` (no value) used to silently fall through to
+  // "invalidate all entries" by mapping to undefined — surprising and
+  // dangerous. Fail fast on the bare flag. Omitting `--fingerprint`
+  // entirely remains the legitimate path to clear the whole cache.
   let fingerprint;
   if ("fingerprint" in flags) {
     if (flags["fingerprint"] === true) {
