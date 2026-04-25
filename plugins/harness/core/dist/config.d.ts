@@ -104,6 +104,16 @@ export interface QualityGatesConfig {
     enforceRealCoderabbit: boolean;
     /** Phase 7 Codex adversarial second-opinion review. */
     enforceCodexSecondOpinion: boolean;
+    /**
+     * `harness-work-essence` discipline reminder. When true, the Stop hook
+     * appends a generic "session essence" reminder summarising the 13-item
+     * workflow contract documented in `docs/harness-work-essence.md`
+     * (broad-scope task analysis, TDD + Codex parallel team, never-give-up
+     * rule, end-of-session report + handoff archive/update). Default-off so
+     * that projects already standardised on `/harness-work` see the
+     * reminder only when they opt in.
+     */
+    enforceHarnessWorkEssence: boolean;
 }
 /**
  * Task tracker source identifier consumed by `/harness-work` and related

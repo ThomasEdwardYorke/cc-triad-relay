@@ -45,16 +45,32 @@ export async function handleStop(input) {
     if (gates.enforceCodexSecondOpinion) {
         reminders.push("Codex セカンドオピニオン必須");
     }
-    // Behavioural preservation: if every gate is explicitly `false`, produce
-    // no `additionalContext`. Historically callers observed
-    // `{decision:"approve"}` with no reason in that case — `index.ts` then
-    // drops the reason field entirely.
-    if (reminders.length === 0) {
+    // The phase-specific gates above mirror the four formal review phases.
+    // The `harness-work-essence` gate is orthogonal and surfaces the
+    // workflow-wide invariants (broad scope, structured Codex team, TDD
+    // loop, never-give-up, no-leak-of-nitpicks, end-of-session handoff
+    // archive/update). It ships as a separate `additionalContext` block so
+    // the historical `[品質ゲート]` line stays unchanged for projects that
+    // do not opt in.
+    const sections = [];
+    if (reminders.length > 0) {
+        sections.push(sanitizeAdditionalContextLine(`[品質ゲート] ${reminders.join(" / ")}`));
+    }
+    if (gates.enforceHarnessWorkEssence) {
+        sections.push(sanitizeAdditionalContextLine("[harness-work essence] broad scope / structured team + Codex parallel / TDD (Red->Green->Refactor) / never give up / address every minor finding / end-of-session handoff archive+update — details: docs/harness-work-essence.md"));
+    }
+    if (sections.length === 0) {
         return { decision: "approve" };
     }
+    // Section separator is the literal two-character `\n` rather than a
+    // raw LF, so that future dynamic content cannot smuggle fake section
+    // boundaries through the additionalContext payload.
     return {
         decision: "approve",
-        additionalContext: `[品質ゲート] ${reminders.join(" / ")}`,
+        additionalContext: sections.join("\\n"),
     };
+}
+function sanitizeAdditionalContextLine(line) {
+    return line.replace(/\r\n|[\n\r]/g, "\\n");
 }
 //# sourceMappingURL=stop.js.map

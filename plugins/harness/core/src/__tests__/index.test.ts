@@ -360,6 +360,127 @@ describe("route() dispatcher — hook integration", () => {
       expect(result.reason).toContain("本物 CodeRabbit 必須");
       expect(result.reason).toContain("Codex セカンドオピニオン必須");
     });
+
+    it("emits the harness-work essence reminder when enforceHarnessWorkEssence is true", async () => {
+      // Opt-in flag adds a separate `[harness-work essence]` line alongside
+      // the existing `[品質ゲート]` block, pointing back to docs/harness-
+      // work-essence.md so consumers can read the long-form contract.
+      const config = {
+        work: {
+          qualityGates: {
+            enforceTddImplement: false,
+            enforcePseudoCoderabbit: false,
+            enforceRealCoderabbit: false,
+            enforceCodexSecondOpinion: false,
+            enforceHarnessWorkEssence: true,
+          },
+        },
+      };
+      writeFileSync(
+        join(tmpRoot, "harness.config.json"),
+        JSON.stringify(config),
+      );
+
+      const result = await route("stop", {
+        hook_event_name: "Stop",
+        cwd: tmpRoot,
+      });
+
+      expect(result.decision).toBe("approve");
+      expect(result.reason).toBeDefined();
+      expect(result.reason).toContain("[harness-work essence]");
+      expect(result.reason).toContain("docs/harness-work-essence.md");
+      expect(result.reason).toContain("never give up");
+      // `[品質ゲート]` block must be absent when every per-phase gate is
+      // disabled — the essence reminder is orthogonal.
+      expect(result.reason).not.toContain("[品質ゲート]");
+    });
+
+    it("emits both blocks when phase gates and the essence flag are enabled together", async () => {
+      const config = {
+        work: {
+          qualityGates: {
+            enforceTddImplement: true,
+            enforcePseudoCoderabbit: false,
+            enforceRealCoderabbit: false,
+            enforceCodexSecondOpinion: false,
+            enforceHarnessWorkEssence: true,
+          },
+        },
+      };
+      writeFileSync(
+        join(tmpRoot, "harness.config.json"),
+        JSON.stringify(config),
+      );
+
+      const result = await route("stop", {
+        hook_event_name: "Stop",
+        cwd: tmpRoot,
+      });
+
+      expect(result.reason).toBeDefined();
+      expect(result.reason).toContain("[品質ゲート] TDD 必須");
+      expect(result.reason).toContain("[harness-work essence]");
+    });
+
+    it("sanitizes additionalContext newlines to prevent section-boundary injection", async () => {
+      // The additionalContext payload joins sections; if a future section
+      // text gains an embedded LF/CR (e.g. from dynamic config), it could
+      // forge fake section boundaries downstream. Lock the contract to
+      // "no raw newlines — section separator is the literal two-character
+      // `\\n`".
+      const config = {
+        work: {
+          qualityGates: {
+            enforceTddImplement: true,
+            enforcePseudoCoderabbit: false,
+            enforceRealCoderabbit: false,
+            enforceCodexSecondOpinion: false,
+            enforceHarnessWorkEssence: true,
+          },
+        },
+      };
+      writeFileSync(
+        join(tmpRoot, "harness.config.json"),
+        JSON.stringify(config),
+      );
+
+      const result = await route("stop", {
+        hook_event_name: "Stop",
+        cwd: tmpRoot,
+      });
+
+      expect(result.reason).toBeDefined();
+      expect(result.reason).toContain("[品質ゲート]");
+      expect(result.reason).toContain("[harness-work essence]");
+      expect(result.reason).not.toMatch(/\r/);
+      expect(result.reason).not.toMatch(/\n/);
+      expect(result.reason).toContain("\\n");
+    });
+
+    it("omits the essence reminder when enforceHarnessWorkEssence is left at its default", async () => {
+      // Default-off: a project that does not mention the new flag should
+      // not see the reminder, even with the other gates active.
+      const config = {
+        work: {
+          qualityGates: {
+            enforceTddImplement: true,
+          },
+        },
+      };
+      writeFileSync(
+        join(tmpRoot, "harness.config.json"),
+        JSON.stringify(config),
+      );
+
+      const result = await route("stop", {
+        hook_event_name: "Stop",
+        cwd: tmpRoot,
+      });
+
+      expect(result.reason).toBeDefined();
+      expect(result.reason).not.toContain("[harness-work essence]");
+    });
   });
 
   describe("session lifecycle", () => {

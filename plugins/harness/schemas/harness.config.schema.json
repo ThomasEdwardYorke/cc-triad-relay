@@ -178,7 +178,12 @@
             "enforceTddImplement": { "type": "boolean", "default": true },
             "enforcePseudoCoderabbit": { "type": "boolean", "default": true },
             "enforceRealCoderabbit": { "type": "boolean", "default": true },
-            "enforceCodexSecondOpinion": { "type": "boolean", "default": true }
+            "enforceCodexSecondOpinion": { "type": "boolean", "default": true },
+            "enforceHarnessWorkEssence": {
+              "type": "boolean",
+              "default": false,
+              "description": "Cross-cutting workflow reminder summarising the docs/harness-work-essence.md contract. Default-off; set true to add the bird's-eye essence reminder to the per-phase quality gates."
+            }
           }
         },
         "failFast": { "type": "boolean", "default": true }
