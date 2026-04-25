@@ -390,7 +390,7 @@ describe("route() dispatcher — hook integration", () => {
       expect(result.reason).toBeDefined();
       expect(result.reason).toContain("[harness-work essence]");
       expect(result.reason).toContain("docs/harness-work-essence.md");
-      expect(result.reason).toContain("諦めない");
+      expect(result.reason).toContain("never give up");
       // `[品質ゲート]` block must be absent when every per-phase gate is
       // disabled — the essence reminder is orthogonal.
       expect(result.reason).not.toContain("[品質ゲート]");
@@ -424,11 +424,11 @@ describe("route() dispatcher — hook integration", () => {
     });
 
     it("sanitizes additionalContext newlines to prevent section-boundary injection", async () => {
-      // CodeRabbit PR #34 round 2 nitpick: the additionalContext payload
-      // joins sections; if a future section text gains an embedded LF/CR
-      // (e.g. from dynamic config), it could forge fake section
-      // boundaries downstream. Lock the contract to "no raw newlines —
-      // section separator is the literal two-character `\\n`".
+      // The additionalContext payload joins sections; if a future section
+      // text gains an embedded LF/CR (e.g. from dynamic config), it could
+      // forge fake section boundaries downstream. Lock the contract to
+      // "no raw newlines — section separator is the literal two-character
+      // `\\n`".
       const config = {
         work: {
           qualityGates: {

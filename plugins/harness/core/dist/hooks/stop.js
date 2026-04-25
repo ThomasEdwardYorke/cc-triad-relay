@@ -57,7 +57,7 @@ export async function handleStop(input) {
         sections.push(sanitizeAdditionalContextLine(`[品質ゲート] ${reminders.join(" / ")}`));
     }
     if (gates.enforceHarnessWorkEssence) {
-        sections.push(sanitizeAdditionalContextLine("[harness-work essence] スコープ広く / 構造化チーム + Codex 並列 / TDD (Red→Green→Refactor) / 諦めない / 軽微指摘漏れなく対応 / 終了時 handoff archive+update — 詳細: docs/harness-work-essence.md"));
+        sections.push(sanitizeAdditionalContextLine("[harness-work essence] broad scope / structured team + Codex parallel / TDD (Red->Green->Refactor) / never give up / address every minor finding / end-of-session handoff archive+update — details: docs/harness-work-essence.md"));
     }
     if (sections.length === 0) {
         return { decision: "approve" };
