@@ -14,6 +14,10 @@
  *                                  backend, source, ...}.
  *   harness model check [--strict]  Flag deprecated models vs ~/.codex/models_cache.json
  *   harness migrate [--from PATH] Migrate legacy v2 state to the v3 JSON store
+ *   harness worktree-mux [--multiplexer=cmux|tmux|auto] [--with-claude]
+ *                                 Open every git worktree in cmux (preferred)
+ *                                 or tmux. Falls back to a text listing when
+ *                                 neither multiplexer is installed.
  *   harness --version
  */
 
@@ -61,6 +65,8 @@ function printUsage() {
       "                                  (image-gen / image-edit dispatch to image resolver)",
       "  harness model check [--strict]  Flag deprecated models vs models_cache.json",
       "  harness migrate [--from D]    Migrate legacy .claude/state to v3 JSON",
+      "  harness worktree-mux [--multiplexer=cmux|tmux|auto] [--with-claude]",
+      "                                  Open git worktrees in cmux/tmux panes",
       "  harness --version",
       "",
     ].join("\n"),
@@ -567,6 +573,68 @@ async function cmdMigrate(fromDir) {
   return result.errors.length > 0 ? 1 : 0;
 }
 
+function parseWorktreeMuxArgs(rest) {
+  let multiplexer = "auto";
+  let withClaude = false;
+  for (const arg of rest) {
+    if (arg === "--with-claude") {
+      withClaude = true;
+      continue;
+    }
+    if (arg === "--multiplexer=cmux" || arg === "--multiplexer=tmux" || arg === "--multiplexer=auto") {
+      multiplexer = arg.slice("--multiplexer=".length);
+      continue;
+    }
+    if (arg === "--help" || arg === "-h") {
+      return { help: true };
+    }
+    process.stderr.write(`harness worktree-mux: unknown flag '${arg}'\n`);
+    return { error: 2 };
+  }
+  return { multiplexer, withClaude };
+}
+
+async function cmdWorktreeMux(rest) {
+  const args = parseWorktreeMuxArgs(rest);
+  if (args.help) {
+    process.stdout.write(
+      [
+        "harness worktree-mux [--multiplexer=cmux|tmux|auto] [--with-claude]",
+        "",
+        "  --multiplexer=auto  (default) Pick cmux first, fall back to tmux,",
+        "                                then to a text listing.",
+        "  --multiplexer=cmux            Require cmux. Errors if missing.",
+        "  --multiplexer=tmux            Require tmux. Errors if missing.",
+        "  --with-claude                 Launch `claude` in each pane.",
+        "",
+        "Environment:",
+        "  CMUX_CMD_TEMPLATE  Override the cmux invocation (default:",
+        "                     `cmux open --column {path}`). `{path}` is replaced",
+        "                     by the worktree path.",
+        "",
+      ].join("\n"),
+    );
+    return 0;
+  }
+  if (args.error !== undefined) return args.error;
+
+  const corePath = resolveCorePath();
+  if (corePath === null) {
+    process.stderr.write(
+      "harness worktree-mux: core build not found. Run `npm run build`.\n",
+    );
+    return 1;
+  }
+  const muxPath = corePath.replace("index.js", "worktree-mux.js");
+  const mod = await import(`file://${muxPath.replace(/\\/g, "/")}`);
+  const plan = mod.planWorktreeMux({
+    multiplexer: args.multiplexer,
+    withClaude: args.withClaude,
+    cmuxCommandTemplate: process.env.CMUX_CMD_TEMPLATE,
+  });
+  return mod.runPlan(plan);
+}
+
 // ------------------------------------------------------------
 // Entry
 // ------------------------------------------------------------
@@ -609,6 +677,8 @@ async function main() {
       const fromDir = flagIdx >= 0 ? rest[flagIdx + 1] : undefined;
       return await cmdMigrate(fromDir);
     }
+    case "worktree-mux":
+      return await cmdWorktreeMux(rest);
     default:
       process.stderr.write(`harness: unknown subcommand '${sub}'\n`);
       printUsage();
