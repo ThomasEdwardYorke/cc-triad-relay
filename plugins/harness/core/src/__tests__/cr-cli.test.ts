@@ -204,7 +204,8 @@ describe("cr-cli detector", () => {
     });
 
     it("does not throw when spawn itself throws (graceful)", () => {
-      // CodeRabbit review #32 nitpick 6: 二度の detectCrCli 呼出を統合
+      // detectCrCli を 1 回だけ呼び出し、`expect(...).not.toThrow()` の中で
+      // 結果も取得する (二度呼びを避ける)。
       const spawn = (_argv: string[]): CrSpawnResult => {
         throw new Error("spawn ENOENT");
       };

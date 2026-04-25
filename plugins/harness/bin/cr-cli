@@ -48,10 +48,9 @@ function realSpawn(argv) {
   if (r.error) {
     throw r.error;
   }
-  // CodeRabbit review #32 nitpick 2: timeout / external SIGTERM 等の signal
-  // 終了を silent に exit 0 として通せないため、明示的に non-zero exit + stderr
-  // で通知する (caller の safeRun が catch するため throw でも OK だが、
-  // signal name を message に残すため return 経路にする)。
+  // timeout / external SIGTERM 等の signal 終了を silent に exit 0 として通せない
+  // ため、明示的に non-zero exit + stderr で通知する (caller の safeRun が catch
+  // するため throw でも OK だが、signal name を message に残すため return 経路)。
   if (r.signal) {
     return {
       exitCode: 1,
@@ -111,8 +110,8 @@ function validateReviewArgs(argv) {
         value !== undefined &&
         (flag === "--base" || flag === "--base-commit" || flag === "--dir" || flag === "--config")
       ) {
-        // shell metachar / NUL / CR / newline reject (Windows CR 対応含む、
-        // CodeRabbit review #32 nitpick 1)
+        // shell metachar / NUL / CR / LF reject (Windows CRLF 入力でも CR 単体
+        // で取りこぼさない)
         if (/[\0\r\n;&|`$<>]/.test(value)) {
           console.error(
             `cr-cli review: rejecting flag value with shell metachar/NUL: ${flag}=${JSON.stringify(value)}`,
@@ -151,7 +150,7 @@ if (subcommand === "detect") {
   // stdout 取得は機能するが、`pseudo-coderabbit-loop.md` Step 2.0.1 で stdout
   // を NDJSON tmp file に redirect する workflow との意図整合のため、stdout を
   // 明示 inherit (parent の redirect が直接子 process に伝わる) のまま、stderr
-  // のみ inherit する形に維持する (CodeRabbit review #32 nitpick 3 の意図整合)。
+  // のみ inherit する形に維持する (workflow との意図整合)。
   // Note: spawnSync の stdio "inherit" は POSIX 親 fd を継承するため
   // `node ... > out.ndjson` で out.ndjson に直接書ける。"pipe" にすると
   // r.stdout に取得後 caller が write する 2 段経路になるが、本 CLI の
