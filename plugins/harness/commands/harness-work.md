@@ -1,14 +1,43 @@
 ---
 name: harness-work
-description: "Plans.md 駆動の実装ディスパッチャ (v4)。タスク数で Auto Mode Detection し内部的に `/tdd-implement` v2 (Solo) or `/parallel-worktree` v1 (Parallel/Breezing) に委譲、TDD + Codex チーム並列 + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオンの完全品質ゲートを常時強制する。バグ修正・機能追加のサブフローを統合。Use when user mentions: implement, execute, fix bug, add feature, /harness-work, /work, /breezing, /fix-bug, /add-feature, --parallel. Do NOT load for: planning (use harness-plan), code review (use harness-review), release (use harness-release)."
-description-ja: "Harness v4 統合実行ディスパッチャ。Plans.md 駆動で Auto Mode Detection (1件=Solo、2-3件=Parallel、4件以上=Breezing) し、内部的に /tdd-implement v2 or /parallel-worktree v1 に委譲することで TDD + Codex チーム + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオン (Phase 7) の完全品質ゲートを常時強制。以下で起動: 実装して、バグ修正、機能追加、/harness-work、/work、/breezing、/fix-bug、/add-feature、--parallel。プランニング・レビュー・リリース・セットアップには使わない。"
+description: "Plans.md 駆動の実装 + merge orchestration ディスパッチャ (v5)。タスク数で Auto Mode Detection (Solo / Parallel / Breezing) し内部的に `/tdd-implement` v2 / `/parallel-worktree` v1 に委譲、また `--merge` flag または detect_merge_orchestration() シグナル成立で `/harness-merge-train` (multi-PR squash merge) に委譲し、TDD + Codex チーム並列 + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオン + skill connectivity の完全品質ゲートを常時強制する。バグ修正・機能追加・複数 PR squash merge orchestration を統合。Use when user mentions: implement, execute, fix bug, add feature, merge multiple PRs, /harness-work, /work, /breezing, /fix-bug, /add-feature, --parallel, --merge. Do NOT load for: planning (use harness-plan), code review (use harness-review), release (use harness-release)."
+description-ja: "Harness v5 統合実行 + merge orchestration ディスパッチャ。Plans.md 駆動で Auto Mode Detection (1件=Solo、2-3件=Parallel、4件以上=Breezing) しつつ、複数 PR の squash merge 局面を `--merge` flag / detect_merge_orchestration() シグナルで検知して `/harness-merge-train` に委譲。内部的に /tdd-implement v2 / /parallel-worktree v1 / /harness-merge-train (v5 で新設) に委譲することで TDD + Codex チーム + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオン (Phase 7) + Skill connectivity 原則 の完全品質ゲートを常時強制。以下で起動: 実装して、バグ修正、機能追加、複数 PR を merge、/harness-work、/work、/breezing、/fix-bug、/add-feature、--parallel、--merge。プランニング・レビュー・リリース・セットアップには使わない。"
 allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput", "Skill"]
-argument-hint: "[all|task-number|N-M] [--fix <説明>|--feature <機能名>] [--parallel N] [--breezing] [--sequential] [--no-commit] [--dry-run]"
+argument-hint: "[all|task-number|N-M|PR# ...] [--fix <説明>|--feature <機能名>] [--parallel N] [--breezing] [--sequential] [--merge] [--no-commit] [--dry-run]"
 ---
 
-# Harness Work (v4) — Plans.md 駆動ディスパッチャ
+# Harness Work (v5) — Plans.md 駆動 + merge orchestration ディスパッチャ
+
+**v5 改修要旨 (2026-04-26)**: Step 2 モード判定に `merge` mode を追加し、複数 PR の squash merge orchestration を **`/harness-merge-train` (v5 で新設)** に委譲する経路を spec に明記。これで prior review で認識された「review/merge orchestration が dispatcher のスコープ外」spec gap を構造解消。**Skill connectivity 原則** (user / agent から直接 Bash / gh CLI で多 PR orchestration を実行するのは構造規律違反、skill 内部実装として gh / git を呼ぶのは設計) を v5 で固定する。v4 互換性 (solo / parallel / breezing / sequential / dry-run / fix-bug / add-feature) は破壊しない。
 
 **v4 改修要旨 (2026-04-19)**: 内部委譲化。`/harness-work` はタスク抽出・モード判定・担当表更新の薄いディスパッチャに徹し、実装エンジンは `/tdd-implement` v2 (単一) / `/parallel-worktree` v1 (並列) に委譲。これで TDD + Codex チーム + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオンの完全品質ゲートが**常時強制**される。v3 以前で発覚した「worker agent が品質ゲート省略」問題の構造的解消 (詳細は CHANGELOG.md 参照)。
+
+---
+
+## Skill connectivity 原則 (v5 で固定)
+
+> **user / agent から直接 Bash / gh CLI で多 PR orchestration / review / merge
+> を実行するのは構造規律違反**。本 dispatcher と委譲先 skill の **内部実装** が
+> `gh` / `git` を呼び出すのは設計 (skill が wrap する責務) であり、本節の原則
+> と矛盾しない。
+>
+> | 作業領域 | user / agent から呼ぶべき skill |
+> |---|---|
+> | 実装 task (Plans.md 駆動 / 単発) | `/harness-work` → `/tdd-implement` v2 / `/parallel-worktree` v1 |
+> | **merge orchestration (複数 PR squash merge)** | **`/harness-work` (`--merge`) → `/harness-merge-train` (v5 で新設)** |
+> | 単一 feature → dev/main の linear merge | `/branch-merge` (本 dispatcher のスコープ外) |
+> | Real CR 単一 PR | `/coderabbit-review` |
+> | Pseudo CR (push 前) | `/pseudo-coderabbit-loop --local` |
+> | Codex セカンドオピニオン | `/codex-team` |
+> | Codex 並列実装 / 検証 | `harness:codex-sync` agent |
+> | handoff 管理 | `/session-handoff` (init / update / archive / check) |
+>
+> skill が未存在の作業領域は **「spec ギャップ」** と認識し新 skill 設計を優先
+> する。**user / agent からの手動 rebase / 手動 force-push / 手動 squash merge
+> 等の skill bypass は consumer-side discipline ledger に append-only 自動追記**
+> する (consumer プロジェクトが `harness.config.json` の
+> `qualityGates.disciplineLedgerPath` で ledger path を宣言する想定)。緊急避難
+> は許容するが透明性確保 (隠蔽撲滅) を最優先する。
 
 ---
 
@@ -156,7 +185,7 @@ dispatcher / state mutation を行うコードは **両 task 形式を accept �
 
 未対応の旧コードパス (Plans.md 直書き hardcode 等) があれば Step 0 で警告を出し、`taskTrackerMode === "plans"` のときに限定して動作させる (handoff mode では skip)。
 
-### 判定フロー
+### 判定フロー (v5: merge mode 最優先 → 既存 v4 経路)
 
 ```python
 # Step 1: Plans.md から対象タスクを抽出、depends_on で DAG 構築
@@ -166,8 +195,11 @@ n_groups = len(groups)
 # Step 2: wt:* ラベルで worktree 使用可否を決定
 wt_labels = {task.wt_label for task in selected_tasks}
 
-# Step 3: モード選択
+# Step 3: モード選択 (v5: merge mode が最優先で評価される)
 if args.dry_run: mode = "dry-run"
+elif args.merge or detect_merge_orchestration(args, plans_md, backlog_md):
+    # v5 新規: 複数 PR の squash merge orchestration → /harness-merge-train に委譲
+    mode = "merge"
 elif args.breezing: mode = "breezing"
 elif args.parallel: mode = "parallel-forced"
 elif args.sequential: mode = "sequential"
@@ -183,6 +215,51 @@ else:
     elif n_groups <= 3: mode = "parallel-worktree"    # -> /parallel-worktree
     else: mode = "breezing-worktree"                  # -> /parallel-worktree (cap 4)
 ```
+
+#### `detect_merge_orchestration()` シグナル定義 (v5)
+
+以下 4 シグナルのいずれか成立で merge mode と判定する (OR 条件):
+
+```python
+def detect_merge_orchestration(args, plans_md, backlog_md) -> bool:
+    # Signal 4 を最初に評価 (明示意図、最強)
+    # `--merge` flag が明示指定 (args.merge は本関数の caller で既に評価済、保険)
+    if getattr(args, "merge", False):
+        return True
+
+    # Signal 1: 引数 PR 番号 ≥ 2 (positional 数字 token を 2 件以上含む)
+    pr_args = [tok for tok in args.positional if tok.isdigit()]
+    if len(pr_args) >= 2:
+        return True
+
+    # Signal 2: handoff backlog の Top Priority に merge orchestration を示す keyword あり
+    backlog_text = read_optional(backlog_md)
+    merge_keywords = ["merge orchestration", "Clear 判定 + merge", "PR merge",
+                      "squash merge", "merge train", "/harness-merge-train"]
+    if any(kw in backlog_text[:3000] for kw in merge_keywords):  # Top Priority 領域
+        return True
+
+    # Signal 3: gh pr list --state=open で自分の open PR ≥ 2 件、かつ全て CI green
+    # **default opt-out** (config で work.allowMergeAutoSignal3 == True のとき限定)
+    # 理由: 通常開発で複数 open PR が存在する状態は普通であり、自動 merge mode は
+    #       既存 mode (solo / parallel / fix) を意図せず破壊する false-trigger リスク高。
+    #       明示 opt-in した repo のみで Signal 3 を有効化する。
+    if config_bool("work.allowMergeAutoSignal3", default=False):
+        open_prs = gh("pr", "list", "--state=open", "--author=@me", "--json=number,statusCheckRollup")
+        green_open = [pr for pr in open_prs if all_checks_green(pr)]
+        if len(green_open) >= 2:
+            # 追加 guard: positional / --fix / --feature が一切ない
+            # (実装意図のある起動を merge にルートしない、最後の防波堤)
+            if not args.positional and not args.fix and not args.feature:
+                return True
+
+    return False
+```
+
+`detect_merge_orchestration()` の出力は **opt-in/opt-out** に従う:
+`harness.config.json` の `work.allowMergeMode` (default `true`) が `false` のとき、
+全シグナル成立でも merge mode 判定を skip し v4 互換経路を取る。Signal 3 のみ
+更に保守的な default opt-out (`work.allowMergeAutoSignal3` default `false`)。
 
 ### モード対応表
 
@@ -499,11 +576,15 @@ Plans.md の「未着手」セクションを parse し、以下の優先順位�
 
 ---
 
-### Step 2: モード判定
+### Step 2: モード判定 (v5: merge mode 最優先で評価)
 
 ```python
 if args.dry_run:
     mode = "dry-run"
+elif args.merge or detect_merge_orchestration(args, plans_md, backlog_md):
+    # v5 新規: 複数 PR の squash merge orchestration
+    # → /harness-merge-train に委譲。Step 4.6 参照
+    mode = "merge"
 elif args.breezing:
     mode = "breezing"  # -> /parallel-worktree
 elif args.parallel:
@@ -511,19 +592,28 @@ elif args.parallel:
 elif args.sequential:
     mode = "sequential"  # -> /tdd-implement を逐次
 else:
-    # Auto Detection
+    # Auto Detection (件数ベース、v4 互換、n_tasks == 1 / 2-3 / 4+ で分岐)
     n_tasks = len(selected_tasks)
     if n_tasks == 0: mode = "no-task"
     elif n_tasks == 1: mode = "solo"        # -> /tdd-implement v2
     elif n_tasks <= 3: mode = "parallel"    # -> /parallel-worktree
     else: mode = "breezing"                 # -> /parallel-worktree (並列度上限)
 
-# worktree 非対応プロジェクト / wt:avoid タスクなら Solo に降格
-if harness_config.worktree_enabled == False:
+# worktree 非対応プロジェクト / wt:avoid タスクなら Solo に降格 (merge mode は不変)
+if mode != "merge" and harness_config.worktree_enabled == False:
     mode = "sequential"
-if any(task.has_label("wt:avoid") for task in selected_tasks):
+if mode != "merge" and any(task.has_label("wt:avoid") for task in selected_tasks):
     warn_and_downgrade_to_sequential()
 ```
+
+**merge mode の `detect_merge_orchestration()` 4 シグナル** (詳細は前掲「判定フロー」section):
+
+1. **PR 番号 ≥ 2** が positional 引数に含まれる (例: `/harness-work 30 31 32`)
+2. **handoff backlog の Top Priority に merge keyword** あり ("merge orchestration" / "Clear 判定 + merge" / "/harness-merge-train" 等)
+3. **`gh pr list --state=open` で自分の open PR ≥ 2 件**、かつ全て CI green
+4. **ユーザー明示 `--merge` flag**
+
+`harness.config.json` の `work.allowMergeMode == false` で全シグナル無効化可能 (default `true`)。
 
 ---
 
@@ -563,14 +653,14 @@ Plans.md 未使用プロジェクトでは scoping comment / task file のみ作
 coordinator (LLM) は Pre-flight で確定した `$PROFILE` の **実値** を args 文字列内に直接埋め込んでから Skill を呼び出す責任を持つ:
 
 ```
-# テンプレート表記 (PROFILE は事前に実値へ置換する)
-Skill({skill: "tdd-implement", args: "<task description + AC + forbidden files> --profile=${PROFILE}"})
+# テンプレート表記 (<PROFILE> は spec 上のプレースホルダ、coordinator が実値を埋め込む)
+Skill({skill: "tdd-implement", args: "<task description + AC + forbidden files> --profile=<PROFILE>"})
 
 # 実際の呼出例 (coordinator が PROFILE=assertive を解決した場合)
 Skill({skill: "tdd-implement", args: "<task description + AC + forbidden files> --profile=assertive"})
 ```
 
-**禁止**: `--profile=${PROFILE}` の literal 文字列をそのまま Skill args に渡す (受け手側で置換されず literal として伝わる)。
+**禁止**: `--profile=${PROFILE}` (`${VAR}` 一般展開は公式未サポート) や `--profile=<PROFILE>` (placeholder のまま) を Skill args に literal で渡す (受け手側で置換されず literal として伝わる)。必ず実値 (chill / assertive / strict) を埋め込んでから呼ぶ。
 
 `/tdd-implement` v2 が以下を完全実行:
 - Phase 1 計画
@@ -587,8 +677,8 @@ Skill({skill: "tdd-implement", args: "<task description + AC + forbidden files> 
 **handoff materialize 必須** (4.1 と同じ原則)。coordinator は `$PROFILE` を実値に置換してから Skill を呼び出す:
 
 ```
-# テンプレート表記
-Skill({skill: "parallel-worktree", args: "--max-parallel=<N> --feature-branch=<branch> --profile=${PROFILE} --spec=<inline-spec>"})
+# テンプレート表記 (<PROFILE> は spec 上のプレースホルダ)
+Skill({skill: "parallel-worktree", args: "--max-parallel=<N> --feature-branch=<branch> --profile=<PROFILE> --spec=<inline-spec>"})
 
 # 実際の呼出例 (PROFILE=strict の場合)
 Skill({skill: "parallel-worktree", args: "--max-parallel=3 --feature-branch=feature/foo --profile=strict --spec=<inline-spec>"})
@@ -681,6 +771,48 @@ Auto Mode Detection 結果:
   worktrees_to_create: [wt-task-3, wt-task-5, wt-task-7]
   coderabbit_reviews: 3 件 (Pro rate limit 5/h 以内、OK)
 ```
+
+#### 4.6 Merge mode (v5 新規) — `/harness-merge-train` に委譲
+
+`mode == "merge"` のとき、複数 PR の squash merge orchestration を `/harness-merge-train` に委譲する。**handoff materialize 規約 (4.1 と同じ原則) は merge mode でも継承され、PROFILE / PR 引数は実値で渡す**。`${VAR}` 一般展開は Anthropic 公式 slash command で未サポート (`$ARGUMENTS` / `$ARGUMENTS[N]` / `$N` 0-based + CLAUDE_* のみ保証) のため、coordinator は `<PROFILE>` placeholder を必ず実値 (chill / assertive / strict) に置換してから呼び出す。
+
+**PR materialization 規約 (各シグナル別)**:
+
+| 検出シグナル | PR args の構築方法 |
+|---|---|
+| Signal 1 (positional PR ≥ 2) | `args.positional` の数字 token を順序保持で渡す: `"30 31 32"` |
+| Signal 2 (handoff backlog merge keyword) | backlog から `pr:` field を抽出、PR 番号順にソート: `"31 33 34"` |
+| Signal 3 (open PR ≥ 2 + guard 通過) | `gh pr list --state=open --author=@me --json=number` の number array を昇順 |
+| Signal 4 (`--merge` flag のみ) | `args.positional` から数字 token、または `--filter` 経由で動的 fetch |
+
+```
+# テンプレート表記 (<PROFILE> は spec 上のプレースホルダ)
+Skill({skill: "harness-merge-train", args: "<PR# ...> --profile=<PROFILE>"})
+
+# 実際の呼出例 (PROFILE=assertive、PR=30 31 32 を merge する場合)
+Skill({skill: "harness-merge-train", args: "30 31 32 --profile=assertive"})
+
+# --filter 経由 (positional 引数なしで自分の open PR を全件)
+Skill({skill: "harness-merge-train", args: "--filter='.[] | select(.author.login==\"me\" and .state==\"OPEN\")' --profile=chill"})
+```
+
+`/harness-merge-train` (v5 で新設) が以下を完全実行:
+
+- **M0 Pre-flight** (mergeable / CI / Clear 判定 / rate-limit marker)
+- **M1 Rebase** (CONFLICTING 時、`origin/<base>` 基準 / dist auto-build conflict 解消 / source conflict は fail-fast)
+- **M2 Pre-merge gate** (`harness:codex-sync` G4 + `/pseudo-coderabbit-loop --local` G5)
+- **M3 Push** (`--force-with-lease` 推奨)
+- **M4 CI wait** (Monitor で `gh pr checks` green まで)
+- **M5 Real CodeRabbit Clear 判定** (`/coderabbit-review` G6、Step 7.4 マトリクス)
+- **M6 Codex Phase 7** (`/codex-team adversarial` G7)
+- **M7 Squash merge** (`gh pr merge --squash`)
+- **M8 Worktree cleanup**
+- **M9 Handoff sync** (`/session-handoff update` G8)
+- 全 PR 完了後 **Loop exit ritual** (`/session-handoff archive` で session 単位 archive)
+
+**fail-fast**: 任意 phase で失敗したら該当 PR で停止、残 PR は touch せず user に判断委譲。skill bypass / 規律違反検出時は **鉄則 7 ledger に append-only 自動追記** (`.claude/rules/implementation-workflow.md` 参照)。
+
+詳細仕様 / 入力 / `--filter` / `--order` / `--dry-run` / `--max-iterations` / `--no-commit` 等の flags は `commands/harness-merge-train.md` 参照。
 
 ---
 
@@ -847,12 +979,15 @@ v3 のコマンド互換は維持される (`--parallel N` / `--breezing` / `--f
 |---|---|---|
 | `/tdd-implement` v2 | 単一タスク実装エンジン (primitive) | `/harness-work` Solo / Sequential が呼ぶ |
 | `/parallel-worktree` v1 | worktree 並列オーケストレータ | `/harness-work` Parallel / Breezing が呼ぶ |
-| `/pseudo-coderabbit-loop` | 疑似 CodeRabbit (Phase 5.5) | `/tdd-implement` v2 が呼ぶ |
-| `/coderabbit-review` | 本物 CodeRabbit 監視 (Phase 6) | `/tdd-implement` v2 / `/parallel-worktree` が呼ぶ |
-| `/codex-team` | Codex セカンドオピニオン (Phase 7) | `/tdd-implement` v2 が呼ぶ |
+| **`/harness-merge-train` v1** (v5 で新設) | **複数 PR squash merge orchestrator (M0-M9 phase chain)** | **`/harness-work` v5 Merge mode が呼ぶ** |
+| `/pseudo-coderabbit-loop` | 疑似 CodeRabbit (Phase 5.5) | `/tdd-implement` v2 / `/harness-merge-train` M2.2 が呼ぶ |
+| `/coderabbit-review` | 本物 CodeRabbit 監視 (Phase 6) | `/tdd-implement` v2 / `/parallel-worktree` / `/harness-merge-train` M5 が呼ぶ |
+| `/codex-team` | Codex セカンドオピニオン (Phase 7) | `/tdd-implement` v2 / `/harness-merge-train` M2.1 / M6 が呼ぶ |
+| `/branch-merge` | 単一 feature → dev/main の linear merge | 本 dispatcher のスコープ外 (sibling、別 use case) |
 | `/harness-plan` | 計画・Plans.md 管理 | `/harness-work` の前段で使う |
 | `/harness-review` | 多角的レビュー (実装後の独立レビュー) | 実装後任意、`/harness-work` からは呼ばない |
 | `/harness-release` | リリース / バージョンバンプ | 実装完了後任意 |
+| `/session-handoff` | handoff init / update / archive / check | `/harness-work` Step 0a / Closing ritual / `/harness-merge-train` M9 / Loop exit が呼ぶ |
 
 ---
 
@@ -911,6 +1046,7 @@ Gate 1-5 は worktree / Agent 内で blocking 実行、Gate 6 は coordinator �
 
 ## スキル更新履歴
 
+- **v5 (2026-04-26)**: Step 2 モード判定に **`merge` mode 最優先評価** を追加し、複数 PR の squash merge orchestration を **`/harness-merge-train` (v5 で新設)** に委譲する経路を spec 化。`detect_merge_orchestration()` シグナル (PR 番号 ≥ 2 / handoff backlog merge keyword / `gh pr list` open PR ≥ 2 + 追加 guard / `--merge` flag) で auto-detect (Signal 3 は default opt-out、`work.allowMergeAutoSignal3: true` で opt-in)。`--merge` flag を `argument-hint` に追加。**Skill connectivity 原則** (user / agent から直接 Bash / gh CLI で多 PR orchestration は構造規律違反、skill 内部で gh/git を使うのは設計、skill bypass は consumer-side discipline ledger に append-only 自動追記) を frontmatter 直下に固定 box として宣言。Step 4 に **4.6 Merge mode** delegation section 追加 (PROFILE materialize 規約継承)。関連スキル table に `/harness-merge-train` / `/branch-merge` / `/session-handoff` を追加 (skill connectivity の網羅性確保)。**v4 互換性は破壊しない** (solo / parallel / breezing / sequential / dry-run / fix-bug / add-feature 経路は不変、merge mode は最優先評価で先取り)。
 - **v4.2 (2026-04-22 Phase λ)**: 前身プロジェクト固有の pipeline 検証サブフローフラグ (ダブルダッシュ prefix 付き `test-pipeline`) を除去 (breaking change)。`harness-work.md` のフラグ定義 / mode table / pseudocode / 独立サブフローセクション / description frontmatter を合わせて 6+2 箇所削除、generality guard pattern B-2f で再導入を CI blocking。移行先: project-local skill (例: `.claude/skills/<project>-local-rules/references/pipeline-check.md`) 経由で受ける。歴史的記述 (v3/v2/v1 の `test-pipeline` 言及) は経緯保持のため残置。参照: docs/maintainer/leak-audit-2026-04-22.md の Phase λ 項目。
 - **v4.1 (2026-04-19 Codex 調査反映)**: Auto Mode Detection v2 (依存グラフ考慮、独立グループ数ベース)、`--affected` オプション追加 (Nx 流)、Phase fan-out パターン明示化、`harness.config.json` 拡張フィールド詳細化 (tddEnforce / worktree.forceDisableReasons / codeRabbit bucket size)、品質ゲート一覧、follow-up notes セクション、フォールバック戦略追加。
 - **v4 (2026-04-19)**: 内部委譲化。`/tdd-implement` v2 / `/parallel-worktree` v1 への委譲レイヤーに刷新。品質ゲート常時強制。v3 以前で発覚した「worker 丸投げで品質ゲート省略」問題を構造解消 (詳細は CHANGELOG.md)。
