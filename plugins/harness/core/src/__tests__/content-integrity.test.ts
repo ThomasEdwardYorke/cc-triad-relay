@@ -609,10 +609,13 @@ describe("coderabbit-review command の Step 2.6 chat bucket helper", () => {
   // 全 content に対する判定だと別 section の `exit 1` 等を拾って false-positive
   // するため、scope を限定 (regression guard の `2 要件組合せ で false-positive
   // 回避` rule に従う)。
+  // 抽出終端は「次の `### Step <数字>.` 見出し全般」(2.7 / 3 / 3.1 等いずれも)、
+  // または `## ` 大見出し、または末尾。`Step 3` 固定にすると将来 `Step 2.7` が
+  // 追加されたときに別 section が混入する。
+  const STEP26_EXTRACTOR =
+    /### Step 2\.6\.[\s\S]*?(?=\n### Step \d+(?:\.\d+)?\.\s|\n## [^#]|$)/;
   const step26 = (() => {
-    const m = content.match(
-      /### Step 2\.6\.[\s\S]*?(?=\n### Step 3\.|\n## [^#]|$)/,
-    );
+    const m = content.match(STEP26_EXTRACTOR);
     return m?.[0] ?? "";
   })();
 
@@ -659,6 +662,35 @@ describe("coderabbit-review command の Step 2.6 chat bucket helper", () => {
     expect(step26).toMatch(
       /(?:cooldown|temporary block|chat bucket は通常|chat[\s\S]{0,40}独立)/i,
     );
+  });
+
+  it("STEP26_EXTRACTOR は Step 2.7 / Step 3.1 等の派生見出しでも terminate する", () => {
+    // 将来 `### Step 2.7.` `### Step 3.1.` が追加されたときに、
+    // Step 2.6 の抽出範囲が次見出し直前まで限定されることを synthetic
+    // markdown で固定する。`Step 3` 固定の lookahead では 2.7 / 3.1 を素通し
+    // してしまい false-positive 抽出になる。
+    const synthetic = [
+      "### Step 2.5. previous",
+      "previous body",
+      "",
+      "### Step 2.6. Chat bucket helper",
+      "marker-2.6-only",
+      "more 2.6 body",
+      "",
+      "### Step 2.7. hypothetical future section",
+      "marker-2.7-must-not-leak",
+      "",
+      "### Step 3. next",
+      "marker-3-must-not-leak",
+      "",
+      "## next h2",
+      "h2 body",
+    ].join("\n");
+    const m = synthetic.match(STEP26_EXTRACTOR);
+    expect(m).not.toBeNull();
+    expect(m?.[0]).toContain("marker-2.6-only");
+    expect(m?.[0]).not.toContain("marker-2.7-must-not-leak");
+    expect(m?.[0]).not.toContain("marker-3-must-not-leak");
   });
 });
 
