@@ -17,6 +17,14 @@ export interface WorktreeMuxOptions {
   // Dependency injection for testing.
   worktreeListSource?: () => string;
   commandDetector?: (cmd: string) => boolean;
+  /**
+   * Template for the cmux invocation. `{path}` is replaced with the
+   * shell-quoted worktree path; the result is passed to `execSync` as a
+   * shell command. The default value is a best-effort hypothesis based on
+   * the cmux CLI shape; verify against your installed version and
+   * override via the `CMUX_CMD_TEMPLATE` env var if the cmux release you
+   * use exposes a different sub-command.
+   */
   cmuxCommandTemplate?: string;
   tmuxSessionName?: string;
 }
@@ -224,21 +232,31 @@ function buildCommands(
   }
 
   // tmux: first worktree creates a detached session, subsequent ones split
-  // the window horizontally inside that session.
-  return worktrees.map((wt, i) => {
+  // the window horizontally inside that session. The session is killed
+  // first if one with the same name already exists so that re-running
+  // `harness worktree-mux` does not fail with "duplicate session". The
+  // `|| true` makes the kill-session call idempotent for the
+  // first-time path where the session does not exist yet.
+  const result: string[] = [];
+  worktrees.forEach((wt, i) => {
     const path = shellQuote(wt);
     const target = shellQuote(tmuxSession);
     if (i === 0) {
-      const cmd = withClaude
-        ? `tmux new-session -d -s ${target} -c ${path} ${shellQuote(claudeRunCmd)}`
-        : `tmux new-session -d -s ${target} -c ${path}`;
-      return cmd;
+      result.push(`tmux kill-session -t ${target} 2>/dev/null || true`);
+      result.push(
+        withClaude
+          ? `tmux new-session -d -s ${target} -c ${path} ${shellQuote(claudeRunCmd)}`
+          : `tmux new-session -d -s ${target} -c ${path}`,
+      );
+      return;
     }
-    const cmd = withClaude
-      ? `tmux split-window -t ${target} -h -c ${path} ${shellQuote(claudeRunCmd)}`
-      : `tmux split-window -t ${target} -h -c ${path}`;
-    return cmd;
+    result.push(
+      withClaude
+        ? `tmux split-window -t ${target} -h -c ${path} ${shellQuote(claudeRunCmd)}`
+        : `tmux split-window -t ${target} -h -c ${path}`,
+    );
   });
+  return result;
 }
 
 function shellQuote(value: string): string {
@@ -258,9 +276,19 @@ function defaultWorktreeListSource(): string {
   try {
     return execSync("git worktree list --porcelain", {
       encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
+      stdio: ["ignore", "pipe", "pipe"],
     });
-  } catch {
+  } catch (err) {
+    // Distinguish "git not on PATH or current directory is not a repo"
+    // from "repository has no worktrees configured" by surfacing the
+    // failure to stderr. Callers (planWorktreeMux) still observe an
+    // empty string and report "No worktrees found", but the operator
+    // sees the underlying reason instead of a silent miss.
+    process.stderr.write(
+      `[harness worktree-mux] failed to read git worktrees: ${
+        err instanceof Error ? err.message : String(err)
+      }\n`,
+    );
     return "";
   }
 }

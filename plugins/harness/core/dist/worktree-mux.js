@@ -159,21 +159,27 @@ function buildCommands(kind, worktrees, withClaude, cmuxTemplate, tmuxSession) {
         });
     }
     // tmux: first worktree creates a detached session, subsequent ones split
-    // the window horizontally inside that session.
-    return worktrees.map((wt, i) => {
+    // the window horizontally inside that session. The session is killed
+    // first if one with the same name already exists so that re-running
+    // `harness worktree-mux` does not fail with "duplicate session". The
+    // `|| true` makes the kill-session call idempotent for the
+    // first-time path where the session does not exist yet.
+    const result = [];
+    worktrees.forEach((wt, i) => {
         const path = shellQuote(wt);
         const target = shellQuote(tmuxSession);
         if (i === 0) {
-            const cmd = withClaude
+            result.push(`tmux kill-session -t ${target} 2>/dev/null || true`);
+            result.push(withClaude
                 ? `tmux new-session -d -s ${target} -c ${path} ${shellQuote(claudeRunCmd)}`
-                : `tmux new-session -d -s ${target} -c ${path}`;
-            return cmd;
+                : `tmux new-session -d -s ${target} -c ${path}`);
+            return;
         }
-        const cmd = withClaude
+        result.push(withClaude
             ? `tmux split-window -t ${target} -h -c ${path} ${shellQuote(claudeRunCmd)}`
-            : `tmux split-window -t ${target} -h -c ${path}`;
-        return cmd;
+            : `tmux split-window -t ${target} -h -c ${path}`);
     });
+    return result;
 }
 function shellQuote(value) {
     return `'${value.replace(/'/g, "'\\''")}'`;
@@ -191,10 +197,16 @@ function defaultWorktreeListSource() {
     try {
         return execSync("git worktree list --porcelain", {
             encoding: "utf-8",
-            stdio: ["ignore", "pipe", "ignore"],
+            stdio: ["ignore", "pipe", "pipe"],
         });
     }
-    catch {
+    catch (err) {
+        // Distinguish "git not on PATH or current directory is not a repo"
+        // from "repository has no worktrees configured" by surfacing the
+        // failure to stderr. Callers (planWorktreeMux) still observe an
+        // empty string and report "No worktrees found", but the operator
+        // sees the underlying reason instead of a silent miss.
+        process.stderr.write(`[harness worktree-mux] failed to read git worktrees: ${err instanceof Error ? err.message : String(err)}\n`);
         return "";
     }
 }

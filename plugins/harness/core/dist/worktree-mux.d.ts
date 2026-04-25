@@ -12,6 +12,14 @@ export interface WorktreeMuxOptions {
     withClaude: boolean;
     worktreeListSource?: () => string;
     commandDetector?: (cmd: string) => boolean;
+    /**
+     * Template for the cmux invocation. `{path}` is replaced with the
+     * shell-quoted worktree path; the result is passed to `execSync` as a
+     * shell command. The default value is a best-effort hypothesis based on
+     * the cmux CLI shape; verify against your installed version and
+     * override via the `CMUX_CMD_TEMPLATE` env var if the cmux release you
+     * use exposes a different sub-command.
+     */
     cmuxCommandTemplate?: string;
     tmuxSessionName?: string;
 }

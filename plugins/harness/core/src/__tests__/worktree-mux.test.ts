@@ -65,8 +65,11 @@ describe("planWorktreeMux", () => {
       commandDetector: (cmd) => cmd === "tmux",
     });
     expect(plan.multiplexerUsed).toBe("tmux");
-    expect(plan.commands[0]).toMatch(/tmux new-session/);
-    expect(plan.commands[1]).toMatch(/tmux split-window/);
+    // tmux plan prefixes a defensive `kill-session ... || true` so reruns
+    // don't fail with a duplicate-session error.
+    expect(plan.commands[0]).toMatch(/tmux kill-session.*\|\| true/);
+    expect(plan.commands[1]).toMatch(/tmux new-session/);
+    expect(plan.commands[2]).toMatch(/tmux split-window/);
   });
 
   it("case 3: auto + neither → degraded mode", () => {
@@ -137,7 +140,15 @@ describe("planWorktreeMux", () => {
       worktreeListSource: () => SAMPLE_PORCELAIN,
       commandDetector: (cmd) => cmd === "tmux",
     });
-    for (const c of plan.commands) {
+    // Pane-creating commands (`new-session` / `split-window`) must each
+    // embed `claude`. The defensive `kill-session` guard never carries
+    // claude — it just clears any leftover session before the panes are
+    // recreated.
+    const paneCommands = plan.commands.filter(
+      (c) => !c.startsWith("tmux kill-session"),
+    );
+    expect(paneCommands.length).toBeGreaterThan(0);
+    for (const c of paneCommands) {
       expect(c).toMatch(/claude/);
     }
   });
@@ -212,7 +223,10 @@ describe("runPlan", () => {
     });
     expect(code).toBe(0);
     expect(executed).toHaveLength(plan.commands.length);
-    expect(executed[0]).toMatch(/tmux new-session/);
+    // The first executed command is the idempotent kill-session guard,
+    // followed by new-session, split-window, ...
+    expect(executed[0]).toMatch(/tmux kill-session/);
+    expect(executed[1]).toMatch(/tmux new-session/);
   });
 
   it("returns 0 and prints worktrees for degraded plan", () => {
