@@ -2,7 +2,7 @@
 name: pseudo-coderabbit-loop
 description: "Codex による疑似 CodeRabbit レビューを内部ループで回し、本物 CodeRabbit へは絞り込んだ状態で push する統合スキル。CodeRabbit の rate limit (Pro: 5/h) を回避しつつレビュー品質を維持する。Use after implementing a feature, before requesting real CodeRabbit review, especially in parallel worktree workflows. Also used to resume a loop when CodeRabbit is rate-limited."
 allowed-tools: ["Read", "Grep", "Glob", "Bash", "Edit", "Write", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput"]
-argument-hint: "[pr-number|local|profile|worktree|max-codex-parallel]"
+argument-hint: "[pr-number|local|profile|worktree|max-codex-parallel|no-cache]"
 ---
 
 # `/pseudo-coderabbit-loop` — Codex 疑似 CodeRabbit → 本物 CodeRabbit の反復ループ
@@ -44,6 +44,7 @@ argument-hint: "[pr-number|local|profile|worktree|max-codex-parallel]"
 - `--profile=chill|assertive|strict`: Codex に適用する profile (未指定なら `.coderabbit.yaml` の `reviews.profile` を読む、fallback は `chill`)
 - `--worktree=<path>`: 対象の worktree 絶対パス (未指定なら `git rev-parse --show-toplevel` の結果)
 - `--max-codex-parallel=N` (default 1, integer >= 1): **本 skill 内では現状 no-op**。本 skill は Step 2 で `coderabbit-mimic` agent を 1 個だけ spawn するため、複数 Codex を同時に走らせる経路はない。実際の Codex 並列度制御は `/parallel-worktree` Phase 4 (各 worker の `node codex-companion.mjs task` 呼出) で `scripts/codex-semaphore.sh` 経由で発火する。本 skill が flag を受け取るのは将来 multi-spawn 設計 (例: 同 PR 内 stage 1 軽量 + stage 2 詳細の並列、または 1 PR を chunk 化して coderabbit-mimic を複数 spawn する設計) に備えた**先取り argv 接点**としての位置付けで、現時点で値を渡しても動作は変わらない。誤解を避けるためこの no-op 性は本 spec で明示する
+- `--no-cache`: Step 1.5 の diff fingerprint cache を bypass し、必ず `coderabbit-mimic` agent で再 review する。`.coderabbit.yaml` を編集したが path_instructions_hash が同じになる semantic-only 変更 (例: 既存ルールに別表記を加える等) で再 review を強制したいときに使う。通常は cache の deterministic key (diff + profile + yaml + path_instructions_hash) で十分なため明示指定不要
 
 ---
 
@@ -91,6 +92,7 @@ CLI_WORKTREE=""
 CLI_LOCAL=""
 CLI_PR=""
 CLI_MAX_CODEX_PARALLEL=""
+CLI_NO_CACHE=""
 for tok in "${TOKENS[@]}"; do
   case "$tok" in
     --profile=chill|--profile=assertive|--profile=strict)
@@ -112,6 +114,9 @@ for tok in "${TOKENS[@]}"; do
         echo "ERROR: --max-codex-parallel must be integer >= 1 (got '$v')" >&2
         exit 1
       fi
+      ;;
+    --no-cache)
+      CLI_NO_CACHE="yes"
       ;;
     --local)
       CLI_LOCAL="yes"
@@ -284,6 +289,70 @@ if [ "$MODE" = "pr" ]; then
 fi  # Step 1.2 is PR-mode only
 ```
 
+### Step 1.5. Diff fingerprint cache lookup (NEW)
+
+**目的**: 同 commit hash + 同 profile + 同 `.coderabbit.yaml` + 同 path_instructions の組合せが過去に review 済みなら、再実行を 100% skip して rate-limit / Codex token 消費を回避する。
+
+**Cache key**: `SHA-256(diff || \0 || profile || \0 || yaml || \0 || path_instructions_hash)` (collision-safe boundary delimiter)
+**Cache loc**: `<WORKTREE>/.coderabbit-cache/<fingerprint>.json`
+**Eviction**: 自動なし (commit hash 変われば新 fingerprint で別ファイル、stale エントリは `--no-cache` または手動 `node bin/cr-cache invalidate` で除去)
+
+```bash
+CACHE_HIT="false"
+FINDINGS_JSON=""
+
+if [ "$CLI_NO_CACHE" != "yes" ]; then
+  # Plugin root を取得 (本 skill は plugin install 経由で発火するため、HARNESS_PLUGIN_ROOT
+  # 環境変数優先、未設定なら .claude/plugins/marketplaces/cc-triad-relay 既定)。
+  HARNESS_PLUGIN_ROOT="${HARNESS_PLUGIN_ROOT:-$HOME/.claude/plugins/marketplaces/cc-triad-relay/plugins/harness}"
+  CR_CACHE_BIN="${HARNESS_PLUGIN_ROOT}/bin/cr-cache"
+
+  if [ ! -x "$CR_CACHE_BIN" ]; then
+    echo "WARN: cr-cache binary not found at $CR_CACHE_BIN; skipping cache layer" >&2
+  else
+    # diff text と yaml を hash 化して fingerprint 計算
+    DIFF_TEXT=$(git diff "$BASE_BRANCH"..HEAD 2>/dev/null || git diff "$BASE_BRANCH" 2>/dev/null || echo "")
+    CRY_HASH=""
+    if [ -f .coderabbit.yaml ]; then
+      # POSIX shasum (macOS / BSD) と GNU sha256sum の両対応
+      if command -v shasum >/dev/null 2>&1; then
+        CRY_HASH=$(shasum -a 256 .coderabbit.yaml | awk '{print $1}')
+      elif command -v sha256sum >/dev/null 2>&1; then
+        CRY_HASH=$(sha256sum .coderabbit.yaml | awk '{print $1}')
+      fi
+    fi
+    # path_instructions の hash は yaml に含まれているため CRY_HASH と semantic に重複する
+    # が、別 field として分けて将来の path_instructions 別ファイル化 (e.g. path-rules.md)
+    # に備える。現状は yaml hash と同値で OK。
+    PI_HASH="$CRY_HASH"
+
+    FINGERPRINT=$(printf '%s' "$DIFF_TEXT" | node "$CR_CACHE_BIN" compute-fingerprint \
+      --diff-stdin --profile "$PROFILE" \
+      --coderabbit-yaml-hash "$CRY_HASH" \
+      --path-instructions-hash "$PI_HASH" 2>/dev/null || true)
+
+    if [ -n "$FINGERPRINT" ]; then
+      # Lookup. exit 0 = hit (stdout に JSON), exit 1 = miss (stdout 空)
+      CACHED=$(node "$CR_CACHE_BIN" lookup --workdir "$WORKTREE" --fingerprint "$FINGERPRINT" 2>/dev/null) && CACHE_HIT="true" || CACHE_HIT="false"
+      if [ "$CACHE_HIT" = "true" ]; then
+        echo "Cache hit ($FINGERPRINT) — skipping coderabbit-mimic agent invocation"
+        FINDINGS_JSON="$CACHED"
+      else
+        echo "Cache miss ($FINGERPRINT) — running coderabbit-mimic agent"
+      fi
+    fi
+  fi
+fi
+```
+
+`CACHE_HIT="true"` のとき Step 2 (`coderabbit-mimic` agent spawn) を skip して Step 3 (Findings 対応) に進む。
+`CACHE_HIT="false"` のとき通常通り Step 2 へ進み、agent return value を `FINDINGS_JSON` に格納してから Step 2 末尾の cache write hook へ。
+
+**ROI 試算 (一般的なフィーチャーブランチでの想定)**:
+- 同 PR で push 後 lint / typo 系の 1-line revert + redo: cache hit 想定 (diff 同一)
+- rebase で `--force-with-lease` push: 異なる commit hash でも diff 同一なら cache hit
+- 概算 30-40% の review request を skip 可能 (実装 PR で empirical 検証推奨)
+
 ### Step 2. Codex 疑似レビュー実行
 
 `coderabbit-mimic` agent を Agent tool で呼び出し。入力 (公式 tools-reference: `Agent` tool が subagent spawn 用、旧称 `Task` は現行 catalog 未掲載):
@@ -327,6 +396,45 @@ TMP_RESULT="$(mktemp -t pseudo-cr-XXXXXX.json)"
 forward-looking 配線である。本 PR では skill spec で marker inject 方針を明記し、
 複数 PR を並列で本 skill から走らせる場合の coordinator 側上限 (`--max-codex-parallel`)
 だけ先行配線する。
+
+#### Step 2 補遺: Cache write hook (NEW)
+
+`coderabbit-mimic` agent が完了して `FINDINGS_JSON` が確定した直後、cache miss だった場合は次回 run のために結果を永続化する:
+
+```bash
+if [ "$CACHE_HIT" = "false" ] && [ -n "$FINGERPRINT" ] && [ -x "$CR_CACHE_BIN" ] && [ -n "$FINDINGS_JSON" ]; then
+  # FINDINGS_JSON が valid JSON か事前確認 (Codex agent return が text の可能性)
+  if printf '%s' "$FINDINGS_JSON" | python3 -c "import sys, json; json.loads(sys.stdin.read())" 2>/dev/null; then
+    printf '%s' "$FINDINGS_JSON" | node "$CR_CACHE_BIN" write \
+      --workdir "$WORKTREE" --fingerprint "$FINGERPRINT" --stdin
+    echo "Cached findings to $WORKTREE/.coderabbit-cache/$FINGERPRINT.json"
+  else
+    echo "WARN: agent return is not valid JSON; skipping cache write" >&2
+  fi
+fi
+```
+
+**Cache invalidation の判断**:
+- `.coderabbit.yaml` の `reviews.profile` が変わる → fingerprint 自動的に変わる (cache miss、再 review が走る)
+- `.coderabbit.yaml` の path_instructions のみ変わる → 同上 (CRY_HASH に含まれる)
+- 同じ diff を別 commit hash で push (rebase 等) → `git diff` の text 同じなら fingerprint 同じ → cache hit
+- 全消去したい場合: `node "$CR_CACHE_BIN" invalidate --workdir "$WORKTREE"`
+
+#### Step 2 補遺: `.gitignore` 推奨設定
+
+cache file は review findings 全文 (機微な repo state を含む可能性) をプレーン JSON で保存するため、**プロジェクト側 `.gitignore` に `.coderabbit-cache/` を追加することを強く推奨**:
+
+```gitignore
+# Pseudo-CodeRabbit cache (per-developer ephemeral, never commit)
+.coderabbit-cache/
+```
+
+未登録のまま commit すると以下のリスクがある:
+- review findings (file パス・行番号・指摘内容) が repo に永続化される
+- private code review の context が public mirror に流出する可能性
+- branch 切替時に古い cache が混在して誤判定の原因になる
+
+本 skill 自身は `.gitignore` を自動編集しない (caller リポの policy を尊重)。導入時は手動追記 + commit を推奨。
 
 #### Step 2 補遺: Codex 並列度
 

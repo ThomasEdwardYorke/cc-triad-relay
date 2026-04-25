@@ -1,0 +1,193 @@
+#!/usr/bin/env node
+/**
+ * bin/cr-cache — Diff fingerprint cache CLI for shell skills
+ *
+ * Wraps `core/dist/cr-cache.js` so shell skills (`/pseudo-coderabbit-loop`,
+ * `/coderabbit-review`) can compute / lookup / write / invalidate cache entries
+ * without bundling Node TypeScript runtime.
+ *
+ * Subcommands:
+ *   cr-cache compute-fingerprint --profile <p> --coderabbit-yaml-hash <h>
+ *                                --path-instructions-hash <h> [--diff-stdin | --diff <text>]
+ *     stdin: diff text (when --diff-stdin)
+ *     stdout: 64-char hex sha256
+ *
+ *   cr-cache lookup --workdir <path> --fingerprint <fp>
+ *     stdout: cache JSON when hit (single line), empty when miss
+ *     exit 0: hit
+ *     exit 1: miss (entry absent / corrupt)
+ *     exit 2: invalid input (bad fingerprint, missing flags)
+ *
+ *   cr-cache write --workdir <path> --fingerprint <fp> [--stdin | --json <inline>]
+ *     stdin: JSON content (when --stdin)
+ *     exit 0: written
+ *     exit 2: invalid input
+ *
+ *   cr-cache invalidate --workdir <path> [--fingerprint <fp>]
+ *     exit 0: invalidated (or no-op)
+ *     exit 2: invalid fingerprint format
+ *
+ * Test invariants are exercised by core/src/__tests__/cr-cache.test.ts.
+ */
+
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PLUGIN_ROOT = resolve(__dirname, "..");
+const CORE_DIST = resolve(PLUGIN_ROOT, "core", "dist", "cr-cache.js");
+
+let cacheModule;
+try {
+  cacheModule = await import(CORE_DIST);
+} catch (err) {
+  console.error(
+    `cr-cache: failed to load core/dist/cr-cache.js (run \`npm run build\` in core/): ${err.message}`,
+  );
+  process.exit(2);
+}
+
+const { computeFingerprint, lookupCache, writeCache, invalidateCache } =
+  cacheModule;
+
+function parseArgs(argv) {
+  const flags = {};
+  const positional = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith("--")) {
+      const eq = a.indexOf("=");
+      if (eq > 0) {
+        flags[a.slice(2, eq)] = a.slice(eq + 1);
+      } else if (a === "--diff-stdin" || a === "--stdin") {
+        flags[a.slice(2)] = true;
+      } else if (i + 1 < argv.length && !argv[i + 1].startsWith("--")) {
+        flags[a.slice(2)] = argv[++i];
+      } else {
+        flags[a.slice(2)] = true;
+      }
+    } else {
+      positional.push(a);
+    }
+  }
+  return { flags, positional };
+}
+
+function readStdin() {
+  return readFileSync(0, "utf-8");
+}
+
+function requireFlag(flags, name) {
+  if (flags[name] === undefined || flags[name] === true) {
+    console.error(`cr-cache: missing required flag --${name}`);
+    process.exit(2);
+  }
+  return flags[name];
+}
+
+function cmdComputeFingerprint(flags) {
+  let diff;
+  if (flags["diff-stdin"]) {
+    diff = readStdin();
+  } else if (flags["diff"]) {
+    diff = flags["diff"];
+  } else {
+    console.error(
+      "cr-cache compute-fingerprint: provide --diff-stdin or --diff <text>",
+    );
+    process.exit(2);
+  }
+  const profile = requireFlag(flags, "profile");
+  const coderabbitYaml = flags["coderabbit-yaml-hash"] ?? "";
+  const pathInstructionsHash = flags["path-instructions-hash"] ?? "";
+  const fp = computeFingerprint({
+    diff,
+    profile,
+    coderabbitYaml,
+    pathInstructionsHash,
+  });
+  process.stdout.write(fp);
+}
+
+function cmdLookup(flags) {
+  const workdir = requireFlag(flags, "workdir");
+  const fingerprint = requireFlag(flags, "fingerprint");
+  let result;
+  try {
+    result = lookupCache(workdir, fingerprint);
+  } catch (err) {
+    console.error(`cr-cache lookup: ${err.message}`);
+    process.exit(2);
+  }
+  if (result === null) {
+    process.exit(1);
+  }
+  process.stdout.write(JSON.stringify(result));
+}
+
+function cmdWrite(flags) {
+  const workdir = requireFlag(flags, "workdir");
+  const fingerprint = requireFlag(flags, "fingerprint");
+  let raw;
+  if (flags["stdin"]) {
+    raw = readStdin();
+  } else if (flags["json"]) {
+    raw = flags["json"];
+  } else {
+    console.error("cr-cache write: provide --stdin or --json <inline>");
+    process.exit(2);
+  }
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (err) {
+    console.error(`cr-cache write: input is not valid JSON: ${err.message}`);
+    process.exit(2);
+  }
+  try {
+    writeCache(workdir, fingerprint, data);
+  } catch (err) {
+    console.error(`cr-cache write: ${err.message}`);
+    process.exit(2);
+  }
+}
+
+function cmdInvalidate(flags) {
+  const workdir = requireFlag(flags, "workdir");
+  const fingerprint = flags["fingerprint"] === true ? undefined : flags["fingerprint"];
+  try {
+    invalidateCache(workdir, fingerprint);
+  } catch (err) {
+    console.error(`cr-cache invalidate: ${err.message}`);
+    process.exit(2);
+  }
+}
+
+function usage() {
+  console.error(
+    "Usage: cr-cache <compute-fingerprint|lookup|write|invalidate> [flags]",
+  );
+  process.exit(2);
+}
+
+const [, , subcommand, ...rest] = process.argv;
+if (!subcommand) usage();
+const { flags } = parseArgs(rest);
+
+switch (subcommand) {
+  case "compute-fingerprint":
+    cmdComputeFingerprint(flags);
+    break;
+  case "lookup":
+    cmdLookup(flags);
+    break;
+  case "write":
+    cmdWrite(flags);
+    break;
+  case "invalidate":
+    cmdInvalidate(flags);
+    break;
+  default:
+    usage();
+}

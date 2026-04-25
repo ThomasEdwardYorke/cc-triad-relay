@@ -89,6 +89,56 @@ describe("coderabbit-mimic agent の Codex CLI 呼出", () => {
   });
 });
 
+describe("pseudo-coderabbit-loop command の Step 1.5 diff fingerprint cache", () => {
+  const content = readCommand("pseudo-coderabbit-loop");
+
+  it("Step 1.5 として diff fingerprint cache lookup hook を持つ", () => {
+    expect(content).toMatch(/^### Step 1\.5\..*[Dd]iff fingerprint cache/m);
+  });
+
+  it("CACHE_HIT bool を導入して Step 2 (coderabbit-mimic spawn) を skip 可能にする", () => {
+    expect(content).toMatch(/CACHE_HIT="?true"?/);
+    expect(content).toMatch(/CACHE_HIT="?false"?/);
+  });
+
+  it("--no-cache flag で cache layer を bypass できる", () => {
+    expect(content).toMatch(/--no-cache/);
+    expect(content).toMatch(/CLI_NO_CACHE/);
+  });
+
+  it("cr-cache binary を plugin の bin/ から起動する", () => {
+    expect(content).toMatch(/CR_CACHE_BIN/);
+    expect(content).toMatch(/bin\/cr-cache/);
+  });
+
+  it("HARNESS_PLUGIN_ROOT 環境変数で plugin root override 可能", () => {
+    expect(content).toMatch(/HARNESS_PLUGIN_ROOT/);
+  });
+
+  it("BSD shasum と GNU sha256sum 両対応で yaml hash を計算する", () => {
+    expect(content).toMatch(/shasum\s+-a\s+256/);
+    expect(content).toMatch(/sha256sum/);
+  });
+
+  it("Step 2 完了後に Cache write hook が cache miss 時のみ走る", () => {
+    expect(content).toMatch(/Cache write hook/i);
+    // shell 経由は $CR_CACHE_BIN の変数化を許容
+    expect(content).toMatch(/(?:cr-cache|CR_CACHE_BIN)[\s\S]{0,80}?write/);
+    // cache miss (CACHE_HIT が false) 時のみ write が動く gate
+    expect(content).toMatch(
+      /CACHE_HIT[\s"]*=[\s"]*false[\s\S]{0,600}?(?:cr-cache|CR_CACHE_BIN)[\s\S]{0,80}?write/,
+    );
+  });
+
+  it("agent return が valid JSON か事前確認する (text return 防御)", () => {
+    expect(content).toMatch(/json\.loads|valid JSON/i);
+  });
+
+  it("invalidate コマンドの使い方が docs に記載されている", () => {
+    expect(content).toMatch(/cr-cache.*?invalidate/);
+  });
+});
+
 describe("pseudo-coderabbit-loop command の日時計算", () => {
   const content = readCommand("pseudo-coderabbit-loop");
 
