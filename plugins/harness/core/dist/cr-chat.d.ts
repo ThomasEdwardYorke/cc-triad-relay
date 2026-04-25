@@ -21,7 +21,8 @@
  *   `CHAT_BUCKET_COMMANDS` から除外し、本 docstring の VERIFIED 集合に
  *   昇格させる。
  *
- *   See also: .tmp/cr-research/02-chat-bucket.md (research log)
+ *   公式 docs: https://docs.coderabbit.ai/reference/review-commands +
+ *   https://docs.coderabbit.ai/guides/commands
  *
  * Design invariants:
  *   - chat bucket 用 commands (ASSUMED): resolve / summary / configuration / help (4 件)

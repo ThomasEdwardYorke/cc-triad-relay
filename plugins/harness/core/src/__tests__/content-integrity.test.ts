@@ -605,47 +605,60 @@ describe("slash command frontmatter — Claude Code 公式仕様", () => {
 describe("coderabbit-review command の Step 2.6 chat bucket helper", () => {
   const content = readCommand("coderabbit-review");
 
+  // Step 2.6 section だけを切り出して、その範囲内で不変条件を検証する。
+  // CodeRabbit review #31 で「全 content に対する判定だと別 section の `exit 1`
+  // 等を拾って false-positive する」と指摘され、scope を限定 (regression guard
+  // の `2 要件組合せ で false-positive 回避` rule に従う)。
+  const step26 = (() => {
+    const m = content.match(
+      /### Step 2\.6\.[\s\S]*?(?=\n### Step 3\.|\n## [^#]|$)/,
+    );
+    return m?.[0] ?? "";
+  })();
+
   it("Step 2.6 として chat bucket helper section を持つ", () => {
     expect(content).toMatch(/^### Step 2\.6\..*[Cc]hat bucket helper/m);
+    expect(step26.length).toBeGreaterThan(200); // section が空でないこと
   });
 
   it("4 つの operational chat command を列挙する", () => {
-    expect(content).toMatch(/@coderabbitai resolve/);
-    expect(content).toMatch(/@coderabbitai summary/);
-    expect(content).toMatch(/@coderabbitai configuration/);
-    expect(content).toMatch(/@coderabbitai help/);
+    expect(step26).toMatch(/@coderabbitai resolve/);
+    expect(step26).toMatch(/@coderabbitai summary/);
+    expect(step26).toMatch(/@coderabbitai configuration/);
+    expect(step26).toMatch(/@coderabbitai help/);
   });
 
   it("review bucket command (review / full review) との bucket 境界を明示する", () => {
-    expect(content).toMatch(/review bucket/i);
-    expect(content).toMatch(/chat bucket/i);
-    // review trigger は本 helper 経由では送らない
-    expect(content).toMatch(/(?:review trigger|誤用)/);
+    expect(step26).toMatch(/review bucket/i);
+    expect(step26).toMatch(/chat bucket/i);
+    expect(step26).toMatch(/(?:review trigger|誤用)/);
   });
 
   it("cr-chat binary を bin/ から起動する", () => {
-    expect(content).toMatch(/CR_CHAT_BIN/);
-    expect(content).toMatch(/bin\/cr-chat/);
+    expect(step26).toMatch(/CR_CHAT_BIN/);
+    expect(step26).toMatch(/bin\/cr-chat/);
   });
 
   it("HARNESS_PLUGIN_ROOT 環境変数で plugin root override 可能", () => {
-    expect(content).toMatch(/HARNESS_PLUGIN_ROOT/);
+    expect(step26).toMatch(/HARNESS_PLUGIN_ROOT/);
   });
 
   it("classify subcommand で bucket 誤用 gate を提供する", () => {
-    expect(content).toMatch(/classify/);
-    expect(content).toMatch(/(?:not[\s\S]{0,30}chat-bucket|exit\s+1)/i);
+    expect(step26).toMatch(/classify/);
+    expect(step26).toMatch(/not[\s\S]{0,30}chat-bucket/i);
+    expect(step26).toMatch(/exit\s+1/);
   });
 
   it("empirical 検証 caveat を docs に明記する", () => {
-    expect(content).toMatch(/empirical/i);
-    expect(content).toMatch(/(?:検証|verification)/);
+    expect(step26).toMatch(/empirical/i);
+    expect(step26).toMatch(/(?:検証|verification)/);
   });
 
   it("rate-limit cooldown 中の活用パスを記載する", () => {
-    expect(content).toMatch(/rate[\s-]?limit/i);
-    // Step 2.5 cooldown 中でも chat bucket は使える文脈
-    expect(content).toMatch(/(?:cooldown|temporary block|chat bucket は通常|chat[\s\S]{0,40}独立)/i);
+    expect(step26).toMatch(/rate[\s-]?limit/i);
+    expect(step26).toMatch(
+      /(?:cooldown|temporary block|chat bucket は通常|chat[\s\S]{0,40}独立)/i,
+    );
   });
 });
 

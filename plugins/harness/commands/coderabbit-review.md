@@ -91,8 +91,14 @@ review trigger commands (`@coderabbitai review` / `full review`) は **review bu
 `bin/cr-chat` で正しい syntax の `@coderabbitai <cmd>` を構築できる。bucket 分類は `cr-chat classify <cmd>` で確認:
 
 ```bash
-HARNESS_PLUGIN_ROOT="${HARNESS_PLUGIN_ROOT:-$HOME/.claude/plugins/marketplaces/cc-triad-relay/plugins/harness}"
-CR_CHAT_BIN="${HARNESS_PLUGIN_ROOT}/bin/cr-chat"
+# CR_CHAT_BIN の解決 3 段 fallback (env → PATH → HARNESS_PLUGIN_ROOT default):
+if [ -z "${CR_CHAT_BIN:-}" ]; then
+  CR_CHAT_BIN=$(command -v cr-chat 2>/dev/null || true)
+fi
+if [ -z "$CR_CHAT_BIN" ]; then
+  HARNESS_PLUGIN_ROOT="${HARNESS_PLUGIN_ROOT:-$HOME/.claude/plugins/marketplaces/<your-marketplace>/plugins/harness}"
+  CR_CHAT_BIN="${HARNESS_PLUGIN_ROOT}/bin/cr-chat"
+fi
 
 if [ ! -x "$CR_CHAT_BIN" ]; then
   echo "WARN: cr-chat binary not found; chat helper unavailable" >&2
