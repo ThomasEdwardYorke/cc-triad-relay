@@ -28,7 +28,20 @@ export function planWorktreeMux(opts) {
             error: detection.error,
         };
     }
-    const porcelain = fetchPorcelain();
+    let porcelain;
+    try {
+        porcelain = fetchPorcelain();
+    }
+    catch (err) {
+        return {
+            success: false,
+            multiplexerUsed: "degraded",
+            worktrees: [],
+            commands: [],
+            warnings: [],
+            error: err instanceof Error ? err.message : String(err),
+        };
+    }
     const { worktrees, warnings } = parsePorcelain(porcelain);
     if (worktrees.length === 0) {
         return {
@@ -77,7 +90,7 @@ export function runPlan(plan, out = (m) => process.stdout.write(m + "\n"), warn 
             out(`  ${wt}`);
         }
         warn("Install one of:");
-        warn("  cmux: https://cmux.com/ja");
+        warn("  cmux: https://cmux.com");
         warn("  tmux: brew install tmux  (or apt-get install tmux)");
         return 0;
     }
@@ -98,7 +111,7 @@ function resolveMultiplexer(requested, detect) {
         if (!detect("cmux")) {
             return {
                 kind: "degraded",
-                error: "cmux not found. Install: https://cmux.com/ja",
+                error: "cmux not found. Install: https://cmux.com",
             };
         }
         return { kind: "cmux" };
@@ -128,7 +141,7 @@ function resolveMultiplexer(requested, detect) {
 export function parsePorcelain(porcelain) {
     const worktrees = [];
     const warnings = [];
-    const blocks = porcelain.split(/\n\n+/);
+    const blocks = porcelain.replace(/\r\n/g, "\n").split(/\n\n+/);
     for (const block of blocks) {
         const trimmed = block.trim();
         if (!trimmed)
@@ -165,9 +178,9 @@ function buildCommands(kind, worktrees, withClaude, cmuxTemplate, tmuxSession) {
     // `|| true` makes the kill-session call idempotent for the
     // first-time path where the session does not exist yet.
     const result = [];
+    const target = shellQuote(tmuxSession);
     worktrees.forEach((wt, i) => {
         const path = shellQuote(wt);
-        const target = shellQuote(tmuxSession);
         if (i === 0) {
             result.push(`tmux kill-session -t ${target} 2>/dev/null || true`);
             result.push(withClaude
@@ -179,6 +192,10 @@ function buildCommands(kind, worktrees, withClaude, cmuxTemplate, tmuxSession) {
             ? `tmux split-window -t ${target} -h -c ${path} ${shellQuote(claudeRunCmd)}`
             : `tmux split-window -t ${target} -h -c ${path}`);
     });
+    // Bring the session to the foreground so the panes become visible.
+    // switch-client when the caller is already inside tmux, attach-session
+    // otherwise. POSIX `if`/`then`/`else` is portable across `sh -c`.
+    result.push(`if [ -n "$TMUX" ]; then tmux switch-client -t ${target}; else tmux attach-session -t ${target}; fi`);
     return result;
 }
 function shellQuote(value) {
@@ -210,13 +227,11 @@ function defaultWorktreeListSource() {
         });
     }
     catch (err) {
-        // Distinguish "git not on PATH or current directory is not a repo"
-        // from "repository has no worktrees configured" by surfacing the
-        // failure to stderr. Callers (planWorktreeMux) still observe an
-        // empty string and report "No worktrees found", but the operator
-        // sees the underlying reason instead of a silent miss.
-        process.stderr.write(`[harness worktree-mux] failed to read git worktrees: ${err instanceof Error ? err.message : String(err)}\n`);
-        return "";
+        // Throw so planWorktreeMux can return success: false and runPlan can
+        // exit non-zero. Returning "" would collapse "git unavailable / not a
+        // repo / permission failure" into the legitimate "no worktrees
+        // configured" path and make automation treat the failure as success.
+        throw new Error(`failed to read git worktrees: ${err instanceof Error ? err.message : String(err)}`);
     }
 }
 //# sourceMappingURL=worktree-mux.js.map

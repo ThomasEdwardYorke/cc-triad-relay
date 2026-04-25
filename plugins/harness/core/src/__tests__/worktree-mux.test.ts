@@ -141,16 +141,60 @@ describe("planWorktreeMux", () => {
       commandDetector: (cmd) => cmd === "tmux",
     });
     // Pane-creating commands (`new-session` / `split-window`) must each
-    // embed `claude`. The defensive `kill-session` guard never carries
-    // claude — it just clears any leftover session before the panes are
-    // recreated.
+    // embed `claude`. The defensive `kill-session` guard, and the trailing
+    // attach/switch command that brings panes to the foreground, never
+    // carry claude.
     const paneCommands = plan.commands.filter(
-      (c) => !c.startsWith("tmux kill-session"),
+      (c) =>
+        !c.startsWith("tmux kill-session") &&
+        !c.includes("attach-session") &&
+        !c.includes("switch-client"),
     );
     expect(paneCommands.length).toBeGreaterThan(0);
     for (const c of paneCommands) {
       expect(c).toMatch(/claude/);
     }
+  });
+
+  it("case 11: tmux plan ends with attach/switch so panes become visible", () => {
+    const plan = planWorktreeMux({
+      multiplexer: "tmux",
+      withClaude: false,
+      worktreeListSource: () => SAMPLE_PORCELAIN,
+      commandDetector: (cmd) => cmd === "tmux",
+    });
+    const last = plan.commands[plan.commands.length - 1];
+    expect(last).toMatch(/tmux (attach-session|switch-client)/);
+    // Single attach at the end (not duplicated per pane).
+    const attachCount = plan.commands.filter((c) =>
+      /tmux (attach-session|switch-client)/.test(c),
+    ).length;
+    expect(attachCount).toBe(1);
+  });
+
+  it("case 12: cmux install hint is locale-neutral (no /ja path)", () => {
+    const plan = planWorktreeMux({
+      multiplexer: "cmux",
+      withClaude: false,
+      worktreeListSource: () => SAMPLE_PORCELAIN,
+      commandDetector: () => false,
+    });
+    expect(plan.error).toMatch(/cmux\.com/);
+    expect(plan.error).not.toMatch(/\/ja\b/);
+  });
+
+  it("case 13: surfaces git failure as success: false instead of swallowing", () => {
+    const plan = planWorktreeMux({
+      multiplexer: "auto",
+      withClaude: false,
+      worktreeListSource: () => {
+        throw new Error("git: command not found");
+      },
+      commandDetector: (cmd) => cmd === "tmux",
+    });
+    expect(plan.success).toBe(false);
+    expect(plan.error).toMatch(/git: command not found/);
+    expect(plan.commands).toEqual([]);
   });
 
   it("case 8b: cmux + --with-claude → claude embedded", () => {
@@ -204,6 +248,16 @@ describe("parsePorcelain", () => {
       "/path/to/project-wt-feature-b",
     ]);
     expect(result.warnings).toHaveLength(1);
+  });
+
+  it("handles CRLF line endings (Windows `git worktree list --porcelain`)", () => {
+    const SAMPLE_PORCELAIN_CRLF = SAMPLE_PORCELAIN.replace(/\n/g, "\r\n");
+    const result = parsePorcelain(SAMPLE_PORCELAIN_CRLF);
+    expect(result.worktrees).toEqual([
+      "/path/to/project",
+      "/path/to/project-wt-feature-a",
+    ]);
+    expect(result.warnings).toEqual([]);
   });
 });
 
