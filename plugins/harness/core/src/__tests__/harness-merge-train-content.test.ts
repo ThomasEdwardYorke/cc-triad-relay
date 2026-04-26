@@ -313,7 +313,7 @@ describe("/harness-merge-train spec (commands/harness-merge-train.md)", () => {
 
     it("内部 tracker ID (Phase N 申送 / Round N / A-\\d+) を含まない", () => {
       // R2 (CONTRIBUTING.md §1.2): shipped spec に内部 tracker ID は禁止
-      // 例外: D-74 / D-75 / D-76 は design-decisions の generic 識別子として gen-9 で確立済
+      // 例外: D-74 / D-75 / D-76 は design-decisions の generic 識別子として確立済
       // (consumer-side handoff 用の semantic ID。harness plugin core 設計判断 ID として
       // 引用されることは許容範囲、blocked patterns には該当しない)
       expect(content).not.toMatch(/Phase\s+\d+\s*申送/);

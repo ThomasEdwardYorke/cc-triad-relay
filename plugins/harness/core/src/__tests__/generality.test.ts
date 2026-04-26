@@ -1,4 +1,4 @@
-/* generality-exemption: B-1,B-2a,B-2b,B-2c,B-2d,B-2e,B-2f,B-3a,B-3b,B-3c,B-3d,B-3e,B-4a,B-4b,B-5,B-6,B-7,B-8,B-9,B-10 | HARNESS-generality-self | 2099-12-31 | detector harness itself must reference patterns it blocks (self-reference unavoidable, until v1.0 redesign) */
+/* generality-exemption: B-1,B-2a,B-2b,B-2c,B-2d,B-2e,B-2f,B-3a,B-3b,B-3c,B-3d,B-3e,B-3f,B-4a,B-4b,B-5,B-6,B-7,B-8,B-9,B-10 | HARNESS-generality-self | 2099-12-31 | detector harness itself must reference patterns it blocks (self-reference unavoidable, until v1.0 redesign) */
 /**
  * core/src/__tests__/generality.test.ts
  *
@@ -237,6 +237,31 @@ const BLOCK_PATTERNS: BlockPattern[] = [
       "括弧形式の内部 tracker ID (`(C-N)` / `(M-N)` / `(m-N)`) が含まれています。" +
       "公式に昇格した issue key (例: `HARNESS-42`) に置換するか、" +
       "CHANGELOG.md / docs/maintainer/tracker-migration.md に移管してください。",
+    appliesToTests: true,
+  },
+  {
+    // Pseudo CodeRabbit pre-review の outside-diff 指摘で追加 + 後続 review feedback
+    // で lookbehind 強化。Session 世代 ID `gen-N` は consumer-side handoff archive
+    // (`session-<YYYY-MM-DD>-genNN-*.md`) で使われる project-local 用語であり、shipped
+    // spec (plugins/harness/**) には混入禁止。
+    //
+    // Pattern 設計: `(?<![\w-])gen-\d+\b`
+    //   - `(?<![\w-])` lookbehind: 直前が word char または `-` ではない (= 単語境界 +
+    //     ハイフン区切りコンパウンド語境界)。これにより:
+    //       - `general-13` no match (`gen` 後が `-` でない)
+    //       - `9th-gen-13` no match (compound prefix、`gen` 直前が `-`)
+    //       - `next-gen-4` no match (同上)
+    //       - `gen-13` (単独/文頭/whitespace 後) match
+    //   - `\b` 末尾: `gen-13a` は `\d+` の `13` 後に word char `a` → no match
+    //     (`gen-1.3` は `gen-1` で stop、誤検出しない)
+    //   - filename 内 `genN` (hyphen なし) は元々対象外
+    id: "B-3f",
+    category: "tracker-id",
+    pattern: /(?<![\w-])gen-\d+\b/g,
+    message:
+      "内部 session 世代 ID (`gen-N`) が含まれています。consumer-side handoff の運用 ID で、" +
+      "shipped spec には残さないでください。CHANGELOG.md / docs/maintainer/session-notes/ / " +
+      "commit message に移管してください。",
     appliesToTests: true,
   },
 
@@ -2087,6 +2112,60 @@ describe("exemption grammar (unified, pipe-separated)", () => {
       expect(hits[0].kind).toBe("comment-line");
       expect(hits[0].startLine).toBeGreaterThanOrEqual(1);
       expect(hits[0].endLine).toBeGreaterThanOrEqual(hits[0].startLine);
+    });
+  });
+
+  // ─────────────── B-3f boundary regression (external review nitpick で固定) ───────────────
+  // 外部 code review の nitpick で B-3f の境界 case を専用 regression test で固定する
+  // よう推奨された (2 要件組合せで false-positive 回避の coding guideline)。
+  // pattern `(?<![\w-])gen-\d+\b` の Node.js empirical 検証 (positive 1 + negative 5) を
+  // CI に固定し、将来の regex 調整時の false-positive 回帰を防ぐ。
+  describe("B-3f boundary regression (positive / negative match cases)", () => {
+    const b3f = BLOCK_PATTERNS.find((p) => p.id === "B-3f");
+    if (!b3f) {
+      throw new Error("B-3f pattern is missing from BLOCK_PATTERNS");
+    }
+    const pat = b3f.pattern;
+
+    // Helper: regex を `lastIndex` リセット付きで test (global flag 影響回避)
+    const matches = (src: string): boolean => {
+      pat.lastIndex = 0;
+      return pat.test(src);
+    };
+
+    it("positive: `gen-13` 単独 (canonical session 世代 ID) は match する", () => {
+      expect(matches("gen-13")).toBe(true);
+    });
+
+    it("positive: `(gen-13)` 括弧内 / ` gen-13 ` 前後 whitespace も match する", () => {
+      expect(matches("(gen-13)")).toBe(true);
+      expect(matches(" gen-13 ")).toBe(true);
+    });
+
+    it("negative: `next-gen-13` (compound prefix `next-`) は match しない (lookbehind blocks)", () => {
+      expect(matches("next-gen-13")).toBe(false);
+    });
+
+    it("negative: `9th-gen-13` (compound prefix `9th-`) は match しない", () => {
+      expect(matches("9th-gen-13")).toBe(false);
+    });
+
+    it("negative: `gen-13a` (suffix word char) は match しない (`\\b` 末尾)", () => {
+      expect(matches("gen-13a")).toBe(false);
+    });
+
+    it("negative: `general-13` (gen prefix のみ、ハイフン不在) は match しない", () => {
+      expect(matches("general-13")).toBe(false);
+    });
+
+    it("negative: `gen-1.3` (digits の後の `.`) は `gen-1` のみ match する (overflow しない)", () => {
+      // global flag 付きなので全件抽出
+      const m = "gen-1.3".match(new RegExp(pat.source, pat.flags));
+      expect(m).toEqual(["gen-1"]);
+    });
+
+    it("negative: `regen-13` (word prefix `re`) は match しない (lookbehind blocks)", () => {
+      expect(matches("regen-13")).toBe(false);
     });
   });
 });
