@@ -475,7 +475,9 @@ fi
 
 #### Step 2.0. CR CLI 検出 (NEW、上位優先)
 
-CodeRabbit CLI (`cr`) が install + auth 済の場合、**`cr --agent` 直呼出**を優先する。これは CodeRabbit 公式 reviewer 自身を local で動かすため、findings の品質と再現性が高い。CLI 不在 / 未 auth の場合は従来通り `coderabbit-mimic` agent (Codex 模倣) に fallback する。
+CodeRabbit CLI (`coderabbit` binary、`brew install --cask coderabbit` で導入) が install + auth 済の場合、**`coderabbit --agent` 直呼出**を優先する。これは CodeRabbit 公式 reviewer 自身を local で動かすため、findings の品質と再現性が高い。CLI 不在 / 未 auth の場合は従来通り `coderabbit-mimic` agent (Codex 模倣) に fallback する。
+
+**Binary 名注意**: homebrew install 名は `coderabbit` であり `cr` ではない (よくある誤解、旧 wrapper 実装の `cr` spawn は誤りのため `coderabbit` に修正済)。本 spec は `coderabbit` binary を前提に記述する。
 
 ```bash
 HARNESS_PLUGIN_ROOT="${HARNESS_PLUGIN_ROOT:-$HOME/.claude/plugins/marketplaces/cc-triad-relay/plugins/harness}"

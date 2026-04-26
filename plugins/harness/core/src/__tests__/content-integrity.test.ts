@@ -540,6 +540,72 @@ describe("harness-setup check の expected 配列", () => {
   );
 });
 
+describe("bin/cr-cli — binary name regression guard (coderabbit, not cr)", () => {
+  // 旧実装は `spawnSync("cr", ...)` を使っており、homebrew install 環境
+  // (binary 名 `coderabbit`) では常に `binary-missing` を返していた。
+  // 本 describe block は誰かが将来 `cr` に rollback したら即 fail させる
+  // structural regression guard。
+  const binPath = resolve(PLUGIN_ROOT, "bin", "cr-cli");
+  const binCrCli = readFileSync(binPath, "utf-8");
+
+  it("invokes spawnSync with CR_BINARY (1 source-of-truth, not a literal)", () => {
+    // 1 SoT pattern を構造的に強制: bin/cr-cli は `core/src/cr-cli.ts` の
+    // `CR_BINARY` export を必ず使う必要がある。literal `"coderabbit"` を許容
+    // すると CR_BINARY を import せずに binary 名が drift するリスクが残るため、
+    // CR_BINARY identifier 経由 spawn のみ accept とする (CR review nitpick 対応)。
+    expect(binCrCli).toMatch(/spawnSync\(\s*CR_BINARY\b/);
+    // 念のため legacy literal "coderabbit" 直書き spawn が無いことも確認
+    // (refactor で literal が混入していないか)
+    expect(binCrCli).not.toMatch(/spawnSync\(\s*["']coderabbit["']/);
+  });
+
+  it("does NOT invoke legacy spawnSync('cr', ...) (regression guard, quote-variant aware)", () => {
+    // Codex Phase 7 Major fix: regex は double quote / single quote / multi-line
+    // 全変形を catch する必要がある。`spawnSync(\n  "cr"`, `spawnSync('cr')`,
+    // `spawnSync( "cr" ,` 等の variant も rollback として detect。
+    expect(binCrCli).not.toMatch(/spawnSync\(\s*["']cr["']\s*[,)]/);
+  });
+
+  it("imports CR_BINARY from core to avoid binary name split source (1 SoT)", () => {
+    // core/src/cr-cli.ts の `export const CR_BINARY` を bin/cr-cli が **import 経由**
+    // で取得していること (CR review round 4 指摘: 一般的な CR_BINARY identifier の出現
+    // ではなく、import / destructure 形式での取得を assert)。bin と core で binary 名が
+    // drift しないための structural guard。
+    expect(binCrCli).toMatch(
+      // ES module destructuring assignment from cliModule with `const` (immutable binding 強制)
+      /const\s*\{\s*(?:[A-Za-z_$][\w$]*\s*,\s*)*CR_BINARY(?:\s*,\s*[A-Za-z_$][\w$]*)*\s*\}\s*=\s*cliModule\b/,
+    );
+    // CR review round 5 指摘: `let` / `var` でも tests が通ると再代入で SoT が破壊
+    // される余地がある。CR_BINARY を含む let/var destructure は禁止 (再代入経路 close)。
+    expect(binCrCli).not.toMatch(
+      /\b(?:let|var)\s*\{[^}]*\bCR_BINARY\b[^}]*\}\s*=\s*cliModule\b/,
+    );
+    // 起動時 sanity check: CR_BINARY が string で非空であることを bin が検証
+    expect(binCrCli).toMatch(/typeof\s+CR_BINARY\s*!==\s*["']string["']/);
+  });
+
+  it("documents the canonical binary name in the header docstring", () => {
+    // file 冒頭の JSDoc 内では `coderabbit` を canonical として言及していること
+    const headerMatch = /^[\s\S]*?\*\//.exec(binCrCli);
+    expect(headerMatch).not.toBeNull();
+    const header = headerMatch![0];
+    expect(header).toMatch(/coderabbit/);
+    // legacy `cr` 言及 (which cr / cr --version / cr auth status) は cleanup 済
+    expect(header).not.toMatch(/which cr\b/);
+    expect(header).not.toMatch(/`cr `/);
+    expect(header).not.toMatch(/cr --version/);
+    expect(header).not.toMatch(/cr auth status/);
+  });
+
+  it("emits actionable error message referencing 'coderabbit auth login'", () => {
+    // CR CLI 不在時の error message が `cr auth login` ではなく
+    // `coderabbit auth login` を案内していること (homebrew install 後の
+    // 実コマンドと整合)
+    expect(binCrCli).toMatch(/coderabbit auth login/);
+    expect(binCrCli).not.toMatch(/`cr auth login`/);
+  });
+});
+
 describe("全 agent / command に frontmatter が存在する", () => {
   // extractFrontmatter は frontmatter が無いと throw するため、
   // 欠落・破損は「テスト実行時の例外」として検知される。

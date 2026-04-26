@@ -286,7 +286,7 @@ export interface TddEnforceConfig {
  * Verified against CodeRabbit docs (2026-04-26 — see
  * https://docs.coderabbit.ai/): OSS plan exposes a CLI review bucket
  * independent of the PR review bucket, so projects on OSS can run
- * `cr review` locally without consuming PR-bucket capacity.
+ * `coderabbit review` locally without consuming PR-bucket capacity.
  */
 export type CodeRabbitPlan = "free" | "oss" | "pro";
 export interface CodeRabbitConfig {

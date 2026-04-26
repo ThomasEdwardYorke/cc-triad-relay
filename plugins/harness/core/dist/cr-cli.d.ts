@@ -1,15 +1,22 @@
 /**
  * core/src/cr-cli.ts
  *
- * CodeRabbit CLI (`cr`) detector.
+ * CodeRabbit CLI (`coderabbit`) detector.
  *
- * Pseudo CR loop の Step 2 で `cr --agent --base <branch> --dir <path>` を
- * 直呼出する場合に必要な前提を確認する pure detector module。
+ * Pseudo CR loop の Step 2 で
+ * `coderabbit --agent --base <branch> --dir <path>` を直呼出する場合に必要な
+ * 前提を確認する pure detector module。
  *
  * Detection order:
- *   1. `which cr` (binary が PATH にあるか)
- *   2. `cr --version` (動作するか)
- *   3. `cr auth status --agent` (auth が valid か)
+ *   1. `which coderabbit` (binary が PATH にあるか)
+ *   2. `coderabbit --version` (動作するか)
+ *   3. `coderabbit auth status --agent` (auth が valid か)
+ *
+ * Binary name の注意:
+ *   - 公式 install (`brew install --cask coderabbit`) の binary 名は
+ *     **`coderabbit`** (`cr` ではない、よくある誤解)
+ *   - 旧実装は `cr` を spawn しており、homebrew 経由 install 環境では常に
+ *     `binary-missing` を返してしまっていた (本 wrapper で `coderabbit` 化済)
  *
  * 設計原則:
  *   - DI: `spawn` 関数を inject 可能にして実 binary 呼出を unit test で mock 化
@@ -43,11 +50,12 @@ export type CrCliDetection = {
     reason: CrUnavailableReason;
 };
 /**
- * Best-effort SemVer-ish 抽出。`cr X.Y.Z` / `cr X.Y.Z-pre.N` / `vX.Y.Z` を許容。
+ * Best-effort SemVer-ish 抽出。`X.Y.Z` / `X.Y.Z-pre.N` / `vX.Y.Z` を許容。
+ * 前置 token (`cr` / `coderabbit` / `v` 等) は無視して数値部分のみ抽出する。
  */
 export declare function parseVersionOutput(out: string): string | null;
 /**
- * `cr auth status --agent` の JSON output を parse。
+ * `coderabbit auth status --agent` の JSON output を parse。
  *
  * 公式 docs にある JSON schema:
  *   {"type":"auth_status","authenticated":true,"user":"<github-login>"}
@@ -59,12 +67,20 @@ export declare function parseAuthStatusJson(raw: string): {
     user?: string;
 } | null;
 /**
- * Detect `cr` CLI presence and auth state.
+ * `coderabbit` CLI binary name. Homebrew install (`brew install --cask coderabbit`)
+ * の出力 binary 名と一致させる必要がある (旧実装の `cr` は誤り)。
+ *
+ * 公開 export: `bin/cr-cli` の review passthrough も同 const から binary 名を取得し、
+ * 1 source-of-truth を維持する (binary 名 split source 防止)。
+ */
+export declare const CR_BINARY = "coderabbit";
+/**
+ * Detect `coderabbit` CLI presence and auth state.
  *
  * Returns `{ available: true, ... }` only when:
- *   - `which cr` returns a non-empty path
- *   - `cr --version` succeeds (exit 0) — version 抽出失敗でも続行する
- *   - `cr auth status --agent` returns JSON `{authenticated: true}`
+ *   - `which coderabbit` returns a non-empty path
+ *   - `coderabbit --version` succeeds (exit 0) — version 抽出失敗でも続行する
+ *   - `coderabbit auth status --agent` returns JSON `{authenticated: true}`
  *
  * Otherwise returns `{ available: false, reason: ... }` with a categorized
  * reason so the caller can produce actionable guidance (install / login).
