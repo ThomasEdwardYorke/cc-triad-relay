@@ -66,6 +66,17 @@ files][anthropic-skills]) に倣い、**明示的な関心分離 (SoC)** を強�
 
 これら 4 つ以外は current.md から排除する。詳細はすべて detail file へ逃がす。
 
+**Important constraint** — 上記 4 sections の strict 適用は **anti-pattern #4**
+(archive 必読化) を犯すリスクがある。slim 化後は必ず **Post-Check Verification
+(Test 1-5)** (`check` 配下、後述) で **verify manually**。strict 適用と anti-pattern
+#4 の両立が完成条件。
+
+**5th section (Optional, conditional)** — 恒久 `<decision-id>` 体系を持つ project
+は各 invariant の **1-line takeaway** 列挙 section を 5 つ目として追加を強く推奨。
+詳細 rationale は archive 移送可、**ID + 1-line takeaway は current.md 必須**。
+これが無いと「ID 列挙のみで archive 必読」 = anti-pattern #4 違反 (Post-Check
+Verification Test 3 で検証)。
+
 ### Required Structure of `backlog.md` (必須構造)
 
 **Plans-mode (legacy)**: `- [High|Med|Low] <Phase>: <説明> (archive: ...)` の 1 行 list。
@@ -176,6 +187,11 @@ session-<YYYY-MM-DD>-<phase-slug>.md
 4. **archive を読まないと context が失われる構造**
    `current.md` だけで次タスクに着手できること。
    archive は "なぜそう決めたか" の調査用で、不要な前提にしない。
+   **特に注意**: 上記 "Required 4 sections" を **strict 適用すると本 anti-pattern を
+   犯すリスク** がある (確立 invariant の 1-line takeaway や verification metadata
+   の archive 必読化)。slim 化後は必ず **Post-Check Verification (Test 1-5)** で
+   Claude / 人間が **verify manually** (`check` 配下)。strict 適用と本 pattern の
+   両立が完成条件。
 
 5. **1 archive ファイルに全セッション**
    セッションまたは Phase 単位で分割。1 ファイル 300 行超で強制分割。
@@ -375,6 +391,31 @@ orthogonal、Structural/Content/Synthesis 実行前に判定、`init` 案内を�
 <FAIL があれば具体的な次アクション、PASS なら「次タスクに着手可能」の一言>
 ```
 
+#### Post-Check Verification (Test 1-5、check 後の human verification)
+
+`check` PASS でも **Required 4 sections strict 適用は anti-pattern #4 (archive
+必読化) を犯すリスク**あり。verdict 確定後、Claude / 人間が以下 5 項目を手で確認
+(Self-Validation Checklist `check` 群と対応):
+
+- [ ] **Test 1 — Latest state 具体性**: branch + commit hash (`git cat-file -e
+      <hash>`) + merge status (PR-based なら commit hash + tests pass + merge SHA)。
+      `✅` 略記のみ不可、verification metadata 必須。
+- [ ] **Test 2 — Top Priority 即着手性**: 5 行以内で具体 command + 対象 file + 行
+      範囲。曖昧 verb (「対応」「進める」「整える」) のみは不可。
+- [ ] **Test 3 — 確立 invariant 1 行 takeaway** (恒久 `<decision-id>` 体系のみ、
+      Required Sections 5th 対応): ID + 1 行 takeaway 列挙、ID + takeaway は
+      current.md 必須 (詳細 rationale は archive 移送可)。
+- [ ] **Test 4 — Quick-start copy-paste 可**: bash block 完結 (cwd → 実行 → cleanup)、
+      placeholder は `<...>` で明示。
+- [ ] **Test 5 — Pointers 4 件以下 + reachable** (anti-pattern #7、S-10): max 4 link、
+      `Glob` で実在確認、命名 spec 準拠。
+
+**Red flag (過剰圧縮、いずれか該当)**: `<decision-id>` 列挙のみで 1 行説明なし
+(anti-pattern #4) / `✅ merged` のみで verification metadata なし (Test 1) /
+current.md Read のみで「即把握」 verify 不可 (Required 4 strict 適用の失敗例)。
+**Gate 1 PASS だけで「完璧」と即答しない**、strict 適用と anti-pattern #4 両立が
+完成条件。Test 1-5 ❌ なら `update` で補強 → 再 `check`。
+
 #### Forbidden (check の禁止事項)
 
 `check` は **read-only must**。絶対禁止:
@@ -448,6 +489,10 @@ orthogonal、Structural/Content/Synthesis 実行前に判定、`init` 案内を�
       のみ
 - [ ] **INFO signal は verdict に影響させない** (PASS/WARN/FAIL 判定の
       カウント対象外、report には ℹ️ で併記のみ)
+- [ ] **Post-Check Verification (Test 1-5) 実行** — PASS でも Required 4 sections
+      strict 適用が anti-pattern #4 (archive 必読化) を犯していないか手で検証
+      (`check` 配下 Post-Check Verification の Test 1-5 + Red flag 該当なし確認、
+      Test 3 は恒久 `<decision-id>` 体系を持つ project のみ条件付き)
 
 ---
 

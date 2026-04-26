@@ -2253,9 +2253,15 @@ describe("session-handoff skill (shipped plugin 汎用 handoff skill)", () => {
     expect(fm).toMatch(/^argument-hint:\s*"\[[\w-]+(?:\|[\w-]+)+\]"$/m);
   });
 
-  it("本体 500 行未満 (Anthropic 公式 SKILL.md 目安)", () => {
+  it("本体 550 行未満 (Anthropic 公式 SKILL.md focused 原則 — gen-13 教訓 expansion 対応)", () => {
+    // 旧閾値 500 (簡素な v1 spec を前提) は v2 拡張 (3-gate check / Gate 4 Roadmap
+    // Freshness / Post-Check Verification + anti-pattern #4 両立指針) に伴い 550
+    // へ evolve。Anthropic 公式は "focused" 原則を示すのみで、line count は内部
+    // heuristic。530 行台で stable 化、500 line monolithic anti-pattern からは
+    // 依然として遠い。将来 references/<helper>.md 分離で再削減を検討する場合は
+    // 本閾値を再度 500 に戻すことを許容する (regression 防止 guard 機能維持)。
     const lines = readSkill().split("\n").length;
-    expect(lines).toBeLessThan(500);
+    expect(lines).toBeLessThan(550);
   });
 
   it("generic placeholder (<project> or <name>) を含む (汎用化)", () => {
@@ -2553,6 +2559,158 @@ describe("session-handoff skill — archive design-decision ask step", () => {
 });
 
 
+// ============================================================
+// session-handoff skill — Required Sections × anti-pattern #4 両立 (gen-13 教訓)
+// gen-13 (2026-04-26 consumer-side) で maintainer が「Required Sections 4 つ
+// 以外排除」を strict 解釈し、確立 invariant の 1 行記述を全て archive に
+// 移送 → archive 必読化 = anti-pattern #4 違反。spec 自身に「strict 適用と
+// anti-pattern #4 の両立指針」が明記されていなかったため再発防止 spec として
+// 以下を強制する:
+//   1. Required Sections 直後に「anti-pattern #4 を犯さない」警告 + 5th
+//      optional section (恒久 decision-id 体系を持つ project は invariant の
+//      1 行 takeaway 列挙) の spec
+//   2. `check` Output Template 直後に Post-Check Verification (Test 1-5) を
+//      Self-Validation Checklist として配置 (Anthropic skills パターン: workflow
+//      指示と output 生成を同層に置く)
+//   3. Anti-pattern #4 (item 4) に「Required 4 sections strict 適用 risk」
+//      警告と Post-Check Verification 参照を追加
+//   4. 上記 3 か所が互いに cross-reference し、どこから読み始めても両立指針に
+//      到達できる
+// ============================================================
+describe("session-handoff skill — Required Sections × anti-pattern #4 両立 (Post-Check Verification 強制)", () => {
+  const skillPath = resolve(PLUGIN_ROOT, "commands/session-handoff.md");
+  const readSkill = (): string => readFileSync(skillPath, "utf-8");
+
+  const requiredSectionsBlock = (): string => {
+    const body = readSkill();
+    // `### Required Sections in `current.md`` から次の `### ` (非 # 始まり) または `## ` まで
+    const m = body.match(
+      /### Required Sections in `current\.md`[\s\S]*?(?=\n(?:###\s+[^#\s]|##\s+[^#\s])|$)/,
+    );
+    return m?.[0] ?? "";
+  };
+
+  const antiPatternFour = (): string => {
+    const body = readSkill();
+    // Anti-patterns section 内の item 4 を抽出 (`4. **...` から `5. **` 直前まで)
+    // 注意: `m` flag + `$` は行末で停止するため使わず、antiSec 全体を一括し
+    // 次の数値項目 (`\n5. **`) または antiSec 末尾を terminator とする
+    const antiSec =
+      body.match(/## Anti-patterns[\s\S]*?(?=\n## [^#]|$)/)?.[0] ?? "";
+    const m = antiSec.match(
+      /(?:^|\n)\s*4\.\s*\*\*[\s\S]*?(?=\n\s*5\.\s*\*\*|$)/,
+    );
+    return m?.[0] ?? "";
+  };
+
+  const postCheckSection = (): string => {
+    const body = readSkill();
+    // `#### Post-Check Verification` heading から次の `#### ` (`Forbidden` 等) または
+    // `## ` (次の major section) または末尾まで。
+    // 注意: heading 文字 `####` を anchor することで、Required Sections や
+    // Anti-pattern #4 内の reference 文字列 (`**Post-Check Verification (Test 1-5)**`)
+    // で stop するのを防ぐ。
+    const m = body.match(
+      /####\s+Post[-\s]?Check\s+Verification[\s\S]*?(?=\n####\s+[^#\s]|\n##\s+[^#]|$)/i,
+    );
+    return m?.[0] ?? "";
+  };
+
+  it("Required Sections (current.md) 直後に anti-pattern #4 警告と 5th optional section が記載される", () => {
+    const reqSec = requiredSectionsBlock();
+    expect(reqSec.length).toBeGreaterThan(200);
+    // anti-pattern #4 警告 (strict 適用 risk への言及)
+    expect(reqSec).toMatch(/anti[-\s]?pattern\s*#?4|archive[\s\S]{0,60}context[\s\S]{0,30}失/i);
+    // 5th section recommendation (Optional / Recommended / conditional)
+    expect(reqSec).toMatch(/5th\s*section|optional|recommended|conditional|条件付/i);
+    // 1-line takeaway 概念 (恒久 decision-id 体系を持つ project の invariant 列挙)
+    expect(reqSec).toMatch(/takeaway|1[-\s\\\/]?line|1\s*行/i);
+    // Post-Check Verification への参照
+    expect(reqSec).toMatch(/Post[-\s]?Check\s+Verification|Test\s*1[-\s]?5/i);
+  });
+
+  it("Post-Check Verification (Test 1-5) section が存在し各 Test を列挙する", () => {
+    const body = readSkill();
+    expect(body).toMatch(/Post[-\s]?Check\s+Verification/i);
+    // 各 Test 1-5 が個別に記載される (固定 wording に近い shape を強制、recall 可能性確保)
+    expect(body).toMatch(/Test\s*1[\s\S]{0,80}Latest\s*state/i);
+    expect(body).toMatch(/Test\s*2[\s\S]{0,80}Top\s+Priority|Test\s*2[\s\S]{0,80}即着手/i);
+    expect(body).toMatch(/Test\s*3[\s\S]{0,80}invariant|Test\s*3[\s\S]{0,80}1\s*行/i);
+    expect(body).toMatch(/Test\s*4[\s\S]{0,80}Quick[-\s]?start/i);
+    expect(body).toMatch(/Test\s*5[\s\S]{0,80}Pointer/i);
+    // checkbox list 形式 (人間 / Claude が手で確認する明示)
+    const postCheckSec = postCheckSection();
+    expect(postCheckSec.length).toBeGreaterThan(500); // 5 Test + Red flag を含む十分な分量
+    expect(postCheckSec).toMatch(/-\s*\[\s*\]/); // checkbox 形式
+    // red flag (圧縮しすぎ判定) 言及
+    expect(postCheckSec).toMatch(/red\s*flag|圧縮しすぎ|過剰圧縮/i);
+  });
+
+  it("Anti-pattern #4 が Required 4 sections strict 適用 risk 警告と Post-Check Verification 参照を含む", () => {
+    const item4 = antiPatternFour();
+    expect(item4.length).toBeGreaterThan(150); // 旧 3 行から拡張
+    // strict 適用 risk への言及
+    expect(item4).toMatch(/strict|厳密|strict\s*適用/i);
+    // Required Sections 4 への言及
+    expect(item4).toMatch(/Required[\s\S]{0,30}(?:4|four)\s*sections|4\s*sections|4 つ/i);
+    // Post-Check Verification への cross-reference
+    expect(item4).toMatch(/Post[-\s]?Check\s+Verification|Test\s*1[-\s]?5/i);
+    // human verify / 人間検証 必須の言及
+    expect(item4).toMatch(/human\s*verify|人間\s*(?:が|で|に)?\s*検証|手で確認|verify\s*manually/i);
+  });
+
+  it("Self-Validation Checklist の `check` 群に Post-Check Verification 実行 item が含まれる", () => {
+    const body = readSkill();
+    // Self-Validation Checklist セクション内 `check` 群を抽出
+    const checklistMatch = body.match(
+      /### `check`[\s\S]*?(?=\n###\s+[^#\s]|\n## [^#]|$)/,
+    );
+    // Self-Validation Checklist は ## Self-Validation Checklist の中の `check` subsection
+    // (### `check`) を探す。subcommand details 内の ### `check` と区別するため
+    // 「read-only 3-gate」記述を含む方を pick (Self-Validation 内が該当)
+    const selfValidationMatch = body.match(
+      /## Self-Validation Checklist[\s\S]*?### `check`[\s\S]*?(?=\n## [^#]|$)/,
+    );
+    const selfValidationCheck = selfValidationMatch?.[0] ?? "";
+    expect(selfValidationCheck.length).toBeGreaterThan(50);
+    // Post-Check Verification 実行確認の checkbox item
+    expect(selfValidationCheck).toMatch(
+      /-\s*\[\s*\]\s*[\s\S]{0,200}(?:Post[-\s]?Check\s+Verification|Test\s*1[-\s]?5)[\s\S]{0,200}(?:anti[-\s]?pattern\s*#?4|archive[\s\S]{0,30}必読|human\s*verify|人間\s*(?:が|で|に)?\s*検証|手で確認)/i,
+    );
+  });
+
+  it("Required Sections / Anti-pattern #4 / Post-Check Verification の 3 か所で互いに cross-reference する", () => {
+    const reqSec = requiredSectionsBlock();
+    const item4 = antiPatternFour();
+    const postCheckSec = postCheckSection();
+
+    // Required Sections → anti-pattern #4 への参照
+    expect(reqSec).toMatch(/anti[-\s]?pattern\s*#?4/i);
+    // Required Sections → Post-Check Verification への参照
+    expect(reqSec).toMatch(/Post[-\s]?Check\s+Verification|Test\s*1[-\s]?5/i);
+    // Anti-pattern #4 → Post-Check Verification への参照
+    expect(item4).toMatch(/Post[-\s]?Check\s+Verification|Test\s*1[-\s]?5/i);
+    // Post-Check Verification → anti-pattern #4 への参照 (両立指針の根拠)
+    expect(postCheckSec).toMatch(/anti[-\s]?pattern\s*#?4|archive[\s\S]{0,30}必読|context[\s\S]{0,30}失/i);
+    // Post-Check Verification → Required Sections への参照 (4 つの strict 適用と両立する旨)
+    expect(postCheckSec).toMatch(/Required\s+Sections|4\s*sections|4 つ/i);
+  });
+
+  it("Post-Check Verification は generic で R2/R3 違反 (parts-management 固有値) を含まない", () => {
+    const postCheckSec = postCheckSection();
+    expect(postCheckSec.length).toBeGreaterThan(500);
+    // R2 違反候補 (parts-management 固有 ID): D-NN / Round N / Phase ε / Track A/B/C / PR #N
+    expect(postCheckSec).not.toMatch(/\bD-\d{2,}\b/); // D-NN ID literal 禁止 (例: D-91)
+    expect(postCheckSec).not.toMatch(/\bRound\s+\d+\b/); // Round N literal 禁止
+    expect(postCheckSec).not.toMatch(/Phase\s+[εζηθ]/); // Phase ε/ζ/η/θ literal 禁止
+    expect(postCheckSec).not.toMatch(/Track\s+[ABC]\b/); // Track A/B/C literal 禁止
+    expect(postCheckSec).not.toMatch(/feature\/new-partslist/); // R3 違反 branch 名禁止
+    expect(postCheckSec).not.toMatch(/\bparts-management\b/); // project 名禁止
+    // 但し generic placeholder (`<decision-id>` / `<your-id>` / `<project>` 等) は OK
+  });
+});
+
+// ============================================================
 // harness-setup check が session-handoff を認識する (harness setup check 統合 invariant)
 describe("session-handoff skill — harness-setup check 統合", () => {
   it("harness-setup.md の check 対象 command list に commands/session-handoff.md パス形式で含まれる", () => {
