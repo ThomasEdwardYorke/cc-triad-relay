@@ -781,6 +781,254 @@ function findHits(
 }
 
 // ---------------------------------------------------------------------------
+// Track C-3 (5j): test-file zone extraction
+// ---------------------------------------------------------------------------
+//
+// Extract `comment-block` (`/* ... */`), `comment-line` (`// ...`), and
+// `describe-title` (first string arg of `describe(...)` / `it(...)`)
+// zones from a test file so the blocklist scan can focus on the surfaces
+// most likely to leak internal tracker IDs (multi-line block comments
+// span newlines and a per-line scan misses violations that wrap).
+//
+// Non-goals:
+//   - Full TypeScript / JavaScript parsing. We deliberately stay at a
+//     regex-based extractor; a full AST would couple this CI guard to
+//     the project's bundler config.
+//   - Comment detection inside string literals (e.g. a string that
+//     contains `// foo`). False positives here are tolerable because
+//     fixture string literals are already covered by file-head
+//     `generality-exemption` declarations.
+
+interface TestZone {
+  kind: "comment-block" | "comment-line" | "describe-title";
+  startLine: number;
+  endLine: number;
+  text: string;
+  /** Absolute character offset of zone start in the original content. */
+  startOffset: number;
+}
+
+/**
+ * Compute the 1-based line number for a character offset by counting
+ * newline characters up to but not including the offset.
+ */
+function offsetToLine(content: string, offset: number): number {
+  let line = 1;
+  for (let i = 0; i < offset && i < content.length; i += 1) {
+    if (content[i] === "\n") line += 1;
+  }
+  return line;
+}
+
+/**
+ * Extract zones from `content`. Implementation walks the string with a
+ * tiny state machine so it can:
+ *   - Skip over JS string literals (so `// inside string` is not flagged
+ *     as a comment).
+ *   - Recognise template literals (backticks) for describe / it titles.
+ *   - Spot describe / it call boundaries before entering string state so
+ *     the title's quote character is captured.
+ *
+ * The state machine is deliberately conservative: anything that looks
+ * ambiguous defaults to "outside" so the extractor never mis-identifies
+ * code as a comment / title (false-positives in the audit are far worse
+ * than misses, since the audit also has the per-line BLOCKLIST_TARGETS
+ * scan as a redundant net).
+ */
+export function extractTestZones(content: string): TestZone[] {
+  const zones: TestZone[] = [];
+  const len = content.length;
+  let i = 0;
+  while (i < len) {
+    const ch = content[i];
+    const next = content[i + 1];
+
+    // ----- block comment -----
+    if (ch === "/" && next === "*") {
+      const start = i;
+      i += 2;
+      while (i < len) {
+        if (content[i] === "*" && content[i + 1] === "/") {
+          i += 2;
+          break;
+        }
+        i += 1;
+      }
+      const end = i;
+      const startLine = offsetToLine(content, start);
+      const endLine = offsetToLine(content, end - 1);
+      zones.push({
+        kind: "comment-block",
+        startLine,
+        endLine,
+        startOffset: start,
+        // Strip the comment markers so the regex sees only the body
+        // text — the markers themselves never carry a tracker ID and
+        // would otherwise leak into hit text reporting.
+        text: content.slice(start + 2, end - 2),
+      });
+      continue;
+    }
+
+    // ----- line comment -----
+    if (ch === "/" && next === "/") {
+      const start = i;
+      i += 2;
+      while (i < len && content[i] !== "\n") i += 1;
+      const end = i; // newline excluded
+      const line = offsetToLine(content, start);
+      zones.push({
+        kind: "comment-line",
+        startLine: line,
+        endLine: line,
+        startOffset: start,
+        text: content.slice(start + 2, end),
+      });
+      continue;
+    }
+
+    // ----- string literal (skip body) -----
+    if (ch === '"' || ch === "'" || ch === "`") {
+      const quote = ch;
+      i += 1;
+      while (i < len) {
+        if (content[i] === "\\") {
+          // Escape sequence — skip the next character verbatim.
+          i += 2;
+          continue;
+        }
+        if (content[i] === quote) {
+          i += 1;
+          break;
+        }
+        i += 1;
+      }
+      continue;
+    }
+
+    // ----- describe / it title -----
+    // Match the call form `describe("...")` / `it("...")` — first
+    // string-literal argument only. We deliberately consume any
+    // surrounding whitespace so multi-arg formatting (`describe (\n
+    // "title", ...)`) still works.
+    if (
+      (ch === "d" || ch === "i") &&
+      isDescribeOrItKeyword(content, i)
+    ) {
+      // Advance past the keyword.
+      const kwLen = content.startsWith("describe", i) ? 8 : 2;
+      let j = i + kwLen;
+      // Skip whitespace + open paren.
+      while (j < len && /\s/.test(content[j])) j += 1;
+      if (content[j] !== "(") {
+        // Not a call shape — keep walking from after the keyword to
+        // avoid re-scanning the same span repeatedly.
+        i = j;
+        continue;
+      }
+      j += 1;
+      while (j < len && /\s/.test(content[j])) j += 1;
+      const titleQuote = content[j];
+      if (titleQuote !== '"' && titleQuote !== "'" && titleQuote !== "`") {
+        // First arg is not a string literal — skip.
+        i = j;
+        continue;
+      }
+      const titleStart = j + 1;
+      let k = titleStart;
+      while (k < len) {
+        if (content[k] === "\\") {
+          k += 2;
+          continue;
+        }
+        if (content[k] === titleQuote) break;
+        k += 1;
+      }
+      const titleEnd = k; // exclusive of closing quote
+      const startLine = offsetToLine(content, titleStart);
+      const endLine = offsetToLine(content, titleEnd);
+      zones.push({
+        kind: "describe-title",
+        startLine,
+        endLine,
+        startOffset: titleStart,
+        text: content.slice(titleStart, titleEnd),
+      });
+      // Resume after the closing quote.
+      i = titleEnd + 1;
+      continue;
+    }
+
+    i += 1;
+  }
+  return zones;
+}
+
+/**
+ * `describe`/`it` keyword detector with word-boundary check (avoids
+ * matching identifiers like `description` / `itinerary`).
+ */
+function isDescribeOrItKeyword(content: string, i: number): boolean {
+  const isDescribe = content.startsWith("describe", i);
+  const isIt = content.startsWith("it", i);
+  if (!isDescribe && !isIt) return false;
+  // Left boundary: previous char must NOT be a word char (so `xdescribe`
+  // is not picked up).
+  if (i > 0 && /\w/.test(content[i - 1])) return false;
+  // Right boundary: char after the keyword must NOT be a word char
+  // (so `description` is rejected; `describe(` / `describe (` survive).
+  const after = content[i + (isDescribe ? 8 : 2)];
+  if (after !== undefined && /[\w$]/.test(after)) return false;
+  return true;
+}
+
+/**
+ * Test-zone hit. `kind` carries the originating zone's classification
+ * so audit messages can quote the precise surface.
+ */
+interface ZoneHit {
+  kind: TestZone["kind"];
+  startLine: number;
+  endLine: number;
+  text: string;
+}
+
+/**
+ * Run a `BlockPattern`'s regex against each extracted zone in `content`,
+ * honouring file-head `generality-exemption` declarations the same way
+ * `findHits` does (so a fixture file that opts out of `B-3b` does not
+ * produce zone hits).
+ *
+ * Multi-line zones (block comments) are searched with the regex's `s`
+ * (dotAll) semantics emulated via `\s\S` in the original patterns —
+ * since `\s` matches newline, the block-comment text can be tested
+ * verbatim.
+ */
+export function findHitsInTestZones(
+  content: string,
+  pattern: BlockPattern,
+): ZoneHit[] {
+  // File-head exemption applies to the entire file.
+  if (hasFileExemption(content, pattern.id)) return [];
+  const zones = extractTestZones(content);
+  const hits: ZoneHit[] = [];
+  for (const zone of zones) {
+    // Re-instantiate the regex per zone so `lastIndex` from previous
+    // zones / tests does not affect this match.
+    const re = new RegExp(pattern.pattern.source, pattern.pattern.flags);
+    if (re.test(zone.text)) {
+      hits.push({
+        kind: zone.kind,
+        startLine: zone.startLine,
+        endLine: zone.endLine,
+        text: zone.text,
+      });
+    }
+  }
+  return hits;
+}
+
+// ---------------------------------------------------------------------------
 // テスト生成
 // ---------------------------------------------------------------------------
 
@@ -835,6 +1083,46 @@ describeFileBlocklistTests(
   WARN_TARGETS,
   (p) => p.appliesToTests,
 );
+
+// Track C-3 (5j): test-file zone scan
+//
+// The line-based WARN_TARGETS scan above misses multi-line `/* ... */`
+// block-comment violations whose tracker fragment wraps across newlines
+// (e.g. `/* internal\n申送 M-12 */`). This dedicated scan extracts
+// comment + describe / it title zones first and runs the regex against
+// each zone's full text so multi-line violations are caught. File-head
+// `generality-exemption` declarations apply identically (the existing
+// audit-tagged fixtures stay green).
+describe("generality blocklist: test-file zones (Track C-3 / 5j multi-line catch)", () => {
+  const allFiles = WARN_TARGETS.flatMap((t) => listFiles(t));
+
+  for (const pattern of BLOCK_PATTERNS) {
+    if (!pattern.appliesToTests) continue;
+    describe(`[${pattern.id}] ${pattern.category}`, () => {
+      for (const file of allFiles) {
+        const rel = relative(REPO_ROOT, file).replace(/\\/g, "/");
+        it(`${rel} の comment / describe-title に ${pattern.id} が含まれない`, () => {
+          if (pattern.skipFiles && pattern.skipFiles.test(rel)) return;
+          const content = readFileSync(file, "utf-8");
+          const hits = findHitsInTestZones(content, pattern);
+          if (hits.length > 0) {
+            const details = hits
+              .map(
+                (h) =>
+                  `  ${h.kind} L${h.startLine}-${h.endLine}: ${h.text
+                    .slice(0, 200)
+                    .replace(/\s+/g, " ")
+                    .trim()}`,
+              )
+              .join("\n");
+            const fullMessage = `\n${pattern.message}\n\nLeak 検出箇所 (${rel}):\n${details}\n`;
+            expect.fail(fullMessage);
+          }
+        });
+      }
+    });
+  }
+});
 
 // Codex [C-1] 指摘対応: REPO_ROOT_TARGETS (README.md / docs/en / docs/ja) を実際に走査
 describe("generality blocklist: repo-level public docs (Codex [C-1] coverage)", () => {
@@ -1436,6 +1724,158 @@ describe("exemption grammar (unified, pipe-separated)", () => {
         // the all-keyword guard.
         expect(hasFileExemption(md, "B-1")).toBe(true);
       });
+    });
+  });
+
+  // ----------------------------------------------------------------------
+  // Track C-3 (5j): test-file comment / describe-title 走査拡張
+  // ----------------------------------------------------------------------
+  // Background: existing WARN_TARGETS line-based scan already catches a
+  // tracker-ID violation when it sits on a single line of a test file
+  // (the regex itself matches without comment-awareness). The audit
+  // surfaced two gaps:
+  //
+  //   1. Multi-line `/* ... */` block-comment violations split across
+  //      newlines (e.g. `/* internal\n申送 M-12 */`) are missed because
+  //      the scan is per-line.
+  //   2. The intent of WARN_TARGETS is "violations inside test files"
+  //      but the scan currently looks at every line equally. Making the
+  //      "comments + describe / it titles" surfaces explicit gives a
+  //      precise hit message ("violation in comment block at L123-L130")
+  //      and keeps fixture string literals separately handled (those
+  //      are typically declared with file-head exemption).
+  //
+  // Implementation contract for the helpers under test:
+  //   - `extractTestZones(content)` → ordered list of `{kind, startLine,
+  //     endLine, text}` records covering:
+  //       * `comment-block` — `/* ... */` body (multi-line allowed)
+  //       * `comment-line` — `// ...` body (one per line)
+  //       * `describe-title` — first string argument of `describe(...)` /
+  //         `it(...)` calls (single-line literal, double / single /
+  //         backtick quotes)
+  //   - `findHitsInTestZones(content, pattern)` → array of hits (line
+  //     ranges + matched text), exempt-aware (skips zones covered by
+  //     file-head or in-zone `generality-exemption` markers).
+  describe("test-file zone extraction (Track C-3 / 5j)", () => {
+    it("extractTestZones returns block comments, line comments, and describe / it titles", () => {
+      const src =
+        '/* block start\n internal note */\n' +
+        '// single line comment\n' +
+        'describe("first describe title", () => {\n' +
+        '  it("first it title", () => {});\n' +
+        '});\n';
+      const zones = extractTestZones(src);
+      const kinds = zones.map((z) => z.kind);
+      expect(kinds).toContain("comment-block");
+      expect(kinds).toContain("comment-line");
+      expect(kinds).toContain("describe-title");
+      // describe-title and it-title are reported separately so callers
+      // can quote the exact location.
+      const titles = zones
+        .filter((z) => z.kind === "describe-title")
+        .map((z) => z.text);
+      expect(titles).toEqual(
+        expect.arrayContaining([
+          "first describe title",
+          "first it title",
+        ]),
+      );
+    });
+
+    it("extractTestZones spans block comment text across newlines", () => {
+      const src = '/*\n  Round 4 of internal review\n  申送 M-12\n*/\nconst x = 1;\n';
+      const zones = extractTestZones(src);
+      const block = zones.find((z) => z.kind === "comment-block");
+      expect(block).toBeDefined();
+      expect(block!.text).toContain("Round 4");
+      expect(block!.text).toContain("申送 M-12");
+      // Line range covers the multi-line block.
+      expect(block!.startLine).toBeLessThanOrEqual(block!.endLine);
+      expect(block!.endLine).toBeGreaterThanOrEqual(2);
+    });
+
+    it("extractTestZones skips backslash-escaped quote inside describe title", () => {
+      // Robustness: a `describe` title may legitimately contain an escaped
+      // quote (e.g. `describe("foo \"bar\" baz", ...)`). Extraction must
+      // not stop at the inner quote.
+      const src = 'describe("foo \\"bar\\" baz", () => {});\n';
+      const zones = extractTestZones(src);
+      const titles = zones.filter((z) => z.kind === "describe-title");
+      expect(titles).toHaveLength(1);
+      expect(titles[0].text).toContain("bar");
+    });
+
+    it("extractTestZones recognises template-literal (backtick) describe titles", () => {
+      const src = 'it(`backtick title with ${interp} stuff`, () => {});\n';
+      const zones = extractTestZones(src);
+      const titles = zones.filter((z) => z.kind === "describe-title");
+      expect(titles).toHaveLength(1);
+      expect(titles[0].text).toContain("backtick title");
+    });
+
+    it("findHitsInTestZones detects a multi-line block-comment Round-N violation (B-3b)", () => {
+      // Pre-extension: a per-line scan would still catch `Round 4` on its
+      // own line, but the extension hardens this for cases like multi-line
+      // `Round\n4` (regex `\s` does match `\n` but per-line tokenisation
+      // of `findHits` cannot see across the boundary).
+      const src = '/* internal note\n   Round\n   4\n   note */\nconst x = 1;\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3b");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
+      expect(hits.length).toBeGreaterThan(0);
+    });
+
+    it("findHitsInTestZones detects a tracker-ID inside a describe title (B-3e)", () => {
+      const src = 'describe("(C-1) some scenario", () => {});\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3e");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
+      expect(hits.length).toBeGreaterThan(0);
+    });
+
+    it("findHitsInTestZones detects a tracker-ID inside an it() title", () => {
+      const src = 'it("Round 4 regression check", () => {});\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3b");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
+      expect(hits.length).toBeGreaterThan(0);
+    });
+
+    it("findHitsInTestZones honours file-head exemption (R3 generality-exemption)", () => {
+      const src =
+        '/* generality-exemption: B-3b | HARNESS-42 | v0.5.0 | fixture covers tracker pattern */\n' +
+        '/* internal note: Round 4 */\n' +
+        'describe("Round 4 review", () => {});\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3b");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
+      // Exempt by file-head declaration → no hits.
+      expect(hits).toHaveLength(0);
+    });
+
+    it("findHitsInTestZones does NOT report when the tracker-ID lives outside any zone (e.g. raw code line)", () => {
+      // Code-line literal (no comment / no describe) is intentionally NOT
+      // scanned by the test-zone extension. Such literals are policed by
+      // the per-line BLOCKLIST_TARGETS path (or accepted with an inline
+      // line-level exemption); the test-zone helper focuses on
+      // comments + describe / it titles.
+      const src = 'const tracker = "Round 4";\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3b");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
+      expect(hits).toHaveLength(0);
+    });
+
+    it("findHitsInTestZones produces zone-aware hit metadata (kind + line range)", () => {
+      const src = '// Round 4 line comment\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3b");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
+      expect(hits.length).toBeGreaterThan(0);
+      // Hit reports its zone kind + a non-empty line range.
+      expect(hits[0].kind).toBe("comment-line");
+      expect(hits[0].startLine).toBeGreaterThanOrEqual(1);
+      expect(hits[0].endLine).toBeGreaterThanOrEqual(hits[0].startLine);
     });
   });
 });
