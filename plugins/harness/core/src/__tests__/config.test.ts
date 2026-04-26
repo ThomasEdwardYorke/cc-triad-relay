@@ -1331,6 +1331,27 @@ describe("loadConfig / loadConfigSafe", () => {
       });
     });
 
+    it("review.projectChecklistPath rejects whitespace-only string (CR round 3: trim().length===0)", () => {
+      // CR review pointed out that the original `value.length === 0` check
+      // accepted "   " (three spaces) as a non-empty path, which is just
+      // another config bug shape (opt-in path that points nowhere).
+      // The classifier now uses `value.trim().length === 0` so all
+      // whitespace-only strings collapse into the same `"empty"` reason.
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          review: { projectChecklistPath: "   " },
+        }),
+      );
+      withCapturedStderr((writes) => {
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.review.projectChecklistPath).toBeUndefined();
+        expect(writes.join("")).toMatch(
+          /review\.projectChecklistPath.*empty/i,
+        );
+      });
+    });
+
     it("review.projectChecklistPath rejects absolute path", () => {
       writeFileSync(
         join(projectRoot, "harness.config.json"),

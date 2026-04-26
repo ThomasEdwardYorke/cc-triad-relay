@@ -1497,7 +1497,9 @@ function classifyProjectRelativePath(value: unknown):
   | { ok: true }
   | { ok: false; reason: "non-string" | "empty" | "absolute" | "traversal" | "control-char" } {
   if (typeof value !== "string") return { ok: false, reason: "non-string" };
-  if (value.length === 0) return { ok: false, reason: "empty" };
+  // Reject empty *and* whitespace-only strings — both signal an opt-in
+  // path that points nowhere, which is a config bug not a feature.
+  if (value.trim().length === 0) return { ok: false, reason: "empty" };
   if (isAbsolute(value)) return { ok: false, reason: "absolute" };
   if (value.split(/[\\/]/).some((segment) => segment === "..")) {
     return { ok: false, reason: "traversal" };
