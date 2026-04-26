@@ -279,9 +279,9 @@ export interface WorkConfig {
    *
    * Validation: project-relative paths only — absolute paths, `..`
    * segments, empty strings, and control-character payloads are rejected
-   * by the loader (`validatePipelineCheckPath`) so the path cannot escape
-   * the project root or carry log-injection vectors. Rejected values fall
-   * back to `undefined` after a stderr warning.
+   * by the loader (`validateWorkPipelineCheckPath`) so the path cannot
+   * escape the project root or carry log-injection vectors. Rejected
+   * values fall back to `undefined` after a stderr warning.
    */
   pipelineCheckPath?: string;
 }
