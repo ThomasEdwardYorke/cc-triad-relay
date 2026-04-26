@@ -315,6 +315,15 @@ done`,
 
 ### M5 — Real CodeRabbit Clear 判定 (G6)
 
+> **`/coderabbit-review` skill 必須経由**。本 phase は内部で
+> `gh api ... reviews` や `gh api ... commits/.../status` を **直接 polling
+> しない** (skill bypass 禁止)。Stop polling 判定 (commit_status watch) と
+> Merge ready 判定 (4 signal AND) は `/coderabbit-review` Step 7 が責任を持つ。
+> M5 は skill の結果 (`CLEAR_STRONG` / `CLEAR_SOFT`) を **そのまま信頼** し、
+> **独自 polling 禁止** (規律違反は consumer-side discipline ledger に
+> append-only 自動追記される、`harness-work.md` Skill connectivity 原則 box
+> 参照)。
+
 ```text
 # テンプレート表記 (<PR> は当該 PR 番号の placeholder、coordinator が実値を埋込)
 Skill({skill: "coderabbit-review", args: "<PR>"})
@@ -323,15 +332,17 @@ Skill({skill: "coderabbit-review", args: "<PR>"})
 Skill({skill: "coderabbit-review", args: "<pr-number-literal>"})
 ```
 
-`/coderabbit-review` skill が Step 7.4 マトリクスで Clear 確定するまで監視 +
+`/coderabbit-review` skill が Step 7.B.5 マトリクスで Clear 確定するまで監視 +
 反復:
 
-| CLEAR (strong) | CLEAR_SOFT | blocker | 結果 |
-|---|---|---|---|
-| `state == APPROVED` | — | — | **完全 clear** → M6 |
-| — | `unresolved == 0` | rate-limit 不在 | **ソフト clear** → M6 (APPROVED でない旨記録) |
-| false | false | — | **未 clear** → finding 反映 → M3 へ戻る |
-| — | — | rate-limit active | **blocker** → cooldown 待機 or `/pseudo-coderabbit-loop <pr-number>` に切替 |
+| STOP_POLLING | APPROVED | ACTIONABLE | UNRESOLVED | blocker | 結果 |
+|---|---|---|---|---|---|
+| ✅ | ✅ | 0 | — | 不在 | **CLEAR_STRONG** → M6 |
+| ✅ | — | 0 | 0 | 不在 | **CLEAR_SOFT** → M6 (APPROVED でない旨記録) |
+| ✅ | — | >0 | — | 不在 | **未 clear** → finding 反映 → M3 へ戻る |
+| ✅ | — | 0 | >0 | 不在 | **resolve 必要** → skill が Step 6.5 で `@coderabbitai resolve` auto-issue → 30s wait → 再判定 |
+| ❌ | — | — | — | — | **Stop polling 未成立** → skill が Step 3 polling 継続 |
+| — | — | — | — | active | **blocker** → cooldown 待機 or `/pseudo-coderabbit-loop <pr-number>` に切替 |
 
 `--max-iterations=N` (default 5) で M5 → M3 → M5 ループ上限を制御。超過時は
 fail-fast + ledger 追記。

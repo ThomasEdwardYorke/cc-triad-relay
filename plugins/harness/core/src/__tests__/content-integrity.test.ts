@@ -2834,7 +2834,27 @@ describe(".coderabbit.yaml — repository-level CodeRabbit config", () => {
   it("reviews.profile: chill (actionable-only、nitpick は assertive profile 専用の公式仕様)", () => {
     const reviews = coderabbitConfig["reviews"] as Record<string, unknown>;
     expect(reviews["profile"]).toBe("chill");
-    expect(reviews["request_changes_workflow"]).toBe(false);
+    // request_changes_workflow: true は APPROVED state 自動発火の前提
+    // (公式 changelog: request-changes-workflow)。これと
+    // /coderabbit-review Step 7.B.1 (CLEAR_STRONG) が連動する。
+    expect(reviews["request_changes_workflow"]).toBe(true);
+  });
+
+  it("reviews.pre_merge_checks: explicit pre-merge gate (warning mode で初期導入)", () => {
+    const reviews = coderabbitConfig["reviews"] as Record<string, unknown>;
+    const checks = reviews["pre_merge_checks"] as Record<string, unknown>;
+    expect(checks).toBeTypeOf("object");
+    expect(checks).not.toBeNull();
+    // custom_review / description_check / docstrings の 3 check が宣言される
+    expect(checks["custom_review"]).toBeTypeOf("object");
+    expect(checks["description_check"]).toBeTypeOf("object");
+    expect(checks["docstrings"]).toBeTypeOf("object");
+    // mode は warning|error|off のいずれか
+    const allowedModes = ["warning", "error", "off"];
+    for (const key of ["custom_review", "description_check", "docstrings"]) {
+      const check = checks[key] as Record<string, unknown>;
+      expect(allowedModes).toContain(check["mode"]);
+    }
   });
 
   it("reviews.auto_review: enabled + drafts=false + base_branches に ^main$ (regex 形式)", () => {

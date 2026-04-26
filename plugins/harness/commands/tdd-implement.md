@@ -291,6 +291,14 @@ fi
 
 push 後に PR を作成すると CodeRabbit が自動レビュー開始。これをクリアするまで反復。
 
+> **`/coderabbit-review` skill 必須経由**。本 phase は内部で
+> `gh api ... reviews` や `gh api ... commits/.../status` を **直接 polling
+> しない** (skill bypass 禁止)。Stop polling 判定 (commit_status watch) と
+> Merge ready 判定 (4 signal AND) は `/coderabbit-review` Step 7 が責任を持つ。
+> Phase 6 は skill の結果 (`CLEAR_STRONG` / `CLEAR_SOFT`) を **そのまま信頼** し、
+> **独自 polling 禁止** (skill 必須経由、規律違反は consumer-side discipline
+> ledger に追記される)。
+
 ### 6.1 PR 作成
 
 ```bash
@@ -304,10 +312,15 @@ gh pr create --repo <owner>/<repo> --base <base> --head <head> \
 /coderabbit-review <pr-number>
 ```
 
-内部で以下を自動判定（Clear 3 段判定、`coderabbit-review.md` Step 7.1-7.4 準拠）:
-- **最強**: `reviews[-1].state == "APPROVED"`
-- **中**: unresolved CodeRabbit threads == 0
-- **阻害なし**: `rate limited` / `Reviews paused` marker が最新 15 分に不在
+内部で以下を自動判定（2 段判定、`coderabbit-review.md` Step 7.A / 7.B 準拠）:
+
+- **Step 7.A — Stop polling**: `commit_status pending → success "Review completed"`
+  を primary signal として watch (per-commit lifecycle、CR が新 commit ごとに発火)
+- **Step 7.B — Merge ready** (4 signal AND):
+  - **最強**: `reviews[-1].state == "APPROVED"` (`request_changes_workflow: true`)
+  - **中**: actionable=0 + unresolved CodeRabbit threads == 0
+  - **阻害なし**: `rate limited` / `Reviews paused` marker が最新 15 分に不在
+  - 欠落時は Step 6.5 で `@coderabbitai resolve` auto-issue → 30s wait → 再判定
 
 ### 6.3 Rate limit ヒット時の分岐（重要）
 

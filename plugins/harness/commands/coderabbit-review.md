@@ -181,41 +181,67 @@ echo "rate-limit markers: $RATE_LIMITED"
 - review trigger 系の検証は cooldown 後に再開
 - `/pseudo-coderabbit-loop <pr> --local` に切替て Codex 代替レビューで時間活用可能
 
-### Step 3. Background watch
+### Step 3. Background watch (commit_status primary + review-count fallback)
+
+CR は per-commit review lifecycle で **commit_status** (`pending` → `success`
+"Review completed") を発行することが LIVE 観測されている。これを **primary
+signal** として watch し、review-count 増加は commit_status を発行しない構成
+向けの **secondary fallback** に格下げる (旧実装は review-count 増加のみを
+監視していたため CR の per-commit lifecycle と乖離していた)。
 
 Run in background (`run_in_background: true`, `timeout: 600000`):
 
 ```bash
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 PR=<pr-number>
+HEAD_SHA=$(gh pr view "$PR" --repo "$REPO" --json headRefOid --jq '.headRefOid')
 INITIAL=$(gh api repos/${REPO}/pulls/${PR}/reviews \
   --jq '[.[] | select(.user.login=="coderabbitai[bot]")] | length' 2>/dev/null)
+PREV_STATE=""
+
 for i in $(seq 1 20); do
+  # Primary: commit_status state watch (pending → success "Review completed")
+  STATE=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/status" \
+    --jq '[.statuses[] | select(.context | test("CodeRabbit"; "i"))] | last | .state // empty' 2>/dev/null)
+  DESC=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/status" \
+    --jq '[.statuses[] | select(.context | test("CodeRabbit"; "i"))] | last | .description // empty' 2>/dev/null)
+
+  if [ "$STATE" != "$PREV_STATE" ]; then
+    echo "STATE_CHANGED prev=\"$PREV_STATE\" new=\"$STATE\" desc=\"$DESC\""
+    PREV_STATE="$STATE"
+  fi
+
+  if [ "$STATE" = "success" ] && echo "$DESC" | grep -qiE 'review completed|review complete'; then
+    osascript -e "display notification \"CodeRabbit review completed — PR #${PR}\" with title \"Claude Code\" sound name \"Glass\"" 2>/dev/null \
+      || notify-send "Claude Code" "CodeRabbit review completed — PR #${PR}" 2>/dev/null || true
+    echo "STOP_POLLING_REACHED"
+    exit 0
+  fi
+
+  # Secondary fallback: review-count 増加 (commit_status を発行しない CR 構成 /
+  # API drift への保険、Stop polling 判定 (Step 7.A) は commit_status を primary とする)
   CURRENT=$(gh api repos/${REPO}/pulls/${PR}/reviews \
     --jq '[.[] | select(.user.login=="coderabbitai[bot]")] | length' 2>/dev/null)
   if [ "$CURRENT" -gt "$INITIAL" ] 2>/dev/null; then
-    # Desktop notification (macOS / Linux)
     osascript -e "display notification \"CodeRabbit review arrived — PR #${PR}\" with title \"Claude Code\" sound name \"Glass\"" 2>/dev/null \
       || notify-send "Claude Code" "CodeRabbit review arrived — PR #${PR}" 2>/dev/null || true
-    echo "REVIEW_ARRIVED"
+    echo "REVIEW_ARRIVED_FALLBACK"
     exit 0
   fi
-  # NOTE: `gh pr checks` の CodeRabbit check 名は unstable (Step 7.5 参照) のため、
-  # ここでは REVIEW_CLEAR を短絡判定しない。Clear 判定は Step 7 の 3 段判定
-  # (APPROVED / unresolved=0 / rate-limit marker 不在) に一本化する。
-  # 監視ループの責務は「新 review 到着の検出」のみ。
+
   sleep 30
 done
 echo "TIMEOUT"
 ```
 
 Tell the user: *"Watching in the background (up to 10 min). You can
-keep working — a notification will fire when the review arrives."*
+keep working — a notification will fire when commit_status flips to success."*
 
 Background result routing:
 
-- `REVIEW_ARRIVED` → Step 4 (parse the review) → Step 7 (Clear 3 段判定)
-- `TIMEOUT`        → report, suggest re-running the skill (Clear 判定は Step 7 が行う)
+- `STOP_POLLING_REACHED` → Step 4 (parse the review) → Step 7 (Stop polling + Merge ready 2 段判定)
+- `REVIEW_ARRIVED_FALLBACK` → Step 4 (commit_status 不在環境向けの保険、Step 7 と同等処理)
+- `TIMEOUT` → report, suggest re-running the skill (Clear 判定は Step 7 が行う)
 
 ### Step 4. Parse the review
 
@@ -253,26 +279,206 @@ git push origin "$(git branch --show-current)"
 
 Return to Step 3 and wait for the next review cycle.
 
-### Step 7. Confirm the review is clear (STRENGTHENED)
+### Step 6.5. Auto-issue `@coderabbitai resolve` (chat bucket、unresolved>0 + actionable=0 時)
 
-CodeRabbit は「クリア」を明示しない傾向にある (Codex 公式 docs 調査済)。以下 3 つのシグナルで **明示的に clear 判定**:
+Step 6 (push) の後、Step 7 (Stop polling / Merge ready 判定) に入る前に、
+**unresolved CR threads が残っているが actionable=0** の場合に限り、
+`@coderabbitai resolve` を chat bucket 経由で自動 inject する。
 
-#### 7.1 最強シグナル: `reviews[-1].state == APPROVED`
+CR の thread auto-resolve は per-comment fix が unresolved=0 を達成しないまま
+繰り返し発生しがちで、Soft Clear 到達を妨げる。chat bucket (50/h、review bucket
+5/h と独立) を活用して、Real CR review bucket を無駄消費せずに resolve mark を
+発火する。
 
-`request_changes_workflow: true` (default) のとき、unresolved comments 0 + pre-merge checks OK で自動 `APPROVED` に遷移する。
+```bash
+# CR_CHAT_BIN の解決 3 段 fallback (Step 2.6.1 と同じ)
+if [ -z "${CR_CHAT_BIN:-}" ]; then
+  CR_CHAT_BIN=$(command -v cr-chat 2>/dev/null || true)
+fi
+if [ -z "$CR_CHAT_BIN" ]; then
+  HARNESS_PLUGIN_ROOT="${HARNESS_PLUGIN_ROOT:-$HOME/.claude/plugins/marketplaces/<your-marketplace>/plugins/harness}"
+  CR_CHAT_BIN="${HARNESS_PLUGIN_ROOT}/bin/cr-chat"
+fi
+
+# unresolved 数を取得 (Step 7.B.3 の query を再利用)
+UNRESOLVED=$(gh api graphql -f query='
+  query($owner: String!, $name: String!, $pr: Int!) {
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $pr) {
+        reviewThreads(first: 100) {
+          nodes {
+            isResolved
+            comments(first: 1) { nodes { author { login } } }
+          }
+        }
+      }
+    }
+  }' -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F pr="$PR" \
+  --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+    | select(.comments.nodes[0].author.login == "coderabbitai")
+    | select(.isResolved == false)] | length')
+
+# 最新 review body から actionable count
+# CR body 形式 drift 対策: grep が空を返した場合は "0" にフォールバックせず
+# "unknown" として扱い、後続の strict equality 判定 ([ ... = "0" ]) を false にする
+# (false-clear / false auto-resolve injection の予防、A4)
+LATEST_BODY=$(gh api "repos/${REPO}/pulls/${PR}/reviews" \
+  --jq "[.[] | select(.user.login==\"coderabbitai[bot]\")] | last | .body")
+ACTIONABLE_LATEST=$(echo "$LATEST_BODY" | grep -oE 'Actionable comments posted:\s*[0-9]+' \
+  | grep -oE '[0-9]+' | head -1)
+if [ -z "$ACTIONABLE_LATEST" ]; then
+  ACTIONABLE_LATEST="unknown"
+  echo "WARN: ACTIONABLE_LATEST grep returned empty (CR body format drift?); treating as 'unknown' (NOT 0)" >&2
+fi
+
+# RESOLVE_INJECT_COUNT counter (per-PR、最大 RESOLVE_INJECT_MAX 回まで、A3)
+# 同 PR で Step 7 → Step 6.5 の back jump が繰り返される場合、CR bot の thread
+# processing 障害 / network drift で永久 loop に陥らないよう上限を設ける。
+# counter は file-based で push 跨ぎ persist する (新 push 時は session で reset
+# する想定、本 skill の責務外)。
+RESOLVE_COUNT_FILE="/tmp/cr-resolve-count-${PR}-$(echo "$REPO" | tr '/' '-')"
+RESOLVE_INJECT_MAX=3
+RESOLVE_INJECT_COUNT=$(cat "$RESOLVE_COUNT_FILE" 2>/dev/null || echo 0)
+
+if [ -x "$CR_CHAT_BIN" ] && [ "$ACTIONABLE_LATEST" = "0" ] && [ "$UNRESOLVED" -gt 0 ]; then
+  if [ "$RESOLVE_INJECT_COUNT" -ge "$RESOLVE_INJECT_MAX" ]; then
+    echo "WARN: Step 6.5 auto-resolve injection limit reached (count=$RESOLVE_INJECT_COUNT, max=$RESOLVE_INJECT_MAX)" >&2
+    echo "      User intervention required: manually verify CR threads or escalate" >&2
+    # Step 7 へ素通し (CLEAR_STRONG / SOFT は UNRESOLVED>0 のため不成立、
+    # 未 clear flow で finding 反映 → fix → push の通常 round に戻る)
+  else
+  UNRESOLVED_BEFORE="$UNRESOLVED"
+  RESOLVE_BODY=$(node "$CR_CHAT_BIN" build resolve)
+  gh pr comment "$PR" --repo "$REPO" --body "$RESOLVE_BODY"
+  RESOLVE_INJECT_COUNT=$((RESOLVE_INJECT_COUNT + 1))
+  echo "$RESOLVE_INJECT_COUNT" > "$RESOLVE_COUNT_FILE"
+  echo "Auto-issued @coderabbitai resolve (chat bucket; UNRESOLVED=$UNRESOLVED_BEFORE before, count=$RESOLVE_INJECT_COUNT/$RESOLVE_INJECT_MAX)"
+
+  # Resolve completion verification (CR bot の thread processing を待機)
+  # 30s 単位で最大 5 回 (合計 150s) wait し、UNRESOLVED が減少した時点で抜ける。
+  # 5 回過ぎても変化なしなら timeout 扱いで Step 7 へ素通し
+  # (CR bot 障害 / chat bucket 反映遅延の保険、後続の CLEAR_SOFT 判定で
+  # UNRESOLVED が 0 にならなければ次 round で再 inject される)。
+  for i in 1 2 3 4 5; do
+    sleep 30
+    UNRESOLVED_NOW=$(gh api graphql -f query='
+      query($owner: String!, $name: String!, $pr: Int!) {
+        repository(owner: $owner, name: $name) {
+          pullRequest(number: $pr) {
+            reviewThreads(first: 100) {
+              nodes {
+                isResolved
+                comments(first: 1) { nodes { author { login } } }
+              }
+            }
+          }
+        }
+      }' -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F pr="$PR" \
+      --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+        | select(.comments.nodes[0].author.login == "coderabbitai")
+        | select(.isResolved == false)] | length')
+    if [ "$UNRESOLVED_NOW" -lt "$UNRESOLVED_BEFORE" ]; then
+      echo "Resolve confirmed (UNRESOLVED: $UNRESOLVED_BEFORE → $UNRESOLVED_NOW)"
+      break
+    fi
+  done
+  # Step 7 を再実行 (UNRESOLVED 再 query で 0 になることを期待)
+  fi  # close else (RESOLVE_INJECT_COUNT < max)
+fi
+```
+
+#### 6.5.1 適用条件 (3 件 AND)
+
+- `ACTIONABLE_LATEST=0` (latest review body): fix 漏れがない
+- `UNRESOLVED > 0`: CR thread が resolve されていない
+- `cr-chat` binary が available (Step 2.6.1 の解決 3 段 fallback で取得)
+
+いずれか 1 つでも欠けると skip。run-time error にせず、Step 7 へ素通しする
+(`cr-chat` 不在は plugin install 不全の signal だが本 step は best-effort)。
+
+#### 6.5.2 verification loop の必要性
+
+CR の `@coderabbitai resolve` chat command は bot 内部の thread processing
+queue を経由するため、送信直後の `gh api graphql` 再 query では古い state が
+返ることがある。30s × 5 = 最大 150s の verification loop で UNRESOLVED の
+減少を確認することで、Step 7 が誤って "stale UNRESOLVED" 値で CLEAR_SOFT を
+否定する false-negative を防ぐ。loop timeout 後も変化なしの場合は次 round で
+Step 6.5 が再 inject されるため、永久 loop にはならない。
+
+### Step 7. 2-stage Clear judgment (Stop polling / Merge ready 分離)
+
+CodeRabbit は per-commit lifecycle の **commit_status** (`pending` → `success`
+"Review completed") を発行することが LIVE 観測されている。これを **Stop polling**
+(新 review 待ちを止めてよいか) の primary signal として使い、**Merge ready**
+(実 merge してよいか) の判定とは明確に分離する。
+
+> **重要**: 本 Step は Step 3 background watch から `STOP_POLLING_REACHED` /
+> `REVIEW_ARRIVED_FALLBACK` の signal で起動されるが、判定に使う各値
+> (`CR_STATUS_STATE` / `CR_STATE` / `LATEST_BODY` / `UNRESOLVED` /
+> `RECENT_BLOCKER`) は **本 Step で fresh に query する** (Step 3 の cache を
+> 流用しない)。background process の race condition / 古い state を避けるため。
+
+#### 7.A Stop polling 判定 (新 review 待ちを止めてよいか)
+
+```bash
+# 明示初期化: 手動実行時 (Step 3 background watch 未経由) の inherited
+# environment 汚染を避けるため、本 step で必ず false から始める
+STOP_POLLING=false
+
+HEAD_SHA=$(gh pr view "$PR" --repo "$REPO" --json headRefOid --jq '.headRefOid')
+CR_STATUS=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/status" \
+  --jq '[.statuses[] | select(.context | test("CodeRabbit"; "i"))] | last')
+CR_STATUS_STATE=$(echo "$CR_STATUS" | jq -r '.state // empty')
+CR_STATUS_DESC=$(echo "$CR_STATUS"  | jq -r '.description // empty')
+
+if [ "$CR_STATUS_STATE" = "success" ] \
+   && echo "$CR_STATUS_DESC" | grep -qiE 'review completed|review complete'; then
+  STOP_POLLING=true
+fi
+```
+
+`STOP_POLLING=true` で初めて Step 7.B (Merge ready) の判定に進める。
+`false` の場合は Step 3 polling に戻る (本 skill が CR の per-commit
+review lifecycle を信頼することで、無駄な review-count polling を避ける)。
+
+**手動実行時 (Step 3 background watch 未経由) の挙動**: Step 7 を独立に
+呼び出した場合 (e.g. Step 6 の commit_status fetch 失敗で Step 3 を skip した
+recovery flow)、本 7.A の bash block は Step 3 状態に依存せず fresh query で
+判定する。CR commit_status が `success` でないなら `STOP_POLLING=false` →
+matrix の "Stop polling 未成立" 行 (Step 3 polling 継続) に落ちる。手動 caller
+は Step 3 の background watch を起動するか、後の刻みで再実行する。
+
+#### 7.B Merge ready 判定 (実 merge してよいか、4 signal AND)
+
+##### 7.B.1 最強シグナル: APPROVED state
+
+`request_changes_workflow: true` (本 repo の `.coderabbit.yaml` で宣言済) のとき、
+unresolved comments 0 + `pre_merge_checks` pass で CR が `state: APPROVED` の
+review を自動発火する (公式 changelog: request-changes-workflow)。
 
 ```bash
 CR_STATE=$(gh api "repos/${REPO}/pulls/${PR}/reviews" \
   --jq '[.[] | select(.user.login=="coderabbitai[bot]")] | last | .state // empty')
+APPROVED=false
+[ "$CR_STATE" = "APPROVED" ] && APPROVED=true
+```
 
-if [ "$CR_STATE" = "APPROVED" ]; then
-  CLEAR=true
+##### 7.B.2 actionable=0 (latest review body for THIS HEAD)
+
+```bash
+LATEST_BODY=$(gh api "repos/${REPO}/pulls/${PR}/reviews" \
+  --jq "[.[] | select(.user.login==\"coderabbitai[bot]\")] | last | .body")
+ACTIONABLE=$(echo "$LATEST_BODY" | grep -oE 'Actionable comments posted:\s*[0-9]+' \
+  | grep -oE '[0-9]+' | head -1)
+# CR body 形式 drift 対策: grep が空を返した場合は "0" にフォールバックせず
+# "unknown" として扱い、CLEAR_STRONG / CLEAR_SOFT を成立させない (false-clear 予防、A4)
+if [ -z "$ACTIONABLE" ]; then
+  ACTIONABLE="unknown"
+  echo "WARN: ACTIONABLE grep returned empty (CR body format drift?); treating as 'unknown' (NOT 0)" >&2
 fi
 ```
 
-#### 7.2 中シグナル: unresolved CodeRabbit thread == 0
-
-APPROVED にならない (例: `request_changes_workflow: false` 設定) 場合、未解決 thread 数で判定。
+##### 7.B.3 unresolved CR threads = 0
 
 ```bash
 UNRESOLVED=$(gh api graphql -f query='
@@ -291,38 +497,64 @@ UNRESOLVED=$(gh api graphql -f query='
   --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
     | select(.comments.nodes[0].author.login == "coderabbitai")
     | select(.isResolved == false)] | length')
-
-[ "$UNRESOLVED" = "0" ] && CLEAR_SOFT=true
 ```
 
-#### 7.3 阻害要因の否定: rate-limited / paused marker なし
+##### 7.B.4 blocker (rate-limit / paused) 不在
 
 ```bash
-# 最新 CodeRabbit コメントに rate-limited / paused marker が残っていないこと
 RECENT_BLOCKER=$(gh pr view "$PR" --repo "$REPO" --json comments \
   --jq "[.comments[] | select(.author.login == \"coderabbitai\")
     | select(.body | contains(\"rate limited\") or contains(\"Reviews paused\"))] | last | .createdAt // empty")
+BLOCKER=false
 if [ -n "$RECENT_BLOCKER" ]; then
   ELAPSED=$(( $(date -u +%s) - $(date -u -d "$RECENT_BLOCKER" +%s 2>/dev/null \
     || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$RECENT_BLOCKER" +%s) ))
-  if [ "$ELAPSED" -lt 900 ]; then
-    # 15 分以内なら blocker active、clear 判定不可
-    CLEAR=false
-    CLEAR_SOFT=false
-  fi
+  [ "$ELAPSED" -lt 900 ] && BLOCKER=true
 fi
 ```
 
-#### 7.4 判定マトリクス
+##### 7.B.5 判定マトリクス (Stop polling 成立後の Merge ready 4 signal AND)
 
-| CLEAR (strong) | CLEAR_SOFT | blocker | 結果 |
-|---|---|---|---|
-| true | — | — | **完全 clear** → Step 8 |
-| — | true | false | **ソフト clear** → Step 8 (ユーザーに APPROVED でない旨通知) |
-| false | false | — | **未 clear** → Step 4 に戻って finding 再対応 |
-| — | — | true | **blocker 中** → `/pseudo-coderabbit-loop` に切替提案、または cooldown 待機 |
+| STOP_POLLING | APPROVED | ACTIONABLE | UNRESOLVED | BLOCKER | 結果 |
+|---|---|---|---|---|---|
+| ✅ | ✅ | 0 | — | 不在 | **CLEAR_STRONG** (APPROVED 確定) → Step 8 |
+| ✅ | — | 0 | 0 | 不在 | **CLEAR_SOFT** → Step 8 (APPROVED でない旨 user 通知) |
+| ✅ | — | >0 | — | 不在 | **未 fix** → Step 4 (parse) → Step 5 (apply fixes) → Step 6 (commit + push) → Step 3 (再 watch) → Step 7 (再判定) |
+| ✅ | — | 0 | >0 | 不在 | **resolve 必要** → Step 6.5 で `@coderabbitai resolve` auto-issue + verification loop → Step 7 (再判定) |
+| ❌ | — | — | — | — | **Stop polling 未成立** → Step 3 polling 継続 (background watch を継続) |
+| — | — | — | — | active | **blocker 中** → cooldown 待機 or `/pseudo-coderabbit-loop` 切替 |
 
-#### 7.5 依存しないシグナル (DO NOT USE)
+```bash
+CLEAR_STRONG=false
+CLEAR_SOFT=false
+
+if [ "$STOP_POLLING" = "true" ] \
+   && [ "$APPROVED" = "true" ] \
+   && [ "$ACTIONABLE" = "0" ] \
+   && [ "$BLOCKER" = "false" ]; then
+  CLEAR_STRONG=true
+fi
+# CLEAR_SOFT は CLEAR_STRONG 不成立時のみ評価 (排他化、A2)
+# CLEAR_STRONG=true は CLEAR_SOFT 条件を包含する (APPROVED 自動発火の前提が
+# unresolved=0 + pre_merge_checks pass であるため、CLEAR_STRONG が true なら
+# CLEAR_SOFT も論理上 true になる。両 flag を立てると下流の Step 8 routing が
+# 二重発火するため、CLEAR_STRONG 優先で排他)
+if [ "$CLEAR_STRONG" != "true" ] \
+   && [ "$STOP_POLLING" = "true" ] \
+   && [ "$ACTIONABLE" = "0" ] \
+   && [ "$UNRESOLVED" = "0" ] \
+   && [ "$BLOCKER" = "false" ]; then
+  CLEAR_SOFT=true
+fi
+```
+
+> **排他化の根拠**: 上記 bash により `CLEAR_STRONG=true` の行は **CLEAR_SOFT
+> を立てない**。下流 (Step 8 / caller skill) は `if CLEAR_STRONG; then ...
+> elif CLEAR_SOFT; then ...` で routing する設計を前提とする。matrix の
+> 1 行目 (CLEAR_STRONG) と 2 行目 (CLEAR_SOFT) は **物理的に排他** (両方が
+> 同時に成立する状態は bash code レベルで排除される)。
+
+#### 7.C 依存しないシグナル (DO NOT USE)
 
 以下は CodeRabbit 公式 docs で確認できない、または不安定なため本 skill では使わない:
 

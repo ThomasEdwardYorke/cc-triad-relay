@@ -21,12 +21,29 @@ tone_instructions: "Senior TypeScript reviewer for a portable OSS plugin. Flag g
 
 reviews:
   profile: "chill"
-  request_changes_workflow: false
+  # APPROVED state を自動発火させる前提 (actionable=0 + checks pass で
+  # CR が `state: APPROVED` の review を出す)。これにより
+  # `/coderabbit-review` Step 7 の Strong Clear が deterministic に決まる。
+  # 公式 docs: https://docs.coderabbit.ai/changelog/request-changes-workflow
+  request_changes_workflow: true
   high_level_summary: true
   changed_files_summary: true
   sequence_diagrams: false
   poem: false
   in_progress_fortune: false
+
+  # Pre-merge checks: PR が merge 可能か explicit に gate する
+  # (https://docs.coderabbit.ai/pr-reviews/pre-merge-checks)。
+  # 初期は warning で導入 noise を抑え、安定後に error への昇格を検討する
+  # (custom_review / description_check のみ。docstrings は plugin core が
+  # 既に docstring 完備のため off で過剰 noise 回避)。
+  pre_merge_checks:
+    custom_review:
+      mode: "warning"
+    description_check:
+      mode: "warning"
+    docstrings:
+      mode: "off"
 
   auto_review:
     enabled: true
