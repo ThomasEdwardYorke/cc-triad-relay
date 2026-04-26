@@ -1,0 +1,118 @@
+/**
+ * core/src/work/ledger.ts
+ *
+ * Consumer-side discipline ledger writer. Records harness skill-bypass
+ * violations detected by `/harness-merge-train` (and any other skill
+ * that opts into the same machinery) into a project-local Markdown
+ * file.
+ *
+ * Why this exists:
+ * - The harness rules document (consumer-side
+ *   `<project>/.claude/rules/implementation-workflow.md`) declares a
+ *   strict "all gates must be invoked via skills" contract. When a
+ *   skill cannot run (rate limited, environment issue) and the harness
+ *   falls back to a manual workaround, that fallback is logged so the
+ *   trust boundary stays auditable.
+ * - The path is opted in per project via
+ *   `harness.config.json → work.qualityGates.disciplineLedgerPath`.
+ *   Projects without a path see no file writes.
+ *
+ * Atomicity:
+ * - Each append is a single `fs.appendFileSync` call. POSIX `O_APPEND`
+ *   guarantees that writes < `PIPE_BUF` (4096 B on macOS / Linux) are
+ *   atomic across concurrent processes — entries are short single-row
+ *   markdown rows so the bound holds easily.
+ * - Initial creation uses `writeFileSync` with `flag: "wx"` so two
+ *   racing creators cannot both write the header. The loser falls back
+ *   to a regular append after the file appears.
+ *
+ * Sandbox:
+ * - The path must be project-relative. Absolute paths and any `..`
+ *   segment are rejected before any filesystem touch happens. The
+ *   fully resolved path is double-checked to live under `projectRoot`
+ *   so symlink-free dot games cannot escape the sandbox either.
+ */
+import { appendFileSync, existsSync, mkdirSync, writeFileSync, } from "node:fs";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+/** Markdown header for a freshly-created ledger file. */
+const LEDGER_HEADER = [
+    "# Discipline ledger",
+    "",
+    "Append-only record of harness discipline violations detected by",
+    "/harness-merge-train and related skills. Each row captures a single",
+    "fallback / bypass event so audit trails survive across sessions.",
+    "",
+    "| Date | Session | Skill | Impact | Remediation |",
+    "|---|---|---|---|---|",
+].join("\n");
+/**
+ * Append one discipline-violation row to the configured ledger.
+ *
+ * @param config        Loaded `HarnessConfig` (post-merge with defaults).
+ * @param projectRoot   Absolute path to the consumer project root.
+ * @param entry         Row data — all fields are escaped automatically.
+ * @returns             `appended` with the resolved path, or
+ *                      `no-op-no-config` when the ledger is opt-out.
+ * @throws  When the configured path is absolute, escapes the project
+ *          root, or `projectRoot` itself is not an absolute path.
+ */
+export function appendDisciplineEntry(config, projectRoot, entry) {
+    const ledgerRel = config.work?.qualityGates?.disciplineLedgerPath;
+    if (ledgerRel === undefined || ledgerRel === "") {
+        return {
+            status: "no-op-no-config",
+            reason: "work.qualityGates.disciplineLedgerPath is not configured",
+        };
+    }
+    if (!isAbsolute(projectRoot)) {
+        throw new Error(`appendDisciplineEntry: projectRoot must be absolute, got "${projectRoot}"`);
+    }
+    if (isAbsolute(ledgerRel)) {
+        throw new Error(`appendDisciplineEntry: disciplineLedgerPath must be project-relative, got absolute path "${ledgerRel}"`);
+    }
+    // Reject any segment that is exactly `..` — that handles both
+    // `../foo` and `subdir/../../escape.md` before any filesystem touch.
+    const segments = ledgerRel.split(/[\\/]+/).filter((s) => s.length > 0);
+    if (segments.some((s) => s === "..")) {
+        throw new Error(`appendDisciplineEntry: disciplineLedgerPath cannot escape projectRoot via parent traversal "${ledgerRel}"`);
+    }
+    const ledgerAbs = resolve(projectRoot, ledgerRel);
+    // Defence in depth: even after segment filtering, double-check the
+    // resolved path lives under projectRoot. Catches odd inputs that
+    // might still resolve outside (`//etc/passwd` on POSIX, drive
+    // letters on Windows, etc.).
+    const rel = relative(projectRoot, ledgerAbs);
+    if (rel.startsWith("..") || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+        throw new Error(`appendDisciplineEntry: disciplineLedgerPath escapes projectRoot "${ledgerRel}" → "${ledgerAbs}"`);
+    }
+    const row = formatEntry(entry);
+    const parent = dirname(ledgerAbs);
+    mkdirSync(parent, { recursive: true });
+    if (!existsSync(ledgerAbs)) {
+        // `wx` flag => fail if file already exists. On a race the loser
+        // falls through to the append branch below.
+        try {
+            writeFileSync(ledgerAbs, `${LEDGER_HEADER}\n${row}\n`, { flag: "wx" });
+            return { status: "appended", ledgerPath: ledgerAbs };
+        }
+        catch (err) {
+            const code = err.code;
+            if (code !== "EEXIST") {
+                throw err;
+            }
+            // fall through to append
+        }
+    }
+    appendFileSync(ledgerAbs, `${row}\n`);
+    return { status: "appended", ledgerPath: ledgerAbs };
+}
+/**
+ * Format one ledger row. Pipes are escaped so they do not break the
+ * markdown table; CR/LF inside any field are collapsed to single
+ * spaces so each entry stays on a single line.
+ */
+function formatEntry(entry) {
+    const escape = (s) => s.replace(/\|/g, "\\|").replace(/\r\n|\r|\n/g, " ");
+    return `| ${escape(entry.date)} | ${escape(entry.session)} | ${escape(entry.skillId)} | ${escape(entry.impact)} | ${escape(entry.remediation)} |`;
+}
+//# sourceMappingURL=ledger.js.map

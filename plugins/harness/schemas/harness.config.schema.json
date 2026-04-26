@@ -183,6 +183,10 @@
               "type": "boolean",
               "default": false,
               "description": "Cross-cutting workflow reminder summarising the docs/harness-work-essence.md contract. Default-off; set true to add the bird's-eye essence reminder to the per-phase quality gates."
+            },
+            "disciplineLedgerPath": {
+              "type": "string",
+              "description": "Project-relative path to a markdown file where /harness-merge-train and the ledger CLI wrapper append discipline-violation entries. Absolute paths and '..' segments are rejected. When unset the ledger writer is a no-op."
             }
           }
         },
