@@ -1,7 +1,7 @@
 ---
 name: coderabbit-mimic
 description: Pseudo-CodeRabbit reviewer powered by Codex CLI. Invoked by `/pseudo-coderabbit-loop` to run local review loops without consuming the upstream CodeRabbit rate limit. Use when conducting pre-review before pushing to GitHub, or during rate-limited periods.
-tools: [Bash, Read, Grep, Glob]
+tools: [Bash, Read, Grep, Glob, Agent]
 model: sonnet
 effort: medium
 memory: project
@@ -219,9 +219,19 @@ if [ -f pyproject.toml ]; then
 fi
 ```
 
-### Step 3. Codex による LLM review
+### Step 3. Codex による LLM review (harness:codex-sync 経由 + output-file redirect)
 
-Codex CLI に以下のプロンプトを送る:
+Codex への LLM review 呼出は **`harness:codex-sync` agent を Agent tool で spawn** し、
+`codex-sync.md` の Output File Redirect 契約 (D-49: `[output-file: <abs-path>]` marker
+を prompt body に inject すれば Codex stdout を file に書き出し、return value は
+`OUTPUT_PATH=<>` / `OUTPUT_BYTES=<n>` の ~120 bytes 圧縮) を活用する。
+
+**refactor の根拠**: 以前の design は `node "$CODEX_COMPANION" task --prompt-file ...`
+で Codex を Bash 直接 spawn し stdout を `$RESULT` に redirect していた。この経路だと
+Codex output 全文が parent (本 mimic agent) の context に inline され、parallel 実行で
+parent context budget を食い潰し **6 並列で 100% timeout / lost-result** する事故が
+発生した (codex-sync.md "Output File Redirect" セクション参照)。本 Step 3 では
+redirect 契約を経由することで context overflow を撲滅する。
 
 ```bash
 RESULT="$WORKDIR/review.json"
@@ -301,36 +311,42 @@ PROMPT
 # -i.bak は BSD sed / GNU sed 両互換 (backup を作ってすぐ rm)。
 sed -i.bak "s|@@WORKDIR@@|$WORKDIR|g" "$WORKDIR/prompt.md" && rm -f "$WORKDIR/prompt.md.bak"
 
-CODEX_COMPANION="$(ls -d "$HOME/.claude/plugins/cache/openai-codex/codex/"*/scripts/codex-companion.mjs 2>/dev/null | tail -n1)"
-# Fail-fast: cache 未展開 / codex plugin 未 install の場合、ここで止めて切り分けやすくする。
-# `node ""` は `sh: node: command '' not found` のような分かりにくい error で落ちるため。
-if [ -z "$CODEX_COMPANION" ] || [ ! -f "$CODEX_COMPANION" ]; then
-  echo "ERROR: codex-companion.mjs not found." >&2
-  echo "       codex plugin が未 install / 未展開です。" >&2
-  echo "       `/codex:setup` を実行するか、codex plugin を再 install してください。" >&2
-  # WORKDIR は trap で自動 cleanup される
-  exit 1
-fi
-STDERR_LOG="$WORKDIR/codex-stderr.log"
-# codex-companion.mjs の readTaskPrompt は --prompt-file が指定されていれば
-# その内容を優先し、piped stdin は silently drop する。
-# 二重入力 (cat pipe + --prompt-file) は誤解を招くため --prompt-file 単独で呼ぶ。
-#
-# codex-companion.mjs は progress reporter が stderr に `[codex] ...` を出すため、
-# `2>&1` で混ぜると $RESULT の strict JSON 前提が壊れる。stderr は別ファイルに分離し、
-# parse 失敗時のデバッグ用に保持する (Step 4 で使用)。
-#
-# Harness model registry から coderabbit-mimic 用の model slug を取得。
-# 取得できない場合 (core build 不在 / jq+python3 不在) は companion 既定にフォールバック。
-CODERABBIT_MODEL="$(harness model resolve coderabbit-mimic 2>/dev/null \
-  | python3 -c 'import sys, json; print(json.load(sys.stdin).get("model",""))' \
-  2>/dev/null)"
-MODEL_FLAG=""
-if [ -n "$CODERABBIT_MODEL" ]; then
-  MODEL_FLAG="--model $CODERABBIT_MODEL"
-fi
-node "$CODEX_COMPANION" task --prompt-file "$WORKDIR/prompt.md" $MODEL_FLAG --effort medium > "$RESULT" 2>"$STDERR_LOG"
+# Output File Redirect 契約 (codex-sync.md D-49) の trigger marker を prompt body の
+# 末尾に append する。marker 形式: `[output-file: <abs-path>]` (case-insensitive)。
+# codex-sync agent はこれを検出すると Codex stdout を `$RESULT` に直接書き出し、
+# return value は OUTPUT_PATH=<> / OUTPUT_BYTES=<n> の ~120 bytes 圧縮 minimal lines
+# のみ返す。よって parent (本 mimic agent) の context は Codex output で埋まらず、
+# parallel 実行時の context overflow を回避できる。
+printf '\n\n[output-file: %s]\n' "$RESULT" >> "$WORKDIR/prompt.md"
+PROMPT_BODY="$(cat "$WORKDIR/prompt.md")"
 ```
+
+続けて Agent tool で `harness:codex-sync` を spawn する (Bash ではなく Claude の
+Agent tool 経由)。`name` を明示することで `SendMessage` resume も可能になり、
+truncate recovery への退避路を確保する (codex-sync.md "Handling Mid-Response
+Truncation" 参照)。
+
+```text
+Agent({
+  subagent_type: "harness:codex-sync",
+  name: "coderabbit-mimic-codex-sync",
+  description: "pseudo-CodeRabbit LLM review (output-file redirect)",
+  prompt: "<PROMPT_BODY 全文 + 末尾に [output-file: ${RESULT}] marker>",
+  run_in_background: false
+})
+```
+
+`harness:codex-sync` は marker を検出して以下を実行する:
+
+1. Codex companion を foreground 実行
+2. Codex stdout (full review JSON) を `$RESULT` に直接 redirect
+3. caller (本 mimic agent) には `OUTPUT_PATH=$RESULT` / `OUTPUT_BYTES=<n>` のみ
+   返す (~120 bytes、context overflow 回避)
+
+本 mimic agent (caller) の責務: 返値から `OUTPUT_PATH` を抽出し、`Read` tool で
+`$RESULT` を読み込み Step 4 で post-process。post-process 完了後 trap (Step 1 で
+登録済) が `WORKDIR` ごと cleanup するため、`$RESULT` も自動的に削除される
+(明示的な `rm` は不要、`trap 'rm -rf "$WORKDIR"' EXIT` が同 file を含む)。
 
 ### Step 4. 結果の post-process
 
