@@ -187,9 +187,9 @@ unchanged on both macOS and Linux distros that ship Bash 3.2+.
 ## Related
 
 - `commands/session-handoff.md` (the skill the hook reminds you to use)
-- `commands/references/final-report-format.md` (the 8-section template
+- `docs/references/final-report-format.md` (the 8-section template
   emitted after `archive`)
-- `commands/references/post-check-verification.md` (Test 1-5 manual
+- `docs/references/post-check-verification.md` (Test 1-5 manual
   bridge between `check` PASS and "next session ready")
 - consumer-side memory `reference_session_final_report_template.md`
   (project-specific extension to the 8-section template; the hook

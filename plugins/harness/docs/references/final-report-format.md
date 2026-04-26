@@ -156,7 +156,7 @@ the consumer memory; merge them at emit time.
 ## 関連 (related)
 
 - `commands/session-handoff.md` § `archive` subcommand step 5 (最終報告 emit step)
-- `commands/references/post-check-verification.md` (Test 1-5 詳細、Section 6 で参照)
+- `docs/references/post-check-verification.md` (Test 1-5 詳細、Section 6 で参照)
 - `docs/handoff-stop-reminder-sample.md` (generic Stop hook、stale 検出 → reminder)
 - consumer-side memory: `reference_session_final_report_template.md`
   (project-specific 拡張がある場合の override mechanism)

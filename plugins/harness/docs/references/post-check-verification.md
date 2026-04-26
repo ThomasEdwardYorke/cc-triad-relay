@@ -78,7 +78,7 @@ wc -l <project>-current.md       # 90 未満を目標、120 上限
 - `commands/session-handoff.md` § Required Sections in `current.md`
   (Section 5 invariant takeaway)
 - `commands/session-handoff.md` § Anti-patterns #4 (archive 必読化)
-- `commands/references/final-report-format.md` (Section 6 で本 Test 1-5 を
+- `docs/references/final-report-format.md` (Section 6 で本 Test 1-5 を
   emit する設計)
 
 ---
