@@ -92,6 +92,7 @@ export function runLedgerCli(argv, opts) {
             }
             if (inlineValue === "") {
                 opts.stderr(`flag --${inlineKey} is missing its value`);
+                opts.stderr(USAGE);
                 return 2;
             }
             flags[inlineKey] = inlineValue;
@@ -106,6 +107,7 @@ export function runLedgerCli(argv, opts) {
         const value = rest[i + 1];
         if (value === undefined || value.startsWith("--")) {
             opts.stderr(`flag --${key} is missing its value`);
+            opts.stderr(USAGE);
             return 2;
         }
         flags[key] = value;

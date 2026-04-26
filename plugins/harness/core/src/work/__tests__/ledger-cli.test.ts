@@ -13,7 +13,7 @@
  * real stdout/stderr.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   mkdirSync,
   writeFileSync,
@@ -236,29 +236,37 @@ describe("runLedgerCli", () => {
     });
 
     it("defaults --date to today (UTC YYYY-MM-DD) when omitted", () => {
-      tmpRoot = mkProject(".harness/ledger.md");
-      const io = captureIo();
-      const code = runLedgerCli(
-        [
-          "append",
-          "--session",
-          "s",
-          "--skill",
-          "G3",
-          "--impact",
-          "x",
-          "--remediation",
-          "y",
-        ],
-        { cwd: tmpRoot, stdout: io.out, stderr: io.err },
-      );
-      expect(code).toBe(0);
-      const today = new Date().toISOString().slice(0, 10);
-      const content = readFileSync(
-        join(tmpRoot, ".harness/ledger.md"),
-        "utf-8",
-      );
-      expect(content).toContain(`| ${today} | s | G3 |`);
+      // Pin system time so the assertion never flakes on a UTC day
+      // boundary (e.g. CI running at 23:59:59.x UTC where the test
+      // body computes today = day-N but the CLI captures day-N+1).
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-04-26T12:00:00.000Z"));
+        tmpRoot = mkProject(".harness/ledger.md");
+        const io = captureIo();
+        const code = runLedgerCli(
+          [
+            "append",
+            "--session",
+            "s",
+            "--skill",
+            "G3",
+            "--impact",
+            "x",
+            "--remediation",
+            "y",
+          ],
+          { cwd: tmpRoot, stdout: io.out, stderr: io.err },
+        );
+        expect(code).toBe(0);
+        const content = readFileSync(
+          join(tmpRoot, ".harness/ledger.md"),
+          "utf-8",
+        );
+        expect(content).toContain(`| 2026-04-26 | s | G3 |`);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("rejects relative --project-root with usage exit code (2)", () => {
