@@ -195,8 +195,10 @@ Run in background (`run_in_background: true`, `timeout: 600000`):
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 PR=<pr-number>
 HEAD_SHA=$(gh pr view "$PR" --repo "$REPO" --json headRefOid --jq '.headRefOid')
+# review-count fallback も HEAD_SHA に限定 (古い commit への delayed review で
+# false positive にならないよう、INITIAL/CURRENT 両方を HEAD-filtered に統一)
 INITIAL=$(gh api repos/${REPO}/pulls/${PR}/reviews \
-  --jq '[.[] | select(.user.login=="coderabbitai[bot]")] | length' 2>/dev/null)
+  | jq --arg head "$HEAD_SHA" -r '[.[] | select(.user.login=="coderabbitai[bot]" and .commit_id==$head)] | length' 2>/dev/null)
 PREV_STATE=""
 
 for i in $(seq 1 20); do
@@ -220,8 +222,9 @@ for i in $(seq 1 20); do
 
   # Secondary fallback: review-count 増加 (commit_status を発行しない CR 構成 /
   # API drift への保険、Stop polling 判定 (Step 7.A) は commit_status を primary とする)
+  # HEAD_SHA 限定で INITIAL と同じ scope (古い commit への delayed review で false trigger 防止)
   CURRENT=$(gh api repos/${REPO}/pulls/${PR}/reviews \
-    --jq '[.[] | select(.user.login=="coderabbitai[bot]")] | length' 2>/dev/null)
+    | jq --arg head "$HEAD_SHA" -r '[.[] | select(.user.login=="coderabbitai[bot]" and .commit_id==$head)] | length' 2>/dev/null)
   if [ "$CURRENT" -gt "$INITIAL" ] 2>/dev/null; then
     osascript -e "display notification \"CodeRabbit review arrived — PR #${PR}\" with title \"Claude Code\" sound name \"Glass\"" 2>/dev/null \
       || notify-send "Claude Code" "CodeRabbit review arrived — PR #${PR}" 2>/dev/null || true
@@ -345,12 +348,13 @@ if [ -z "$ACTIONABLE_LATEST" ]; then
   echo "WARN: ACTIONABLE_LATEST grep returned empty (CR body format drift?); treating as 'unknown' (NOT 0)" >&2
 fi
 
-# RESOLVE_INJECT_COUNT counter (per-PR、最大 RESOLVE_INJECT_MAX 回まで)
-# 同 PR で Step 7 → Step 6.5 の back jump が繰り返される場合、CR bot の thread
+# RESOLVE_INJECT_COUNT counter (per-PR + per-HEAD、最大 RESOLVE_INJECT_MAX 回まで)
+# 同 HEAD で Step 7 → Step 6.5 の back jump が繰り返される場合、CR bot の thread
 # processing 障害 / network drift で永久 loop に陥らないよう上限を設ける。
-# counter は file-based で push 跨ぎ persist する (新 push 時は session で reset
-# する想定、本 skill の責務外)。
-RESOLVE_COUNT_FILE="/tmp/cr-resolve-count-${PR}-$(echo "$REPO" | tr '/' '-')"
+# counter は file-based、key に short HEAD SHA を含めることで **新 push (HEAD 変化)
+# で counter が自動 reset** される (古い HEAD の counter file は別ファイルになり
+# 新 HEAD は 0 から開始、push 単位で injection 上限を再付与)。
+RESOLVE_COUNT_FILE="/tmp/cr-resolve-count-${PR}-$(echo "$REPO" | tr '/' '-')-${HEAD_SHA:0:8}"
 RESOLVE_INJECT_MAX=3
 RESOLVE_INJECT_COUNT=$(cat "$RESOLVE_COUNT_FILE" 2>/dev/null || echo 0)
 
