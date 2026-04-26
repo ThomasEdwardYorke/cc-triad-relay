@@ -548,12 +548,15 @@ describe("bin/cr-cli — binary name regression guard (coderabbit, not cr)", () 
   const binPath = resolve(PLUGIN_ROOT, "bin", "cr-cli");
   const binCrCli = readFileSync(binPath, "utf-8");
 
-  it("invokes spawnSync with the canonical binary name (literal or CR_BINARY const)", () => {
-    // Codex Phase 7 Major fix: binary 名 split source 防止のため、bin/cr-cli は
-    // core/src/cr-cli.ts の `CR_BINARY` export から binary 名を取得する。
-    // よって本 assertion は literal "coderabbit" / 'coderabbit' / CR_BINARY 識別子
-    // のいずれかを許容する (1 source-of-truth pattern との両立)。
-    expect(binCrCli).toMatch(/spawnSync\(\s*(?:["']coderabbit["']|CR_BINARY)/);
+  it("invokes spawnSync with CR_BINARY (1 source-of-truth, not a literal)", () => {
+    // 1 SoT pattern を構造的に強制: bin/cr-cli は `core/src/cr-cli.ts` の
+    // `CR_BINARY` export を必ず使う必要がある。literal `"coderabbit"` を許容
+    // すると CR_BINARY を import せずに binary 名が drift するリスクが残るため、
+    // CR_BINARY identifier 経由 spawn のみ accept とする (CR review nitpick 対応)。
+    expect(binCrCli).toMatch(/spawnSync\(\s*CR_BINARY\b/);
+    // 念のため legacy literal "coderabbit" 直書き spawn が無いことも確認
+    // (refactor で literal が混入していないか)
+    expect(binCrCli).not.toMatch(/spawnSync\(\s*["']coderabbit["']/);
   });
 
   it("does NOT invoke legacy spawnSync('cr', ...) (regression guard, quote-variant aware)", () => {
