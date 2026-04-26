@@ -370,20 +370,53 @@ Agent({
 ### Step 4. 結果の post-process
 
 `$RESULT` には codex-sync.md D-49 redirect 契約により Codex の **stdout + stderr が
-マージされた** 内容が書かれている。codex-companion.mjs の progress reporter は
-stderr に `[codex] ...` 形式の行を出すため、それを strict JSON validator にそのまま
-渡すと常に fail する。よって validation 前に `[codex]` で始まる progress 行を
-filter (grep -v で除外) し、純粋な JSON body のみを抽出した上で検証する。
-validator は `jq` を優先、無ければ `python3 -m json.tool`、さらに無ければ
-`node -e` に degrade する。3 つとも不在ならば「未検証」警告を出しつつ post-process
-を継続する (silently 崩壊させない)。
+マージされた** 内容が書かれている。codex-companion.mjs は progress reporter が
+stderr に `[codex] ...` 形式の行を出すほか、warnings / diagnostics も stderr に
+混入する可能性がある。よって narrow line filter (e.g. `grep -v '^\[codex\]'`) だけ
+では JSON contract の robust 性が足りない。本 Step 4 は「**最初の `{` から
+最後の `}` までを bracket-balanced で抽出**」する JSON-aware extraction を主経路に
+し、line filter を補助として併用する 2 段アプローチを取る。
 
 ```bash
-# stdout+stderr がマージされた $RESULT から `[codex]` progress 行を filter で
-# 除外し、JSON body だけを `$RESULT.clean` に書き出す。grep -v は POSIX、
-# extended regex 不要。stderr が空ならば $RESULT.clean は $RESULT と同等になる。
+# stdout+stderr がマージされた $RESULT から JSON body だけを抽出する。
+# 最初の `{` 出現位置から、bracket-balance を維持して最後に到達する `}` までを
+# `$RESULT.clean` に書き出す。Python 3 が利用可能なら json.JSONDecoder の
+# `raw_decode` を使うのが最も堅牢 (コメント / trailing garbage に耐える)。
+# 利用不能な場合は line filter (`[codex]` progress 行のみ除外) に degrade する。
 RESULT_CLEAN="$RESULT.clean"
-grep -v '^\[codex\]' "$RESULT" > "$RESULT_CLEAN" 2>/dev/null || cp "$RESULT" "$RESULT_CLEAN"
+
+# 1 次: python3 で JSON-aware extraction (堅牢)。raw_decode は最初に到達した
+# valid JSON object を抽出するので、前後の non-JSON テキスト (progress 行 /
+# warnings / stderr 全般) を全て無視できる。
+if command -v python3 >/dev/null 2>&1 && python3 -c '
+import json, sys
+try:
+    raw = open(sys.argv[1], "r", encoding="utf-8", errors="replace").read()
+    # 最初に出現する `{` を起点に raw_decode で 1 個目の JSON object だけを抽出。
+    idx = raw.find("{")
+    if idx < 0:
+        sys.exit(2)
+    decoder = json.JSONDecoder()
+    obj, _end = decoder.raw_decode(raw[idx:])
+    json.dump(obj, open(sys.argv[2], "w", encoding="utf-8"), ensure_ascii=False)
+    sys.exit(0)
+except Exception:
+    sys.exit(2)
+' "$RESULT" "$RESULT_CLEAN" 2>/dev/null; then
+  EXTRACTION_METHOD="python3-raw-decode"
+else
+  # 2 次 fallback: line filter ([codex] progress 行を grep -v で除外)。
+  # python3 不在 / JSON object 不在の場合のみ到達。grep -v の exit status は
+  # POSIX で 「0 = match found and removed lines emitted」「1 = no lines after
+  # filter or no match」「>=2 = error」。本ケースでは 0 / 1 の双方を成功として
+  # 扱い、2 以上のときのみ raw $RESULT を copy する fallback に降格する。
+  grep -v '^\[codex\]' "$RESULT" > "$RESULT_CLEAN" 2>/dev/null
+  GREP_RC=$?
+  if [ "$GREP_RC" -gt 1 ]; then
+    cp "$RESULT" "$RESULT_CLEAN"
+  fi
+  EXTRACTION_METHOD="grep-line-filter"
+fi
 
 # 3 段 fallback で JSON 検証 (command -v で明示的にバイナリ存在確認)
 JSON_OK="unchecked"
@@ -399,7 +432,7 @@ else
 fi
 
 if [ "$JSON_OK" = "no" ]; then
-  echo "ERROR: Codex task returned non-JSON output (after [codex] progress filter)." >&2
+  echo "ERROR: Codex task returned non-JSON output (extraction method: $EXTRACTION_METHOD)." >&2
   echo "---Merged stdout+stderr tail (last 20 lines of $RESULT)---" >&2
   tail -n 20 "$RESULT" >&2
   echo "---end tail---" >&2
