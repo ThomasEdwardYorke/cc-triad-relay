@@ -487,10 +487,12 @@ orthogonal、Structural/Content/Synthesis 実行前に判定、`init` 案内を�
 
 - **[MEMORY.md pattern][anthropic-memory]**: concise index + topic files
 - **[SKILL.md pattern][anthropic-skills]**: overview + supporting files
-  (本 skill 自体は 500 行台を目標とし、v2 拡張で一時 550 まで許容。`references/`
-  detail 分離は **Layer 3 (2026-04-27) で完了** — Post-Check Verification 詳細は
-  [`references/post-check-verification.md`](./references/post-check-verification.md)、
-  最終報告 8 section format は [`references/final-report-format.md`](./references/final-report-format.md))
+  (本 skill 自体は 500 行台 (500–549) を目標とし、v2 拡張で一時 550 まで許容。
+  以降の機能追加は **`references/<helper>.md` への detail 分離を活用**して 550 を
+  超えない設計とする。Layer 3 (2026-04-27) で Post-Check Verification 詳細を
+  [`references/post-check-verification.md`](./references/post-check-verification.md) に、
+  最終報告 8 section format を [`references/final-report-format.md`](./references/final-report-format.md)
+  に分離済 — 将来層追加時も同 pattern で endurance を保つ)
 - **[context window 推奨][anthropic-context]**: 変動する情報と always-on を分離
 
 本 skill が追加する invariant:

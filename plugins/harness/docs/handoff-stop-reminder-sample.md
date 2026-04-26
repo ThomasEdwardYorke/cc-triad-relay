@@ -43,8 +43,16 @@ into a consumer's `.claude/hooks/`.
 # - throttle: 同 cwd で 60 秒以内に warn 済なら silent (noise 抑制)
 # - 検出条件: 最新 archive (`session-*.md`) の mtime > current.md mtime
 # - silent fail: handoff dir 不在 / current.md 不在は silent (false-positive 回避)
+# - cross-platform: macOS (BSD `stat -f`) / Linux (GNU `stat -c`) 両対応
 
 set -eu
+
+# Cross-platform stat -mtime (BSD vs GNU)
+if stat -f %m / >/dev/null 2>&1; then
+  STAT_MTIME() { stat -f %m "$1" 2>/dev/null || echo 0; }
+else
+  STAT_MTIME() { stat -c %Y "$1" 2>/dev/null || echo 0; }
+fi
 
 HANDOFF_DIR="${PWD}/.docs/handoff"
 [ ! -d "$HANDOFF_DIR" ] && exit 0
@@ -59,23 +67,31 @@ done
 # Find latest session archive (session-* のみ、summary-* / pre-* 除外)
 LATEST_ARCHIVE=""
 if [ -d "$HANDOFF_DIR/archive" ]; then
-  LATEST_ARCHIVE=$(find "$HANDOFF_DIR/archive" -maxdepth 1 -name "session-*.md" -print 2>/dev/null \
-    | xargs -I{} stat -f "%m %N" "{}" 2>/dev/null \
-    | sort -nr | head -1 | cut -d' ' -f2-)
+  # 最新 mtime の session-*.md を選出 (cross-platform: STAT_MTIME 経由)
+  LATEST_MTIME=0
+  for arch in "$HANDOFF_DIR/archive"/session-*.md; do
+    [ -f "$arch" ] || continue
+    M=$(STAT_MTIME "$arch")
+    if [ "$M" -gt "$LATEST_MTIME" ]; then
+      LATEST_MTIME=$M
+      LATEST_ARCHIVE=$arch
+    fi
+  done
 fi
 
 # Throttle marker (60s) — 同 cwd hash でユニーク
 CWD_HASH=$(echo "$PWD" | shasum -a 256 2>/dev/null | cut -c1-12)
 MARKER="/tmp/.claude-handoff-warned-${CWD_HASH}"
 if [ -f "$MARKER" ]; then
-  MARKER_AGE=$(( $(date +%s) - $(stat -f %m "$MARKER" 2>/dev/null || echo 0) ))
+  MARKER_MTIME=$(STAT_MTIME "$MARKER")
+  MARKER_AGE=$(( $(date +%s) - MARKER_MTIME ))
   [ "$MARKER_AGE" -lt 60 ] && exit 0
 fi
 
 # Compare mtimes
 if [ -n "$LATEST_ARCHIVE" ] && [ -f "$LATEST_ARCHIVE" ]; then
-  CURRENT_MTIME=$(stat -f %m "$CURRENT_MD" 2>/dev/null || echo 0)
-  ARCHIVE_MTIME=$(stat -f %m "$LATEST_ARCHIVE" 2>/dev/null || echo 0)
+  CURRENT_MTIME=$(STAT_MTIME "$CURRENT_MD")
+  ARCHIVE_MTIME=$(STAT_MTIME "$LATEST_ARCHIVE")
   if [ "$ARCHIVE_MTIME" -gt "$CURRENT_MTIME" ]; then
     cat >&2 <<MSG
 [handoff-stop-reminder] STALE: 最新 archive '$(basename "$LATEST_ARCHIVE")' が current.md より新しい。
@@ -134,15 +150,15 @@ fires every turn, which gives the agent a chance to self-correct mid-session
 
 ## Compatibility
 
-The sample script uses BSD `stat -f` (macOS). For Linux consumers, swap
-`stat -f` for `stat -c`:
+The sample script auto-detects BSD vs GNU `stat` at runtime via the
+`STAT_MTIME()` helper (macOS uses `stat -f %m`, Linux uses `stat -c %Y`).
+The detection probes BSD first (`stat -f %m / >/dev/null 2>&1`); if that
+exits non-zero, the helper falls back to GNU. No manual editing required
+for either platform.
 
-```bash
-# Linux (GNU coreutils)
-stat -c %Y "$CURRENT_MD"   # mtime (seconds)
-```
-
-The throttle / archive-search logic is otherwise portable across both.
+The throttle / archive-search logic uses POSIX-portable shell constructs
+(`for ... do ... done`, `[ -f ... ]`, arithmetic `$(( ... ))`) and works
+unchanged on both macOS and Linux distros that ship Bash 3.2+.
 
 ## Related
 

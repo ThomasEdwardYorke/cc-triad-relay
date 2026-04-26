@@ -4402,7 +4402,7 @@ describe("review.projectChecklistPath addendum chain", () => {
 
 // ============================================================
 // session-handoff skill — Layer 3: archive subcommand 最終報告 emit step
-// + references/ 分離 (D-93 carry-over) + Stop hook generic sample
+// + references/ 分離 (前世代 carry-over) + Stop hook generic sample
 // ============================================================
 // 2026-04-27 Layer 3 (Required Sections × anti-pattern #4 両立指針 を持つ前世代
 // session の follow-up): Layer 1 (Stop hook) + Layer 2 (memory) は consumer-side で
@@ -4411,10 +4411,10 @@ describe("review.projectChecklistPath addendum chain", () => {
 // `reference_session_final_report_template.md`)。Layer 3 として skill spec 自体に
 //   1. archive subcommand に "最終報告 emit step (8 section 標準 format)" 追加
 //   2. references/final-report-format.md (8 section template の generic 版) 新設
-//   3. references/post-check-verification.md (Test 1-5 切出し、D-93 carry-over) 新設
+//   3. references/post-check-verification.md (Test 1-5 切出し、前世代 carry-over) 新設
 //   4. plugin docs/handoff-stop-reminder-sample.md (generic shell hook) 新設
 // を統合し、architecture-level enforcement を完成させる。spec 行数は 550 上限を
-// 維持しつつ 500 復帰へ漸近する (D-93 threshold evolution)。
+// 維持しつつ 500 復帰へ漸近する (前世代 threshold evolution)。
 // ============================================================
 describe("session-handoff skill — Layer 3 (archive 最終報告 emit step + references/ 分離 + Stop hook sample)", () => {
   const skillPath = resolve(PLUGIN_ROOT, "commands/session-handoff.md");
@@ -4442,7 +4442,7 @@ describe("session-handoff skill — Layer 3 (archive 最終報告 emit step + re
     return m?.[0] ?? "";
   };
 
-  it("references/final-report-format.md が存在する (archive subcommand 参照先、D-93 切出し)", () => {
+  it("references/final-report-format.md が存在する (archive subcommand 参照先、前世代切出し)", () => {
     expect(() => readFileSync(finalReportPath, "utf-8")).not.toThrow();
   });
 
@@ -4473,7 +4473,7 @@ describe("session-handoff skill — Layer 3 (archive 最終報告 emit step + re
     expect(content).not.toMatch(/Track\s+[ABC]\b/);
   });
 
-  it("references/post-check-verification.md が存在し Test 1-5 + Red flag を切出す (D-93 carry-over)", () => {
+  it("references/post-check-verification.md が存在し Test 1-5 + Red flag を切出す (前世代 carry-over)", () => {
     expect(() => readFileSync(postCheckPath, "utf-8")).not.toThrow();
     const content = readFileSync(postCheckPath, "utf-8");
     expect(content).toMatch(/Test\s*1[\s\S]{0,100}Latest\s*state/i);
@@ -4506,7 +4506,7 @@ describe("session-handoff skill — Layer 3 (archive 最終報告 emit step + re
     expect(arch).toMatch(/references\/final-report-format\.md/);
   });
 
-  it("commands/session-handoff.md が references/post-check-verification.md を link 参照する (D-93 切出し配線)", () => {
+  it("commands/session-handoff.md が references/post-check-verification.md を link 参照する (前世代切出し配線)", () => {
     const body = readSkill();
     expect(body).toMatch(/references\/post-check-verification\.md/);
   });
