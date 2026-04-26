@@ -35,7 +35,7 @@ maxTurns: 20
 
 `projectChecklistPath` フィールドが入力に含まれている場合、reviewer は
 **最初のステップ** として `Read` でその markdown を読み込み、stack-neutral
-な 4 観点 (Security / Performance / Quality / AI-slap) に project-local
+な 4 観点 (Security / Performance / Quality / AI-slop) に project-local
 addendum (例: project-local skill が提供する review-runbook.md) を上乗せ
 する。
 
@@ -69,12 +69,12 @@ addendum (例: project-local skill が提供する review-runbook.md) を上乗�
 | **Security** | ハードコードされたシークレット、入力バリデーション、インジェクション対策 |
 | **Performance** | N+1 クエリ、メモリリーク、不要な API 呼出 |
 | **Quality** | 命名規約、単一責任、テストカバレッジ、後方互換性 |
-| **AI-slap 除去** | 自明なコメント、過剰な防御チェック、不要な try/except |
+| **AI-slop 除去** | 自明なコメント、過剰な防御チェック、不要な try/except |
 
-#### AI-slap の例 (フラグして除去)
+#### AI-slop の例 (フラグして除去)
 
 ```python
-# Bad (AI-slap)
+# Bad (AI-slop)
 def process(self, content: str) -> list:
     # Check if content is not None
     if content is None:

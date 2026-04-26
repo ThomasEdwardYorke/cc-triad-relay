@@ -4172,7 +4172,7 @@ describe("Track B-2: harness:codex-sync invocations include `name` argument", ()
   }
 });
 
-// Track C-1 (5b) follow-up (Codex review major-3): the reviewer addendum
+// Reviewer addendum chain content-integrity: the reviewer addendum
 // contract spans three files (config.ts → harness-review.md → reviewer.md).
 // Without a content-integrity check the next maintainer can flip one
 // without the other and the addendum silently goes dark.

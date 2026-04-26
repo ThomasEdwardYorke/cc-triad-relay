@@ -1260,7 +1260,8 @@ describe("loadConfig / loadConfigSafe", () => {
   });
 
   // ----------------------------------------------------------------------
-  // Track C-1 (5b): review.projectChecklistPath + work.pipelineCheckPath
+  // review.projectChecklistPath + work.pipelineCheckPath (opt-in addendum
+  // paths for /harness-review and /harness-work)
   // ----------------------------------------------------------------------
   // Background: `security.projectChecklistPath` is already a first-class
   // field consumed by `security-auditor`. Reviewer (`/harness-review`) and
@@ -1274,7 +1275,7 @@ describe("loadConfig / loadConfigSafe", () => {
   // `undefined` with a stderr warning so consumers never see an escape
   // route. Empty strings are treated the same way (an opt-in path that
   // points nowhere is a config bug, not a feature).
-  describe("review.projectChecklistPath + work.pipelineCheckPath (Track C-1 / 5b)", () => {
+  describe("review.projectChecklistPath + work.pipelineCheckPath (opt-in addendum paths)", () => {
     it("review section default is undefined (opt-in only — plugin ships stack-neutral)", () => {
       // The plugin must not assume any reviewer addendum file exists.
       expect(DEFAULT_CONFIG.review.projectChecklistPath).toBeUndefined();
