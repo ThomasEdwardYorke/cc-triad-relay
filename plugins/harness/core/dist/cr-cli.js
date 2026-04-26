@@ -1,15 +1,22 @@
 /**
  * core/src/cr-cli.ts
  *
- * CodeRabbit CLI (`cr`) detector.
+ * CodeRabbit CLI (`coderabbit`) detector.
  *
- * Pseudo CR loop の Step 2 で `cr --agent --base <branch> --dir <path>` を
- * 直呼出する場合に必要な前提を確認する pure detector module。
+ * Pseudo CR loop の Step 2 で
+ * `coderabbit --agent --base <branch> --dir <path>` を直呼出する場合に必要な
+ * 前提を確認する pure detector module。
  *
  * Detection order:
- *   1. `which cr` (binary が PATH にあるか)
- *   2. `cr --version` (動作するか)
- *   3. `cr auth status --agent` (auth が valid か)
+ *   1. `which coderabbit` (binary が PATH にあるか)
+ *   2. `coderabbit --version` (動作するか)
+ *   3. `coderabbit auth status --agent` (auth が valid か)
+ *
+ * Binary name の注意:
+ *   - 公式 install (`brew install --cask coderabbit`) の binary 名は
+ *     **`coderabbit`** (`cr` ではない、よくある誤解)
+ *   - 旧実装は `cr` を spawn しており、homebrew 経由 install 環境では常に
+ *     `binary-missing` を返してしまっていた (本 wrapper で `coderabbit` 化済)
  *
  * 設計原則:
  *   - DI: `spawn` 関数を inject 可能にして実 binary 呼出を unit test で mock 化
@@ -24,14 +31,15 @@
  *     (Codex 模倣) に fallback する設計 (本 detector の責務外)
  */
 /**
- * Best-effort SemVer-ish 抽出。`cr X.Y.Z` / `cr X.Y.Z-pre.N` / `vX.Y.Z` を許容。
+ * Best-effort SemVer-ish 抽出。`X.Y.Z` / `X.Y.Z-pre.N` / `vX.Y.Z` を許容。
+ * 前置 token (`cr` / `coderabbit` / `v` 等) は無視して数値部分のみ抽出する。
  */
 export function parseVersionOutput(out) {
     const m = out.match(/(\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?)/);
     return m?.[1] ?? null;
 }
 /**
- * `cr auth status --agent` の JSON output を parse。
+ * `coderabbit auth status --agent` の JSON output を parse。
  *
  * 公式 docs にある JSON schema:
  *   {"type":"auth_status","authenticated":true,"user":"<github-login>"}
@@ -69,34 +77,39 @@ function safeRun(spawn, argv) {
     }
 }
 /**
- * Detect `cr` CLI presence and auth state.
+ * `coderabbit` CLI binary name. Homebrew install (`brew install --cask coderabbit`)
+ * の出力 binary 名と一致させる必要がある (旧実装の `cr` は誤り)。
+ */
+const CR_BINARY = "coderabbit";
+/**
+ * Detect `coderabbit` CLI presence and auth state.
  *
  * Returns `{ available: true, ... }` only when:
- *   - `which cr` returns a non-empty path
- *   - `cr --version` succeeds (exit 0) — version 抽出失敗でも続行する
- *   - `cr auth status --agent` returns JSON `{authenticated: true}`
+ *   - `which coderabbit` returns a non-empty path
+ *   - `coderabbit --version` succeeds (exit 0) — version 抽出失敗でも続行する
+ *   - `coderabbit auth status --agent` returns JSON `{authenticated: true}`
  *
  * Otherwise returns `{ available: false, reason: ... }` with a categorized
  * reason so the caller can produce actionable guidance (install / login).
  */
 export function detectCrCli(opts) {
     const { spawn } = opts;
-    const which = safeRun(spawn, ["which", "cr"]);
+    const which = safeRun(spawn, ["which", CR_BINARY]);
     const binaryPath = which.stdout.trim();
     if (which.exitCode !== 0 || binaryPath === "") {
         return { available: false, reason: "binary-missing" };
     }
-    const version = safeRun(spawn, ["cr", "--version"]);
+    const version = safeRun(spawn, [CR_BINARY, "--version"]);
     // exit non-zero (binary 起動失敗 / 不正) → binary-missing。
     // exit 0 でも version 文字列の SemVer 抽出に失敗したら "unknown" として続行
     // — caller には version 値が "unknown" でも available:true を返すため、
     // "version 抽出失敗でも続行" 動作と "exit non-zero で停止" 動作の住み分けは
-    // この 2 行で完結する (Codex review #6 で comment 矛盾指摘を反映)。
+    // この 2 行で完結する。
     if (version.exitCode !== 0) {
         return { available: false, reason: "binary-missing" };
     }
     const versionStr = parseVersionOutput(version.stdout) ?? "unknown";
-    const auth = safeRun(spawn, ["cr", "auth", "status", "--agent"]);
+    const auth = safeRun(spawn, [CR_BINARY, "auth", "status", "--agent"]);
     if (auth.exitCode !== 0) {
         return { available: false, reason: "unauthenticated" };
     }

@@ -540,6 +540,44 @@ describe("harness-setup check の expected 配列", () => {
   );
 });
 
+describe("bin/cr-cli — binary name regression guard (coderabbit, not cr)", () => {
+  // 旧実装は `spawnSync("cr", ...)` を使っており、homebrew install 環境
+  // (binary 名 `coderabbit`) では常に `binary-missing` を返していた。
+  // 本 describe block は誰かが将来 `cr` に rollback したら即 fail させる
+  // structural regression guard。
+  const binPath = resolve(PLUGIN_ROOT, "bin", "cr-cli");
+  const binCrCli = readFileSync(binPath, "utf-8");
+
+  it("invokes spawnSync('coderabbit', ...) for review passthrough", () => {
+    expect(binCrCli).toMatch(/spawnSync\(\s*"coderabbit"/);
+  });
+
+  it("does NOT invoke legacy spawnSync('cr', ...) (regression guard)", () => {
+    expect(binCrCli).not.toMatch(/spawnSync\(\s*"cr"\s*,/);
+  });
+
+  it("documents the canonical binary name in the header docstring", () => {
+    // file 冒頭の JSDoc 内では `coderabbit` を canonical として言及していること
+    const headerMatch = /^[\s\S]*?\*\//.exec(binCrCli);
+    expect(headerMatch).not.toBeNull();
+    const header = headerMatch![0];
+    expect(header).toMatch(/coderabbit/);
+    // legacy `cr` 言及 (which cr / cr --version / cr auth status) は cleanup 済
+    expect(header).not.toMatch(/which cr\b/);
+    expect(header).not.toMatch(/`cr `/);
+    expect(header).not.toMatch(/cr --version/);
+    expect(header).not.toMatch(/cr auth status/);
+  });
+
+  it("emits actionable error message referencing 'coderabbit auth login'", () => {
+    // CR CLI 不在時の error message が `cr auth login` ではなく
+    // `coderabbit auth login` を案内していること (homebrew install 後の
+    // 実コマンドと整合)
+    expect(binCrCli).toMatch(/coderabbit auth login/);
+    expect(binCrCli).not.toMatch(/`cr auth login`/);
+  });
+});
+
 describe("全 agent / command に frontmatter が存在する", () => {
   // extractFrontmatter は frontmatter が無いと throw するため、
   // 欠落・破損は「テスト実行時の例外」として検知される。
