@@ -4209,4 +4209,26 @@ describe("review.projectChecklistPath addendum chain", () => {
       /projectChecklistPath[\s\S]{0,400}?(?:not provided|omitted|absent|not set|未指定|undefined)[\s\S]{0,400}?(?:no addendum|addendum なし|skip|skipped|読み込まない|読まない|fail.?open|fall.?back)/i,
     );
   });
+
+  it("addendum chain は symlink containment が caller-agent 責務である旨を両ファイルで spec 化している", () => {
+    // Codex Phase 7 Minor: config.ts の docstring (L314-321) は symlink 解決を
+    // caller agent (`/harness-review` / `harness:reviewer`) の責務と明記している。
+    // しかし agent / command の markdown 側に realpath 言及が無いと、保守者が
+    // 該当 contract に気付かず lexical-only 検証だけで安全と誤認するリスクが
+    // ある。本 test は両ファイルに realpath / symlink 言及が現存することを
+    // 検証し、silent な doc drift を防ぐ (D-88 spirit)。
+    const reviewer = readAgent("reviewer");
+    const command = readCommand("harness-review");
+    // reviewer.md: addendum section 内で symlink contract を述べていること
+    const reviewerAddendum =
+      /Project addendum \(opt-in\)[\s\S]*?(?=\n## |\n### |$)/i.exec(reviewer)?.[0] ?? "";
+    expect(reviewerAddendum.length).toBeGreaterThan(0);
+    expect(reviewerAddendum).toMatch(/symlink/i);
+    expect(reviewerAddendum).toMatch(/\brealpath\b/i);
+    // commands/harness-review.md: 検証 list か invocation contract section の
+    // どちらかで symlink + realpath を述べていること (file 全体で OR、両 keyword
+    // 必須)
+    expect(command).toMatch(/symlink/i);
+    expect(command).toMatch(/\brealpath\b/i);
+  });
 });

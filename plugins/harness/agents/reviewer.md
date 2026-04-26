@@ -47,6 +47,12 @@ addendum (例: project-local skill が提供する review-runbook.md) を上乗�
   それを安全に Read してよい
 - フィールド未指定 (undefined) の場合は addendum なしで generic runbook
   のみで動く (fail-open)
+- **path の symlink 含有 contract**: 渡される `projectChecklistPath` は
+  呼出元 (`/harness-review` 等) が `realpath` でプロジェクトルート配下への
+  containment を確認済の値である契約。reviewer agent は Read tool しか
+  持たないため symlink を独自解決できず、呼出元の runtime containment 検証
+  に依存する。本 contract 外から呼ばれる場合 (将来の別 caller) は呼出元
+  が同等の symlink containment 保証を行うこと
 
 ---
 

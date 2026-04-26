@@ -83,6 +83,14 @@ generic runbook のみ動く。
 - 絶対パス・`..` セグメント・空文字・制御文字は **load 時に reject** され
   `undefined` にフォールバックされる (stderr に warning)
 - 不正値時は addendum なしで generic runbook のみ動く (fail-open)
+- **Symlink 含有 (caller 責務)**: lexical 検証は `..` / 絶対パス / 制御文字
+  を弾くが、プロジェクトルート内に存在するシンボリックリンクが root 外を
+  指すケースは検出しない。`/harness-review` 経路は reviewer agent 呼出前に
+  `realpath` で実体 path を解決し、プロジェクトルート配下に収まることを
+  prefix 比較で確認する責務を負う。逸脱検出時は addendum なし (fail-open)
+  + stderr warning。`harness.config.json` 由来のユーザー操作可能な path に
+  対する **runtime containment** であり、config 側 validator は lexical-only
+  (実装は `core/src/config.ts` の `classifyProjectRelativePath` 参照)
 
 #### Reviewer agent invocation contract
 
