@@ -34,13 +34,20 @@ reviews:
 
   # Pre-merge checks: PR が merge 可能か explicit に gate する
   # (https://docs.coderabbit.ai/pr-reviews/pre-merge-checks)。
-  # 初期は warning で導入 noise を抑え、安定後に error への昇格を検討する
-  # (custom_checks / description のみ。docstrings は plugin core が
-  # 既に docstring 完備のため off で過剰 noise 回避)。公式 key 名は
-  # custom_checks / description / docstrings (CodeRabbit schema v2)。
+  # 初期は warning で導入 noise を抑え、安定後に error への昇格を検討する。
+  # 公式 key 名は custom_checks / description / docstrings (CodeRabbit
+  # schema v2 https://coderabbit.ai/integrations/schema.v2.json)。
+  #
+  # custom_checks は **array of {name, instructions, mode?}** schema
+  # (object ではない — object として書くと schema v2 で
+  # `Validation error: Expected array, received object` となり yaml 全体
+  # が default 設定で読まれてしまう、PR #36 以降の既知バグ)。プロジェクト
+  # 固有 rule を定義していない現状は空配列で明示し、将来追加する際の
+  # template を残す。description は object で `mode` setting (warning /
+  # error / off)。docstrings は plugin core が docstring 完備のため off で
+  # 過剰 noise 回避。
   pre_merge_checks:
-    custom_checks:
-      mode: "warning"
+    custom_checks: []  # array of {name, instructions, mode?} — 現状空
     description:
       mode: "warning"
     docstrings:
