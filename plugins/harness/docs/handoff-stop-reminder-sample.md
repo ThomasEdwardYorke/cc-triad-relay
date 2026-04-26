@@ -169,6 +169,14 @@ The detection probes BSD first (`stat -f %m / >/dev/null 2>&1`); if that
 exits non-zero, the helper falls back to GNU. No manual editing required
 for either platform.
 
+The throttle hash also has its own runtime probe: it tries `sha256sum`
+(GNU coreutils, Linux 標準) → `shasum -a 256` (macOS / Perl 系) →
+`base64 + alnum filter` (busybox 互換) in that order, and falls back to
+`pid$$` if every digest tool is missing. This prevents the
+`/tmp/.claude-handoff-warned-` marker suffix from collapsing to an empty
+string under Alpine / busybox-only environments (which would otherwise
+make every cwd share a single throttle slot).
+
 The throttle / archive-search logic uses POSIX-portable shell constructs
 (`for ... do ... done`, `[ -f ... ]`, arithmetic `$(( ... ))`) and works
 unchanged on both macOS and Linux distros that ship Bash 3.2+.
