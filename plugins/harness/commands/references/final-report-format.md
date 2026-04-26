@@ -20,8 +20,10 @@ Plugin-side keeps the **generic backbone** here.
 
 ## Emit conditions (must follow)
 
-- Emit **after** `Skill({skill: "harness:session-handoff", args: "archive"})`
-  has finished — never before.
+- Emit **only after** `Skill({skill: "harness:session-handoff", args: "archive"})`
+  has finished. **`update` 単独では emit しない** — `update` は `current.md` 最新化のみで、
+  最終報告は session 終了時の `archive` ターンに紐付ける設計。Stop hook reminder で
+  `update` を促されても、その turn では 8 section emit を省略してよい。
 - Emit **all 8 sections**, even if a section is "該当なし / N/A".
 - Self-verify Section 6 (Post-Check Verification, Test 1-5) inside the
   report; the user does not need to re-ask 「完璧ですか?」.

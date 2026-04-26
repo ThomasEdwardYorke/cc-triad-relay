@@ -258,7 +258,11 @@ touch .docs/handoff/<project>-{current,backlog,design-decisions,roadmap}.md
    成果を反映した最新状態で `current.md` を更新する (archive 内容の流し込みでは
    なく、current.md は「今の状態」の新しい snapshot に書き換える)
 4. **Design decision ask** (non-blocking, archive 限定、`init` / `update` では発火させない) — archive を書き出した後 (after the archive is written) に operator に問う: 「本セッションで確定した **permanent design decision (恒久方針)** で `design-decisions.md` に追記すべきものは?」YES → 各項目を append (append-only) し archive の `Design decisions` から相互参照 / NO・skip → archive 末尾の **Archive footer** に skip 理由を 1 行記録。skip 可 (non-blocking) だが skip 理由の記録は必須 (audit 用)
-5. **最終報告 emit step (8 section 標準 format、archive 限定、必須)** — 上記 step 1-4 完了後、operator (≒ ユーザー) に向けて **最終報告** を発出する。フォーマットは [`references/final-report-format.md`](./references/final-report-format.md) の **8 section 固定 layout** (1.このセッションで行なった開発 / 2.開発状況サマリ / 3.次セッションのスコープ / 4.残タスク / 5.振り返り / 6.チェックリスト + Post-Check Verification / 7.G1-G8 規律 ledger / 8.handoff health) に従う。section を skip しない (情報なし時は「該当なし」と明示)。consumer 側で project-specific 拡張がある場合は同名 memory `reference_session_final_report_template.md` (consumer-side) と merge して emit する。Skill 起動 + 標準 format の 2 点で「毎回同じ結果」を担保する設計のため、ユーザーが「完璧ですか?」と聞かなくても自動的に Section 6 で Post-Check Verification (Test 1-5) を self-verify する。
+5. **最終報告 emit step (8 section 標準 format、archive 限定、必須)** — step 1-4 完了後に operator へ最終報告を emit。format は [`references/final-report-format.md`](./references/final-report-format.md) の **8 section 固定 layout** (1 開発 / 2 サマリ / 3 次スコープ / 4 残タスク / 5 振り返り / 6 Post-Check Verification / 7 G1-G8 規律 ledger / 8 handoff health) に従う:
+   - section skip 禁止 (情報なしなら「該当なし」と明示)
+   - consumer 側 memory `reference_session_final_report_template.md` の project-specific 拡張があれば merge (base 8 section 順序は変更しない)
+   - Skill 起動 + 標準 format で「毎回同じ結果」を担保 (Section 6 の Test 1-5 自動 self-verify、ユーザー「完璧ですか?」不要)
+   - `update` 単独では emit しない (`update` は current.md 最新化のみ、最終報告は archive ターンに紐付け)
 
 ### `check`
 
@@ -487,12 +491,10 @@ orthogonal、Structural/Content/Synthesis 実行前に判定、`init` 案内を�
 
 - **[MEMORY.md pattern][anthropic-memory]**: concise index + topic files
 - **[SKILL.md pattern][anthropic-skills]**: overview + supporting files
-  (本 skill 自体は 500 行台 (500–549) を目標とし、v2 拡張で一時 550 まで許容。
-  以降の機能追加は **`references/<helper>.md` への detail 分離を活用**して 550 を
-  超えない設計とする。Layer 3 (2026-04-27) で Post-Check Verification 詳細を
-  [`references/post-check-verification.md`](./references/post-check-verification.md) に、
-  最終報告 8 section format を [`references/final-report-format.md`](./references/final-report-format.md)
-  に分離済 — 将来層追加時も同 pattern で endurance を保つ)
+  (本 skill 自体は 500 行台 (500–549) を目標、v2 拡張で一時 550 まで許容。以降の
+  追加は **`references/<helper>.md` 分離**で 550 を超えない設計。Layer 3 (2026-04-27)
+  で Post-Check Verification 詳細を [`references/post-check-verification.md`](./references/post-check-verification.md)、
+  最終報告 8 section format を [`references/final-report-format.md`](./references/final-report-format.md) に分離済)
 - **[context window 推奨][anthropic-context]**: 変動する情報と always-on を分離
 
 本 skill が追加する invariant:
@@ -528,13 +530,7 @@ orthogonal、Structural/Content/Synthesis 実行前に判定、`init` 案内を�
 - 本 skill は **汎用テンプレート** である。特定プロジェクトの branch 名 /
   ファイル layout 前提はない。project-specific な拡張は consumer 側
   `.claude/skills/<project>-handoff/` で override する。
-- consumer 側で **8 section 最終報告 format に project-specific フィールド**
-  (compliance attestation / release vehicle / on-call rotation 等) を追加
-  したい場合は memory `reference_session_final_report_template.md`
-  (consumer-side) を保持する。`archive` の最終報告 emit step は plugin の
-  generic template ([`references/final-report-format.md`](./references/final-report-format.md))
-  と consumer memory を **merge** して emit する設計。base 8 section の順序は
-  変更しない (downstream reader が固定順序を前提とする)。
+- consumer 側で **8 section 最終報告 format に project-specific フィールド** (compliance / on-call rotation 等) を追加したい場合は memory `reference_session_final_report_template.md` (consumer-side) を保持する。`archive` の最終報告 emit step は plugin generic template ([`references/final-report-format.md`](./references/final-report-format.md)) と consumer memory を **merge** して emit する設計 (base 8 section の順序は変更しない、downstream reader が固定順序を前提とする)。
 - 本 skill は破壊的操作を行わない。archive 書き出しは常に追加、
   既存 file の削除はユーザー明示承認を要求する。
 - `update` / `archive` が自動 trigger される場合、

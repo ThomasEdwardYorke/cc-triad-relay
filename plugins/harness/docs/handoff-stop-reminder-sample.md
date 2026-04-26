@@ -80,7 +80,20 @@ if [ -d "$HANDOFF_DIR/archive" ]; then
 fi
 
 # Throttle marker (60s) — 同 cwd hash でユニーク
-CWD_HASH=$(echo "$PWD" | shasum -a 256 2>/dev/null | cut -c1-12)
+# `shasum` は Alpine Linux 等の Perl 抜き構成に不在のため、3 段 fallback で取得:
+#   1. sha256sum (GNU coreutils, Linux 標準)
+#   2. shasum -a 256 (macOS / Perl 系)
+#   3. base64 + alnum filter (busybox 互換 fallback)
+# いずれも空に終わる (no digest tool, no base64) 場合は `pid$$` を最後の砦に使い、
+# 全 cwd 単一マーカーへの誤集約 (`/tmp/.claude-handoff-warned-` suffix 空) を防ぐ。
+if command -v sha256sum >/dev/null 2>&1; then
+  CWD_HASH=$(printf '%s' "$PWD" | sha256sum | cut -c1-12)
+elif command -v shasum >/dev/null 2>&1; then
+  CWD_HASH=$(printf '%s' "$PWD" | shasum -a 256 | cut -c1-12)
+else
+  CWD_HASH=$(printf '%s' "$PWD" | base64 2>/dev/null | tr -dc 'a-zA-Z0-9' | cut -c1-12)
+fi
+[ -z "$CWD_HASH" ] && CWD_HASH="pid$$"
 MARKER="/tmp/.claude-handoff-warned-${CWD_HASH}"
 if [ -f "$MARKER" ]; then
   MARKER_MTIME=$(STAT_MTIME "$MARKER")
@@ -95,8 +108,8 @@ if [ -n "$LATEST_ARCHIVE" ] && [ -f "$LATEST_ARCHIVE" ]; then
   if [ "$ARCHIVE_MTIME" -gt "$CURRENT_MTIME" ]; then
     cat >&2 <<MSG
 [handoff-stop-reminder] STALE: 最新 archive '$(basename "$LATEST_ARCHIVE")' が current.md より新しい。
-  → Skill tool で 'harness:session-handoff' を 'update' 引数で起動して current.md を最新化、
-    最終報告は memory 'reference_session_final_report_template.md' のフォーマットで emit してください。
+  → Skill tool で 'harness:session-handoff' を 'update' 引数で起動して current.md を最新化してください。
+    8 section 最終報告は 'archive' 完了後のみ emit (memory 'reference_session_final_report_template.md' フォーマット)。
 MSG
     touch "$MARKER"
   fi
