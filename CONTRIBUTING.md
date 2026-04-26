@@ -77,6 +77,7 @@ All examples in shipped plugin files must be **generic, copy-safe, and obviously
 - Paths that only make sense in one repository or one maintainer setup
 - Locale-specific examples that imply a plugin-wide language policy
 - Stack-specific commands presented as universal defaults, e.g. `PYTHONPATH=. pytest`, `ruff check backend/ && mypy backend/`
+- Case-variant forms of internal tracker IDs presented as generic detection targets — e.g. broadening `gen-N` (lowercase ASCII, established consumer convention) to `Gen-N` / `GEN-N` collides with generic English (`Generation`, `Generic`, `GEN-LOCK`). Tracker-ID detection patterns must stay case-sensitive ASCII to keep false-positive rate near zero. See `plugins/harness/core/src/__tests__/generality.test.ts` for the full BLOCK_PATTERNS list (B-3f boundary regression block fixes the case-sensitive contract in CI).
 
 ### 2.3 Placeholder rules
 
