@@ -593,7 +593,7 @@ fi
 
 長文 findings JSON が parent subagent context を埋めて 100% timeout する事故を
 防ぐため、`coderabbit-mimic` agent は内部で `harness:codex-sync` agent (codex-sync.md
-D-49 contract) を経由し、output file-redirect を **agent 内部で完結** させる
+Output File Redirect contract) を経由し、output file-redirect を **agent 内部で完結** させる
 構成になっている。本 skill 側 (caller) では追加の marker inject は不要 (mimic
 agent が `$WORKDIR/$RESULT` を自動管理する)。
 

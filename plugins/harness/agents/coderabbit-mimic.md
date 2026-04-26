@@ -220,7 +220,7 @@ fi
 ### Step 3. Codex による LLM review (harness:codex-sync 経由 + output-file redirect)
 
 Codex への LLM review 呼出は **`harness:codex-sync` agent を Agent tool で spawn** し、
-`codex-sync.md` の Output File Redirect 契約 (D-49: `[output-file: <abs-path>]` marker
+`codex-sync.md` の Output File Redirect 契約 (`[output-file: <abs-path>]` marker
 を prompt body に inject すれば Codex stdout を file に書き出し、return value は
 `OUTPUT_PATH=<>` / `OUTPUT_BYTES=<n>` の ~120 bytes 圧縮) を活用する。
 
@@ -309,7 +309,7 @@ PROMPT
 # -i.bak は BSD sed / GNU sed 両互換 (backup を作ってすぐ rm)。
 sed -i.bak "s|@@WORKDIR@@|$WORKDIR|g" "$WORKDIR/prompt.md" && rm -f "$WORKDIR/prompt.md.bak"
 
-# Output File Redirect 契約 (codex-sync.md D-49) の trigger marker を prompt body の
+# Output File Redirect 契約 (codex-sync.md) の trigger marker を prompt body の
 # 末尾に append する。marker 形式: `[output-file: <abs-path>]` (case-insensitive)。
 # codex-sync agent はこれを検出すると Codex stdout を `$RESULT` に直接書き出し、
 # return value は OUTPUT_PATH=<> / OUTPUT_BYTES=<n> の ~120 bytes 圧縮 minimal lines
@@ -338,7 +338,7 @@ placeholder のまま spawn すると codex-sync は marker を検出できず�
 # 事前解決)。固定名だと同セッション内の並列起動で SendMessage resume が曖昧化。
 Agent({
   subagent_type: "harness:codex-sync",
-  name: "coderabbit-mimic-codex-sync-${RUN_ID}",
+  name: "coderabbit-mimic-codex-sync-<unique-run-id>",
   description: "pseudo-CodeRabbit LLM review (output-file redirect)",
   prompt: "<verbatim contents of $WORKDIR/prompt.md, including the
            [output-file: $RESULT] marker that was appended above>",
@@ -350,7 +350,7 @@ Agent({
 
 1. Codex companion を foreground 実行
 2. Codex stdout + stderr を `$RESULT` に redirect (`> "$RESULT" 2>&1`、codex-sync.md
-   D-49 contract)
+   Output File Redirect contract)
 3. caller (本 mimic agent) には `OUTPUT_PATH=$RESULT` / `OUTPUT_BYTES=<n>` のみ
    返す (~120 bytes、context overflow 回避)
 4. Codex が non-zero で exit した場合のみ、第 3 行に `EXIT_CODE=<n>` を追記
@@ -369,7 +369,7 @@ Agent({
 
 ### Step 4. 結果の post-process
 
-`$RESULT` には codex-sync.md D-49 redirect 契約により Codex の **stdout + stderr が
+`$RESULT` には codex-sync.md Output File Redirect 契約により Codex の **stdout + stderr が
 マージされた** 内容が書かれている。codex-companion.mjs は progress reporter が
 stderr に `[codex] ...` 形式の行を出すほか、warnings / diagnostics も stderr に
 混入する可能性がある。よって narrow line filter (e.g. `grep -v '^\[codex\]'`) だけ
