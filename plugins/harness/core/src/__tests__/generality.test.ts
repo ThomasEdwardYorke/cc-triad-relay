@@ -409,17 +409,41 @@ interface ExemptionDeclaration {
 // expiry は semver / ISO date / quarter の 3 書式を許容。
 // Issue key: uppercase PREFIX, then hyphen, then alphanumeric / underscore / hyphen body.
 // Slug forms (e.g. HARNESS-generality-self) are allowed for self-reference cases.
-const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]*-[A-Za-z0-9_][A-Za-z0-9_-]*$/;
+//
+// Track C-2 (5k) hardening: the suffix body is capped at 64 characters total
+// (1 leading [A-Za-z0-9_] + up to 63 more) so a malformed declaration cannot
+// embed a 200+ character credential-shaped string as the issue-key field.
+// 64 was chosen because realistic issue-key lengths sit well below it
+// (HARNESS-generality-self = 17 chars, PARTS-12 = 8 chars), giving ample
+// headroom while making credential-style obfuscation visible.
+const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]*-[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/;
 const EXPIRY_SEMVER_RE = /^v\d+\.\d+\.\d+$/;
-const EXPIRY_ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+// Track C-2 (5k) hardening: tighten ISO date numeric-domain so impossible
+// dates like 2026-13-32 (month 13, day 32) and 2026-04-00 (day zero) are
+// rejected at parse time. We deliberately stop at numeric-domain checks
+// (month 01-12 / day 01-31) rather than full Gregorian validation —
+// adopting `Date.parse` here would invite locale / timezone footguns
+// without protecting against the adversarial inputs the audit flagged.
+// Edge cases that pass this regex but are not strict Gregorian (e.g.
+// 2026-02-30, 2026-04-31) are handled by callers when / if they need
+// month-day adjudication; the regex's job is to reject obvious junk.
+const EXPIRY_ISO_DATE_RE =
+  /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/;
 const EXPIRY_QUARTER_RE = /^\d{4}-Q[1-4]$/;
 // `\d+` allows future expansion to 2+ digit pattern IDs (e.g. B-10, B-99a, B-123).
 const PATTERN_ID_EXTRACT_RE = /\bB-\d+[a-z]?\b/g;
 // Full-string CSV match for short-form idsPart: rejects any trailing/non-ID text
 // so legacy fragments like "B-1, legacy reason" cannot bypass 4-field requirement.
 const PATTERN_ID_CSV_RE = /^B-\d+[a-z]?(?:,B-\d+[a-z]?)*$/;
-// Subword-safe: requires non-word boundary around `all` so `wall` / `fallback` do not match.
-const ALL_KEYWORD_RE = /(?:^|\W)['"`]?all['"`]?(?:$|\W)/i;
+// Track C-2 (5k) hardening: scope the all-keyword guard to pattern-ids field
+// grammar (CSV of B-\d+[a-z]? tokens). Previous shape `(?:^|\W)['"`]?all['"`]?
+// (?:$|\W)` would also have flagged a legitimate issue-key like `ALL-42` if
+// the regex were ever applied to the issue-key field. Anchoring the
+// boundaries on `,` / `^` / `$` (the only legal token separators in a
+// pattern-ids CSV) makes the regex unambiguously a pattern-ids field rule.
+// Optional surrounding whitespace + optional ASCII quote chars stay because
+// attackers historically wrap forbidden tokens to bypass naive matchers.
+const ALL_KEYWORD_RE = /(?:^|,)\s*['"`]?all['"`]?\s*(?:$|,)/i;
 
 /**
  * Parse an exemption body (everything after `generality-exemption:` up to closing marker).
@@ -1267,6 +1291,151 @@ describe("exemption grammar (unified, pipe-separated)", () => {
       expect(() => hasFileExemption(content, "B-1")).toThrow(
         /single line|newline|line break|4|field/i,
       );
+    });
+  });
+
+  // ----------------------------------------------------------------------
+  // Track C-2 (5k): exemption-grammar regex 強化
+  // ----------------------------------------------------------------------
+  // Background: PR #17 follow-up (security). The three regex below were
+  // accepting inputs that violated their semantic intent:
+  //
+  //   1. ISSUE_KEY_RE — no upper bound on suffix length, so a malicious or
+  //      malformed declaration could embed a credential-shaped 200+ char
+  //      string as the "issue-key" and slip past the parser. Cap suffix at
+  //      64 characters (i.e. 1 leading char + up to 63 more).
+  //   2. EXPIRY_ISO_DATE_RE — pure digit-shape matcher, so `2026-13-32`
+  //      (month 13, day 32) and other impossible dates were accepted. Tighten
+  //      to month 01-12 / day 01-31 (numeric-domain check; not strict
+  //      Gregorian — Feb 30 / Apr 31 are still admissible).
+  //   3. ALL_KEYWORD_RE — boundary scoping let a legitimate issue-key like
+  //      `ALL-42` look like an `all`-keyword hit if the regex were ever
+  //      tested against the issue-key field directly. Tighten to a CSV-
+  //      bounded match so the regex is only meaningful in the pattern-ids
+  //      field grammar (comma-separated tokens).
+  //
+  // These changes must NOT increase false-positives in the existing test
+  // suite (running the whole generality.test.ts must stay green), so the
+  // adversarial cases below are paired with positive cases that lock in
+  // the previously accepted shapes.
+  describe("exemption grammar regex hardening (Track C-2 / 5k)", () => {
+    describe("ISSUE_KEY_RE suffix 64-char cap", () => {
+      it("accepts a 64-character suffix (boundary)", () => {
+        // Total suffix length = 64: 1 leading [A-Za-z0-9_] + 63 more.
+        const suffix = "a".repeat(64);
+        const md = `<!-- generality-exemption: B-1 | HARNESS-${suffix} | v0.5.0 | within cap -->`;
+        expect(hasFileExemption(md, "B-1")).toBe(true);
+      });
+
+      it("rejects a 65-character suffix (just over the cap)", () => {
+        const suffix = "a".repeat(65);
+        const md = `<!-- generality-exemption: B-1 | HARNESS-${suffix} | v0.5.0 | over cap -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/issue[- ]?key/i);
+      });
+
+      it("rejects a 200-character credential-shaped suffix (worst-case obfuscation)", () => {
+        // Simulates an attacker stuffing a token / hash into the issue-key field.
+        const credentialish = "X".repeat(200);
+        const md = `<!-- generality-exemption: B-1 | HARNESS-${credentialish} | v0.5.0 | credential abuse -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/issue[- ]?key/i);
+      });
+
+      it("still accepts pre-existing semantic-slug forms (HARNESS-generality-self)", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-generality-self | 2099-12-31 | preserved -->`;
+        expect(hasFileExemption(md, "B-1")).toBe(true);
+      });
+
+      it("still accepts cross-project tracker prefix (PARTS-12)", () => {
+        const md = `<!-- generality-exemption: B-1 | PARTS-12 | v1.0.0 | preserved -->`;
+        expect(hasFileExemption(md, "B-1")).toBe(true);
+      });
+    });
+
+    describe("EXPIRY_ISO_DATE_RE numeric-domain check", () => {
+      it("rejects a malformed date with month 13", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-42 | 2026-13-01 | invalid month -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/expir/i);
+      });
+
+      it("rejects a malformed date with month 00", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-42 | 2026-00-15 | invalid month -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/expir/i);
+      });
+
+      it("rejects a malformed date with day 32", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-42 | 2026-04-32 | invalid day -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/expir/i);
+      });
+
+      it("rejects a malformed date with day 00", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-42 | 2026-04-00 | invalid day -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/expir/i);
+      });
+
+      it("rejects the canonical adversarial input 2026-13-32", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-42 | 2026-13-32 | task fixture -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/expir/i);
+      });
+
+      it("accepts the boundary date 2026-12-31", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-42 | 2026-12-31 | year-end -->`;
+        expect(hasFileExemption(md, "B-1")).toBe(true);
+      });
+
+      it("accepts the boundary date 2026-01-01", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-42 | 2026-01-01 | year-start -->`;
+        expect(hasFileExemption(md, "B-1")).toBe(true);
+      });
+
+      it("accepts the existing fixture date 2099-12-31 (HARNESS-generality-self)", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-generality-self | 2099-12-31 | self -->`;
+        expect(hasFileExemption(md, "B-1")).toBe(true);
+      });
+    });
+
+    describe("ALL_KEYWORD_RE pattern-id field scope", () => {
+      it("rejects pattern-ids field equal to standalone 'all' (existing guard preserved)", () => {
+        const md = `<!-- generality-exemption: all | HARNESS-42 | v0.5.0 | scoped all -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/all/i);
+      });
+
+      it("rejects pattern-ids CSV containing 'all' as a comma-bounded token", () => {
+        const md = `<!-- generality-exemption: B-1,all,B-2a | HARNESS-42 | v0.5.0 | mixed -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/all|exact CSV|pattern ID/i);
+      });
+
+      it("rejects pattern-ids 'all,B-1' (leading all)", () => {
+        const md = `<!-- generality-exemption: all,B-1 | HARNESS-42 | v0.5.0 | leading -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/all|exact CSV|pattern ID/i);
+      });
+
+      it("rejects pattern-ids 'B-1,all' (trailing all)", () => {
+        const md = `<!-- generality-exemption: B-1,all | HARNESS-42 | v0.5.0 | trailing -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/all|exact CSV|pattern ID/i);
+      });
+
+      it("rejects quoted 'all' in pattern-ids field (`'all'`)", () => {
+        const md = `<!-- generality-exemption: 'all' | HARNESS-42 | v0.5.0 | quoted -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/all|exact CSV|pattern ID/i);
+      });
+
+      it("does NOT false-positive when reason field mentions the word 'all' (preserved)", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-42 | v0.5.0 | rationale for 'all' exemptions -->`;
+        const parsed = parseExemption(md);
+        expect(parsed).not.toBeNull();
+        expect(parsed!.reason).toMatch(/all/);
+      });
+
+      it("does NOT false-positive when issue-key starts with 'ALL-' (e.g. ALL-42)", () => {
+        // ALL_KEYWORD_RE must not flag legitimate issue-key shapes that happen
+        // to begin with the letters A-L-L. Issue-key validation runs in its
+        // own field; the all-keyword check must stay scoped to the pattern-ids
+        // field so it cannot leak into issue-key adjudication.
+        const md = `<!-- generality-exemption: B-1 | ALL-42 | v0.5.0 | tracker prefix -->`;
+        // ALL-42 satisfies the issue-key regex and must NOT be rejected by
+        // the all-keyword guard.
+        expect(hasFileExemption(md, "B-1")).toBe(true);
+      });
     });
   });
 });
