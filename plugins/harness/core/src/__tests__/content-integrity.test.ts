@@ -2253,13 +2253,17 @@ describe("session-handoff skill (shipped plugin 汎用 handoff skill)", () => {
     expect(fm).toMatch(/^argument-hint:\s*"\[[\w-]+(?:\|[\w-]+)+\]"$/m);
   });
 
-  it("本体 550 行未満 (Anthropic 公式 SKILL.md focused 原則 — gen-13 教訓 expansion 対応)", () => {
+  it("本体 550 行未満 (Anthropic 公式 SKILL.md focused 原則 — spec v2 拡張対応)", () => {
     // 旧閾値 500 (簡素な v1 spec を前提) は v2 拡張 (3-gate check / Gate 4 Roadmap
     // Freshness / Post-Check Verification + anti-pattern #4 両立指針) に伴い 550
     // へ evolve。Anthropic 公式は "focused" 原則を示すのみで、line count は内部
-    // heuristic。530 行台で stable 化、500 line monolithic anti-pattern からは
-    // 依然として遠い。将来 references/<helper>.md 分離で再削減を検討する場合は
-    // 本閾値を再度 500 に戻すことを許容する (regression 防止 guard 機能維持)。
+    // heuristic。500 line monolithic anti-pattern からは依然として遠い。
+    //
+    // 閾値の運用ルール (monolithic anti-pattern 化防止):
+    //   - 将来 `references/<helper>.md` への detail 分離が完了したら、本閾値を
+    //     500 に戻すこと (削減方向のみ許容)。
+    //   - それ以外の目的での閾値再引き上げは **禁止**。spec が再拡張する場合は
+    //     先に supporting file 分離を行い、本閾値は維持する。
     const lines = readSkill().split("\n").length;
     expect(lines).toBeLessThan(550);
   });
@@ -2560,10 +2564,10 @@ describe("session-handoff skill — archive design-decision ask step", () => {
 
 
 // ============================================================
-// session-handoff skill — Required Sections × anti-pattern #4 両立 (gen-13 教訓)
-// gen-13 (2026-04-26 consumer-side) で maintainer が「Required Sections 4 つ
-// 以外排除」を strict 解釈し、確立 invariant の 1 行記述を全て archive に
-// 移送 → archive 必読化 = anti-pattern #4 違反。spec 自身に「strict 適用と
+// session-handoff skill — Required Sections × anti-pattern #4 両立 (spec v2 拡張再発防止)
+// 過去の consumer-side maintainer が「Required Sections 4 つ以外排除」constraint
+// を strict 解釈し、確立 invariant の 1 行記述を全て archive に移送 → archive
+// 必読化 = anti-pattern #4 違反となった事例があった。spec 自身に「strict 適用と
 // anti-pattern #4 の両立指針」が明記されていなかったため再発防止 spec として
 // 以下を強制する:
 //   1. Required Sections 直後に「anti-pattern #4 を犯さない」警告 + 5th

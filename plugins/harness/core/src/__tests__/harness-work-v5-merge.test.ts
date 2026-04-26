@@ -5,10 +5,9 @@
  * を CI 時点で固定する content test。
  *
  * 背景:
- *   gen-9 D-74 で v4 dispatcher が review/merge orchestration をスコープ外に
- *   していた spec gap が発覚。D-76 で v5 に bump し Step 2 モード判定に
- *   `merge` mode を追加、`/harness-merge-train` (D-75) への委譲経路を spec に
- *   明記する。
+ *   D-74 で v4 dispatcher が review/merge orchestration をスコープ外にしていた
+ *   spec gap が発覚。D-76 で v5 に bump し Step 2 モード判定に `merge` mode を
+ *   追加、`/harness-merge-train` (D-75) への委譲経路を spec に明記する。
  *
  * 期待 (高水準):
  *   1. frontmatter description / description-ja に v5 と merge mode の言及

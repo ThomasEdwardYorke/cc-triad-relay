@@ -1,4 +1,4 @@
-/* generality-exemption: B-1,B-2a,B-2b,B-2c,B-2d,B-2e,B-2f,B-3a,B-3b,B-3c,B-3d,B-3e,B-4a,B-4b,B-5,B-6,B-7,B-8,B-9,B-10 | HARNESS-generality-self | 2099-12-31 | detector harness itself must reference patterns it blocks (self-reference unavoidable, until v1.0 redesign) */
+/* generality-exemption: B-1,B-2a,B-2b,B-2c,B-2d,B-2e,B-2f,B-3a,B-3b,B-3c,B-3d,B-3e,B-3f,B-4a,B-4b,B-5,B-6,B-7,B-8,B-9,B-10 | HARNESS-generality-self | 2099-12-31 | detector harness itself must reference patterns it blocks (self-reference unavoidable, until v1.0 redesign) */
 /**
  * core/src/__tests__/generality.test.ts
  *
@@ -237,6 +237,22 @@ const BLOCK_PATTERNS: BlockPattern[] = [
       "括弧形式の内部 tracker ID (`(C-N)` / `(M-N)` / `(m-N)`) が含まれています。" +
       "公式に昇格した issue key (例: `HARNESS-42`) に置換するか、" +
       "CHANGELOG.md / docs/maintainer/tracker-migration.md に移管してください。",
+    appliesToTests: true,
+  },
+  {
+    // Pseudo CodeRabbit (cc-mimic, chill profile) outside-diff 指摘で追加。
+    // Session 世代 ID `gen-N` (`gen-13` / `gen-14` 等) は consumer-side handoff archive
+    // (`session-<YYYY-MM-DD>-genNN-*.md`) で使われる project-local 用語であり、shipped spec
+    // (plugins/harness/**) には混入禁止。`\bgen-\d+\b` の word boundary により `general-13`
+    // 等の一般語は誤検出しない (`gen` の後が `-` ではないため)。filename 内 `genN` (hyphen
+    // なし) も対象外。
+    id: "B-3f",
+    category: "tracker-id",
+    pattern: /\bgen-\d+\b/g,
+    message:
+      "内部 session 世代 ID (`gen-N`) が含まれています。consumer-side handoff の運用 ID で、" +
+      "shipped spec には残さないでください。CHANGELOG.md / docs/maintainer/session-notes/ / " +
+      "commit message に移管してください。",
     appliesToTests: true,
   },
 
