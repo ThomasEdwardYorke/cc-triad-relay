@@ -921,6 +921,11 @@ export function extractTestZones(content: string): TestZone[] {
     // before requiring `(`. The allowlist intentionally covers the
     // common test-runner forms so we do not silently extend coverage
     // to arbitrary chained property access.
+    //
+    // Codex Track-C confirm review follow-up: support `.each(cases)(
+    // "title", ...)` curried form. When the consumed modifier chain
+    // ended with `each`, the first `(...)` is the cases tuple — skip
+    // it and look for a SECOND `(` whose first arg is the title.
     if (
       (ch === "d" || ch === "i") &&
       isDescribeOrItKeyword(content, i)
@@ -928,11 +933,8 @@ export function extractTestZones(content: string): TestZone[] {
       // Advance past the keyword.
       const kwLen = content.startsWith("describe", i) ? 8 : 2;
       let j = i + kwLen;
-      // Allowlisted modifier chain: consume `.only` / `.skip` /
-      // `.concurrent` / `.each` / `.todo` (potentially repeated, e.g.
-      // `it.only.each(...)`). Each modifier must be followed by either
-      // another `.modifier`, an open paren `(`, or whitespace + `(`.
       const TEST_MODIFIERS = ["only", "skip", "concurrent", "each", "todo"];
+      let lastModifier: string | undefined;
       while (content[j] === "." && j + 1 < len) {
         const remaining = content.slice(j + 1);
         const matchedModifier = TEST_MODIFIERS.find((mod) =>
@@ -942,6 +944,7 @@ export function extractTestZones(content: string): TestZone[] {
           !/\w/.test(remaining[mod.length] ?? ""),
         );
         if (!matchedModifier) break;
+        lastModifier = matchedModifier;
         j += 1 + matchedModifier.length;
       }
       // Skip whitespace + open paren.
@@ -953,6 +956,49 @@ export function extractTestZones(content: string): TestZone[] {
         continue;
       }
       j += 1;
+
+      // For `.each(cases)(<title>, ...)` we need to skip the cases
+      // argument list and re-anchor on the second `(`. We do a depth-
+      // tracking paren walk that respects nested string literals so a
+      // cases array containing `[")"]` does not confuse the matcher.
+      if (lastModifier === "each") {
+        let depth = 1;
+        while (j < len && depth > 0) {
+          const c = content[j];
+          if (c === "\\") {
+            j += 2;
+            continue;
+          }
+          if (c === '"' || c === "'" || c === "`") {
+            const innerQuote = c;
+            j += 1;
+            while (j < len) {
+              if (content[j] === "\\") {
+                j += 2;
+                continue;
+              }
+              if (content[j] === innerQuote) {
+                j += 1;
+                break;
+              }
+              j += 1;
+            }
+            continue;
+          }
+          if (c === "(") depth += 1;
+          else if (c === ")") depth -= 1;
+          j += 1;
+        }
+        // After exiting the outer `)`, advance to the second `(`.
+        while (j < len && /\s/.test(content[j])) j += 1;
+        if (content[j] !== "(") {
+          // `.each(cases)` not followed by curried call — skip extraction.
+          i = j;
+          continue;
+        }
+        j += 1;
+      }
+
       while (j < len && /\s/.test(content[j])) j += 1;
       const titleQuote = content[j];
       if (titleQuote !== '"' && titleQuote !== "'" && titleQuote !== "`") {
@@ -1923,6 +1969,35 @@ describe("exemption grammar (unified, pipe-separated)", () => {
       expect(titles).toEqual(
         expect.arrayContaining(["concurrent title", "todo title"]),
       );
+    });
+
+    // Codex Track-C confirm review follow-up: `it.each(cases)("title", ...)`
+    // is a curried Vitest / Jest call shape — `.each` returns a function
+    // whose first arg is the title. The previous modifier handling only
+    // entered the title-extraction path when the first call had a string
+    // first arg, so parameterized test titles were silently skipped.
+    it("extractTestZones captures it.each(cases)(<title>, ...) curried call shape", () => {
+      const src =
+        'it.each([[1]])("each Round 4 case", (n) => {});\n' +
+        'describe.each(["a", "b"])("each describe variant %s", () => {});\n';
+      const zones = extractTestZones(src);
+      const titles = zones
+        .filter((z) => z.kind === "describe-title")
+        .map((z) => z.text);
+      expect(titles).toEqual(
+        expect.arrayContaining([
+          "each Round 4 case",
+          "each describe variant %s",
+        ]),
+      );
+    });
+
+    it("findHitsInTestZones flags a tracker-ID inside an it.each parameterised title (B-3b)", () => {
+      const src = 'it.each([[1, 2], [3, 4]])("Round 4 case %i", (a, b) => {});\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3b");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
+      expect(hits.length).toBeGreaterThan(0);
     });
 
     it("findHitsInTestZones detects a multi-line block-comment Round-N violation (B-3b)", () => {
