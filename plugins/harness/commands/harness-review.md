@@ -61,6 +61,29 @@ git diff HEAD~1 -- <changed_files>
 | **Quality** | 命名、単一責任、エラーハンドリング、スタブ禁止 |
 | **Compatibility** | 既存 public API / function signatures の後方互換性 (プロジェクト固有の互換性要件は CLAUDE.md / AGENTS.md を参照) |
 
+#### Project addendum (opt-in)
+
+`harness.config.json` の `review.projectChecklistPath` がプロジェクト相対パス
+として宣言されている場合、その markdown を **review runbook addendum** として
+読み込み、stack-neutral な 4 観点に上乗せする (例: project-local skill が
+提供する review-runbook.md / SKILL.md reference)。未設定なら addendum なしで
+generic runbook のみ動く。
+
+宣言例:
+
+```jsonc
+{
+  "review": {
+    "projectChecklistPath": ".claude/skills/<project>-local-rules/references/review-runbook.md"
+  }
+}
+```
+
+検証:
+- 絶対パス・`..` セグメント・空文字・制御文字は **load 時に reject** され
+  `undefined` にフォールバックされる (stderr に warning)
+- 不正値時は addendum なしで generic runbook のみ動く (fail-open)
+
 ### Step 3: レビュー結果出力
 
 ```markdown
