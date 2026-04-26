@@ -451,7 +451,7 @@ STOP_POLLING=false
 
 HEAD_SHA=$(gh pr view "$PR" --repo "$REPO" --json headRefOid --jq '.headRefOid')
 CR_STATUS=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/status" \
-  --jq '[.statuses[] | select(.context | test("CodeRabbit"; "i"))] | last')
+  --jq '[.statuses[] | select(.context | test("CodeRabbit"; "i"))] | first')
 CR_STATUS_STATE=$(echo "$CR_STATUS" | jq -r '.state // empty')
 CR_STATUS_DESC=$(echo "$CR_STATUS"  | jq -r '.description // empty')
 
