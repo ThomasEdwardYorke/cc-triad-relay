@@ -502,7 +502,8 @@ current.md Read のみで「即把握」 verify 不可 (Required 4 strict 適用
 
 - **[MEMORY.md pattern][anthropic-memory]**: concise index + topic files
 - **[SKILL.md pattern][anthropic-skills]**: overview + supporting files
-  (本 skill 自体も 500 行未満で記述)
+  (本 skill 自体は 550 行未満で記述、v2 拡張対応。`references/<helper>.md` への
+  detail 分離完了後は 500 行へ復帰予定)
 - **[context window 推奨][anthropic-context]**: 変動する情報と always-on を分離
 
 本 skill が追加する invariant:

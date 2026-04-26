@@ -240,15 +240,24 @@ const BLOCK_PATTERNS: BlockPattern[] = [
     appliesToTests: true,
   },
   {
-    // Pseudo CodeRabbit (cc-mimic, chill profile) outside-diff 指摘で追加。
-    // Session 世代 ID `gen-N` (`gen-13` / `gen-14` 等) は consumer-side handoff archive
-    // (`session-<YYYY-MM-DD>-genNN-*.md`) で使われる project-local 用語であり、shipped spec
-    // (plugins/harness/**) には混入禁止。`\bgen-\d+\b` の word boundary により `general-13`
-    // 等の一般語は誤検出しない (`gen` の後が `-` ではないため)。filename 内 `genN` (hyphen
-    // なし) も対象外。
+    // Pseudo CodeRabbit (cc-mimic, chill profile) outside-diff 指摘で追加 + Round 2
+    // 指摘で lookbehind 強化。Session 世代 ID `gen-N` は consumer-side handoff archive
+    // (`session-<YYYY-MM-DD>-genNN-*.md`) で使われる project-local 用語であり、shipped
+    // spec (plugins/harness/**) には混入禁止。
+    //
+    // Pattern 設計: `(?<![\w-])gen-\d+\b`
+    //   - `(?<![\w-])` lookbehind: 直前が word char または `-` ではない (= 単語境界 +
+    //     ハイフン区切りコンパウンド語境界)。これにより:
+    //       - `general-13` no match (`gen` 後が `-` でない)
+    //       - `9th-gen-13` no match (Round 2 fix、`gen` 直前が `-`)
+    //       - `next-gen-4` no match (同上)
+    //       - `gen-13` (単独/文頭/whitespace 後) match
+    //   - `\b` 末尾: `gen-13a` は `\d+` の `13` 後に word char `a` → no match
+    //     (`gen-1.3` は `gen-1` で stop、誤検出しない)
+    //   - filename 内 `genN` (hyphen なし) は元々対象外
     id: "B-3f",
     category: "tracker-id",
-    pattern: /\bgen-\d+\b/g,
+    pattern: /(?<![\w-])gen-\d+\b/g,
     message:
       "内部 session 世代 ID (`gen-N`) が含まれています。consumer-side handoff の運用 ID で、" +
       "shipped spec には残さないでください。CHANGELOG.md / docs/maintainer/session-notes/ / " +
