@@ -297,8 +297,13 @@ describe("coderabbit-mimic agent: .coderabbit.yaml strict pre-parse regression",
       // mimic agent から harness:codex-sync を Agent tool で呼ぶには、frontmatter
       // tools list に Agent を追加する必要がある。subagent → subagent spawn は
       // 公式仕様で Agent tool が tools list にあれば可能 (本 task の設計判断)。
+      // YAML 表記は inline array (`tools: [Read, Agent]`) と block list
+      // (`tools:\n  - Read\n  - Agent`) の双方を許容する (CodeRabbit review #43
+      // actionable: regex が inline 限定だと block list 採用時に false positive)。
       const fm = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
-      expect(fm).toMatch(/tools:\s*\[[^\]]*\bAgent\b/);
+      expect(fm).toMatch(
+        /tools:\s*(?:\[[^\]]*\bAgent\b|(?:\r?\n\s*-\s+[A-Za-z_][\w-]*)*\r?\n\s*-\s+Agent\b)/,
+      );
     });
 
     it("Step 3 が `harness:codex-sync` への Agent tool 呼出を示す", () => {
@@ -333,6 +338,30 @@ describe("coderabbit-mimic agent: .coderabbit.yaml strict pre-parse regression",
       // 継承することを明記。`OUTPUT_PATH` (codex-sync 返値) の文字列が言及
       // されていれば redirect 経路を消費している証拠になる。
       expect(step3Block).toMatch(/OUTPUT_PATH|OUTPUT_BYTES/);
+    });
+
+    it("Step 3 が `Read` tool で OUTPUT_PATH を ingest する手順を明示", () => {
+      // CodeRabbit review #43 actionable: presence of `OUTPUT_PATH` 文字列
+      // のみでは「caller が Read で消費する」責務が成立した証拠にならない。
+      // Read tool 呼出 (or 同義の cat / 読み込み) と OUTPUT_PATH (または
+      // `$RESULT` 等の output file 参照) の近接を要求し、ingest 経路を強制する。
+      // 本 mimic agent では trap で WORKDIR ごと cleanup されるため明示 rm は
+      // 不要だが、Read 経由の ingest は契約上必須 (file → context へ転写)。
+      expect(step3Block).toMatch(
+        /(?:`?Read`?\s*tool|Read\s*tool)[\s\S]{0,400}?(?:OUTPUT_PATH|\$RESULT|output[\s-]?file|読み込)|(?:OUTPUT_PATH|\$RESULT|output[\s-]?file)[\s\S]{0,400}?(?:`?Read`?\s*tool|Read\s*tool|読み込)/i,
+      );
+    });
+
+    it("Step 3 / Step 4 が EXIT_CODE non-zero 分岐 (retry / abort 委譲) を明示", () => {
+      // CodeRabbit review #43 actionable: EXIT_CODE 文字列が出ていることだけで
+      // 「失敗時 retry / abort を caller (= /pseudo-coderabbit-loop) に委譲する
+      // 経路」が確立している証拠にはならない。EXIT_CODE 検出 → 当該 branch で
+      // 「exit / 中断 / retry / 委譲 / fail-fast / 呼出元」のいずれかを示す
+      // narrative を要求する。これで「EXIT_CODE 行を検出するだけで何もしない」
+      // 退化を防止できる。
+      expect(content).toMatch(
+        /EXIT_CODE[\s\S]{0,400}?(?:exit\s*1|exit\s*2|retry|abort|中断|fail-fast|呼出元|委ね|委任|委譲|raise|stderr|skip|早期\s*終了|early\s*exit)/i,
+      );
     });
 
     it("Step 3 prompt body 末尾に marker を inject する手順を記述", () => {

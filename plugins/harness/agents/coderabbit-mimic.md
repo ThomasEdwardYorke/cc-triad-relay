@@ -115,12 +115,10 @@ reviewed file の **親ディレクトリから出発** し、`$REPO_ROOT` で**
 
 ```bash
 # Per-file resolution: $REVIEWED_FILE は $WORKDIR/files.txt の各行
-# (REPO_ROOT 相対 path)。下記は 1 file 分の構造を示す — 実装はこれを
-# files.txt の各 file についてループする。
+# (REPO_ROOT 相対 path)。下記は 1 file 分の構造を示し、実装は files.txt
+# の各 file についてループする。`cd` ではなく `dirname` で parent dir を
+# 求めてから上方向に .coderabbit.yaml を探索する (file は directory でない)。
 CODERABBIT_YAML=""
-# REVIEWED_FILE は repo-relative file path なので `cd` は使えない (file は
-# directory ではない)。`dirname` で直接 parent dir を求めて、そこから上方向に
-# .coderabbit.yaml を探索する。
 DIR="$(dirname "$REPO_ROOT/$REVIEWED_FILE")"
 while [ -n "$DIR" ]; do
   if [ -f "$DIR/.coderabbit.yaml" ]; then
@@ -335,10 +333,12 @@ placeholder のまま spawn すると codex-sync は marker を検出できず�
 契約が起動せずに inline mode に fall back する (= context overflow 復活)。
 
 ```text
-# concrete invocation (placeholder ではなく Read で取得した prompt.md 全文を投入する):
+# concrete invocation (placeholder ではなく Read で取得した prompt.md 全文を投入):
+# `name` は run-id suffix でユニーク化 (caller が `RUN_ID="$(date +%s)-$$"` 等で
+# 事前解決)。固定名だと同セッション内の並列起動で SendMessage resume が曖昧化。
 Agent({
   subagent_type: "harness:codex-sync",
-  name: "coderabbit-mimic-codex-sync",
+  name: "coderabbit-mimic-codex-sync-${RUN_ID}",
   description: "pseudo-CodeRabbit LLM review (output-file redirect)",
   prompt: "<verbatim contents of $WORKDIR/prompt.md, including the
            [output-file: $RESULT] marker that was appended above>",
@@ -385,15 +385,14 @@ stderr に `[codex] ...` 形式の行を出すほか、warnings / diagnostics �
 # 利用不能な場合は line filter (`[codex]` progress 行のみ除外) に degrade する。
 RESULT_CLEAN="$RESULT.clean"
 
-# 1 次: python3 で JSON-aware extraction (堅牢)。raw_decode を全 `{` 候補位置で
-# 試行し、最初に成功した JSON object を抽出する。前後の non-JSON テキスト
-# (progress 行 / warnings / stderr 全般) は全て無視できる。pre-JSON 診断行に
-# brace 断片 (例: `WARN: {x}`) が含まれていても、raw_decode が次の候補位置に
-# 進むので robust。
+# 1 次: python3 で JSON-aware extraction。raw_decode を全 `{` 候補位置で試行し、
+# `findings` キーを持つ dict のみを採用する (診断 JSON 断片や `{"event": "tick"}`
+# 等の別 object 取り違えを排除)。non-JSON テキスト (progress / warnings / stderr)
+# は無視できる。
 if command -v python3 >/dev/null 2>&1 && python3 -c '
 import json, sys
-# 全 `{` 候補位置を順に試行し、最初に成功した JSON object を採用する。
-# pre-JSON 診断行に brace 断片 (例: WARN: {x}) があっても次候補へ進むため robust。
+# 採用条件: raw_decode 成功 + dict + `findings` キー存在。
+# 不一致の候補は次の `{` 位置へ scanning 継続。
 try:
     raw = open(sys.argv[1], "r", encoding="utf-8", errors="replace").read()
     decoder = json.JSONDecoder()
@@ -403,7 +402,12 @@ try:
         if idx < 0: break
         try:
             obj, _end = decoder.raw_decode(raw[idx:])
-            extracted = obj; break
+            # required key (`findings`) を持つ dict のみ採用。
+            # 候補が dict でない / `findings` を欠く場合は次の `{` を探索。
+            if isinstance(obj, dict) and "findings" in obj:
+                extracted = obj
+                break
+            pos = idx + 1
         except json.JSONDecodeError:
             pos = idx + 1
     if extracted is None: sys.exit(2)

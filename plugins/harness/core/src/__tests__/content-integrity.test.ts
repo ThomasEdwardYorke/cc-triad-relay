@@ -4008,17 +4008,75 @@ describe("Track B-2: harness:codex-sync invocations include `name` argument", ()
     "harness-work",
   ] as const;
 
+  /**
+   * Extract all `Agent({...})` blocks that contain `subagent_type: "harness:codex-sync"`.
+   *
+   * 戻り値: 各 block の本文 (Agent 開き括弧 `{` から対応する閉じ括弧 `})` まで)。
+   *
+   * 単純な regex `/Agent\(\{[\s\S]*?\}\)/g` は最初の `})` で打ち切ってしまい、
+   * 入れ子があると壊れる。本実装は brace 深さを数えて最外閉じを特定する
+   * scanner で、document 全体から `Agent({` 開始位置を探し、`}` で閉じた
+   * 直後に `)` が続く場所を block 終端とみなす。文字列リテラル内の `{` `}`
+   * は無視する (codex-sync 呼出例の `name: "..."` 値に含まれ得るため)。
+   */
+  function extractCodexSyncBlocks(content: string): string[] {
+    const blocks: string[] = [];
+    const blockOpenRe = /Agent\(\s*\{/g;
+    let m: RegExpExecArray | null;
+    while ((m = blockOpenRe.exec(content)) !== null) {
+      // brace 深さ scan で対応する `})` を特定。
+      let depth = 1;
+      let i = m.index + m[0].length;
+      let inString: '"' | "'" | "`" | null = null;
+      let escape = false;
+      while (i < content.length && depth > 0) {
+        const ch = content[i]!;
+        if (escape) {
+          escape = false;
+        } else if (inString) {
+          if (ch === "\\") {
+            escape = true;
+          } else if (ch === inString) {
+            inString = null;
+          }
+        } else if (ch === '"' || ch === "'" || ch === "`") {
+          inString = ch as '"' | "'" | "`";
+        } else if (ch === "{") {
+          depth += 1;
+        } else if (ch === "}") {
+          depth -= 1;
+          if (depth === 0) {
+            // `}` を消費した直後の `)` を探す (whitespace を許容)。
+            let j = i + 1;
+            while (j < content.length && /\s/.test(content[j]!)) j += 1;
+            if (content[j] === ")") {
+              const block = content.slice(m.index, j + 1);
+              if (/subagent_type:\s*"harness:codex-sync"/.test(block)) {
+                blocks.push(block);
+              }
+            }
+            break;
+          }
+        }
+        i += 1;
+      }
+    }
+    return blocks;
+  }
+
   for (const cmd of targets) {
     it(`${cmd}.md は harness:codex-sync 呼出例に \`name\` argument を含む`, () => {
       const content = readCommand(cmd);
-      // pattern: Agent({ ..., subagent_type: "harness:codex-sync", ... name: "<some>" ... })
-      // Agent block 内に "harness:codex-sync" と name: が同時に登場することを要求。
-      // 実装上は 1 block 内で `name:` フィールドが書かれていれば pass。
-      // [\s\S] で改行含めた window を取り、subagent_type と name: が近接する
-      // よう 800 chars 以内で match させる。
-      expect(content).toMatch(
-        /(?:subagent_type:\s*"harness:codex-sync"[\s\S]{0,800}?\bname:\s*"[^"]+"|name:\s*"[^"]+"[\s\S]{0,800}?subagent_type:\s*"harness:codex-sync")/,
-      );
+      // CodeRabbit review #43 actionable: 旧実装は file 全域に対して
+      // `subagent_type` と `name:` の近接を見ていたため、別 Agent block の
+      // `name` で誤って pass する余地があった。`Agent({...})` block を
+      // brace-balanced scanner で抽出し、subagent_type:"harness:codex-sync"
+      // を含む block 内部にのみ `name:` 存在を要求する。
+      const codexSyncBlocks = extractCodexSyncBlocks(content);
+      expect(codexSyncBlocks.length).toBeGreaterThan(0);
+      for (const block of codexSyncBlocks) {
+        expect(block).toMatch(/\bname:\s*"[^"]+"/);
+      }
     });
 
     it(`${cmd}.md の codex-sync 呼出例の \`name\` 値が generic / placeholder 形式`, () => {
@@ -4026,12 +4084,15 @@ describe("Track B-2: harness:codex-sync invocations include `name` argument", ()
       // repo 名は NG。codex-sync の name 例は `codex-sync-<purpose>` のような
       // placeholder か `codex-track-x-worker` のような generic を使う。
       // 個別の project tracker / personal naming が混入していないことを確認。
+      // CodeRabbit review #43 actionable: codex-sync block に限定して inspect
+      // することで、別 Agent block の name 値に generic placeholder が紛れて
+      // いる場合に false negative を起こさないようにする。
       const content = readCommand(cmd);
-      // 全 Agent block 中の name: フィールドを抜き出して inspect。
-      // 簡易: name: "..." の値を全部取ってきて、leak pattern 検出。
-      const nameMatches = [
-        ...content.matchAll(/\bname:\s*"([^"]+)"/g),
-      ].map((m) => m[1]!);
+      const codexSyncBlocks = extractCodexSyncBlocks(content);
+      expect(codexSyncBlocks.length).toBeGreaterThan(0);
+      const nameMatches = codexSyncBlocks.flatMap((block) =>
+        [...block.matchAll(/\bname:\s*"([^"]+)"/g)].map((m) => m[1]!),
+      );
       // R3 leak pattern: project-specific branch / repo / API 名が値に混入
       // していないか negative assertion。pattern は generality blocklist と
       // 同型 (再構築して具体名を test source code に直書きしない)。

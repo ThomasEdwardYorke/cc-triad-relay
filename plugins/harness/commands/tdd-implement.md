@@ -114,10 +114,10 @@ Agent({
 })
 ```
 
-`name` argument を明示すると `SendMessage({ to: <name> })` で resume 可能になる
+`name` argument を明示すると `SendMessage({ to: agent_name })` で resume 可能になる
 (codex-sync.md "Handling Mid-Response Truncation" 参照)。長文 review が
 `TASK_MAX_OUTPUT_LENGTH` で truncate された場合の recovery 退避路として必須。
-parallel worktree 運用では `<name>` を per-worktree でユニーク化する
+parallel worktree 運用では `name` 値を per-worktree でユニーク化する
 (例: `codex-sync-track-a-review` / `codex-sync-track-b-review`)。
 
 直接 CLI 経由:

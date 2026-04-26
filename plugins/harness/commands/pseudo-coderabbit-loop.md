@@ -604,9 +604,15 @@ agent が `$WORKDIR/$RESULT` を自動管理する)。
 # 本 skill 側で外部 TMP_RESULT を作る必要はない。
 ```
 
-複数 PR を並列で本 skill から走らせる場合の coordinator 側上限
-(`--max-codex-parallel`) は引き続き本 skill が制御する (mimic agent 内部の
-context overflow 回避とは別レイヤー)。
+`--max-codex-parallel` フラグは **本 skill 内では no-op**
+(CodeRabbit review #43 nitpick clarification)。
+複数 PR を並列で走らせる際の Codex 並列度上限は **caller (coordinator)
+レイヤーで制御する** 責務であり、本 skill 内部の mimic agent 1 回呼出には
+影響しない。本フラグは coordinator (例: `/parallel-worktree` /
+`/harness-work --parallel`) が自身の dispatch ロジックで参照するための
+情報フラグであって、本 skill が pass-through で受け取って Codex に伝搬する
+ような実装は **意図的に持たない** (mimic agent 内部の context overflow 回避は
+本 skill 内 Step 3 の output-file redirect で別レイヤーとして処理される)。
 
 #### Step 2 補遺: Cache write hook (NEW)
 
