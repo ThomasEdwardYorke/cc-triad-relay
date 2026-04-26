@@ -410,13 +410,15 @@ interface ExemptionDeclaration {
 // Issue key: uppercase PREFIX, then hyphen, then alphanumeric / underscore / hyphen body.
 // Slug forms (e.g. HARNESS-generality-self) are allowed for self-reference cases.
 //
-// Track C-2 (5k) hardening: the suffix body is capped at 64 characters total
-// (1 leading [A-Za-z0-9_] + up to 63 more) so a malformed declaration cannot
-// embed a 200+ character credential-shaped string as the issue-key field.
+// Track C-2 (5k) hardening: cap BOTH prefix and suffix at 64 characters total
+// each (Codex review major-1 follow-up). Capping only the suffix lets an
+// attacker move a long credential-shaped payload before the hyphen — the
+// prefix `[A-Z][A-Z0-9_]*` would otherwise still accept arbitrary length.
 // 64 was chosen because realistic issue-key lengths sit well below it
 // (HARNESS-generality-self = 17 chars, PARTS-12 = 8 chars), giving ample
-// headroom while making credential-style obfuscation visible.
-const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]*-[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/;
+// headroom while making credential-style obfuscation visible on either
+// side of the hyphen.
+const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]{0,63}-[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/;
 const EXPIRY_SEMVER_RE = /^v\d+\.\d+\.\d+$/;
 // Track C-2 (5k) hardening: tighten ISO date numeric-domain so impossible
 // dates like 2026-13-32 (month 13, day 32) and 2026-04-00 (day zero) are
@@ -911,6 +913,14 @@ export function extractTestZones(content: string): TestZone[] {
     // string-literal argument only. We deliberately consume any
     // surrounding whitespace so multi-arg formatting (`describe (\n
     // "title", ...)`) still works.
+    //
+    // Codex Track-C review (major-2) follow-up: also support Vitest
+    // modifier chains (`it.only(...)`, `describe.skip(...)`,
+    // `it.each(...)`, `it.concurrent(...)`, `it.todo(...)`). After
+    // matching the keyword, consume an allowlisted modifier path
+    // before requiring `(`. The allowlist intentionally covers the
+    // common test-runner forms so we do not silently extend coverage
+    // to arbitrary chained property access.
     if (
       (ch === "d" || ch === "i") &&
       isDescribeOrItKeyword(content, i)
@@ -918,6 +928,22 @@ export function extractTestZones(content: string): TestZone[] {
       // Advance past the keyword.
       const kwLen = content.startsWith("describe", i) ? 8 : 2;
       let j = i + kwLen;
+      // Allowlisted modifier chain: consume `.only` / `.skip` /
+      // `.concurrent` / `.each` / `.todo` (potentially repeated, e.g.
+      // `it.only.each(...)`). Each modifier must be followed by either
+      // another `.modifier`, an open paren `(`, or whitespace + `(`.
+      const TEST_MODIFIERS = ["only", "skip", "concurrent", "each", "todo"];
+      while (content[j] === "." && j + 1 < len) {
+        const remaining = content.slice(j + 1);
+        const matchedModifier = TEST_MODIFIERS.find((mod) =>
+          remaining.startsWith(mod) &&
+          // Ensure the modifier ends at a non-word char (avoids
+          // partial-match like `.skipper`).
+          !/\w/.test(remaining[mod.length] ?? ""),
+        );
+        if (!matchedModifier) break;
+        j += 1 + matchedModifier.length;
+      }
       // Skip whitespace + open paren.
       while (j < len && /\s/.test(content[j])) j += 1;
       if (content[j] !== "(") {
@@ -1003,6 +1029,18 @@ interface ZoneHit {
  * (dotAll) semantics emulated via `\s\S` in the original patterns —
  * since `\s` matches newline, the block-comment text can be tested
  * verbatim.
+ *
+ * Codex Track-C review (minor-1) follow-up: also honour line-level
+ * `// generality-exemption: B-N | …` declarations on comment-line
+ * zones. The original line carrying the comment (reconstructed by
+ * prepending `//` since the zone strips comment markers) is fed to
+ * `hasLineExemption(line, patternId, content)` so both full-form and
+ * short-form (file-head inheritance) exemptions are recognised.
+ *
+ * Block-comment zones intentionally do NOT support line-level exemption
+ * comments inside the body — block-local exemption semantics would
+ * require per-line tokenisation that contradicts the multi-line catch
+ * goal. Use file-head exemption for block-comment intentional fixtures.
  */
 export function findHitsInTestZones(
   content: string,
@@ -1011,19 +1049,31 @@ export function findHitsInTestZones(
   // File-head exemption applies to the entire file.
   if (hasFileExemption(content, pattern.id)) return [];
   const zones = extractTestZones(content);
+  const lines = content.split(/\r?\n/);
   const hits: ZoneHit[] = [];
   for (const zone of zones) {
     // Re-instantiate the regex per zone so `lastIndex` from previous
     // zones / tests does not affect this match.
     const re = new RegExp(pattern.pattern.source, pattern.pattern.flags);
-    if (re.test(zone.text)) {
-      hits.push({
-        kind: zone.kind,
-        startLine: zone.startLine,
-        endLine: zone.endLine,
-        text: zone.text,
-      });
+    if (!re.test(zone.text)) continue;
+
+    // For comment-line zones we can map the zone back to its original
+    // line and consult `hasLineExemption`. describe-title and
+    // comment-block zones may span multiple physical lines and do not
+    // support line-level exemption (use file-head exemption instead).
+    if (zone.kind === "comment-line" && zone.startLine - 1 < lines.length) {
+      const originalLine = lines[zone.startLine - 1] ?? "";
+      if (hasLineExemption(originalLine, pattern.id, content)) {
+        continue;
+      }
     }
+
+    hits.push({
+      kind: zone.kind,
+      startLine: zone.startLine,
+      endLine: zone.endLine,
+      text: zone.text,
+    });
   }
   return hits;
 }
@@ -1628,6 +1678,29 @@ describe("exemption grammar (unified, pipe-separated)", () => {
         expect(() => hasFileExemption(md, "B-1")).toThrow(/issue[- ]?key/i);
       });
 
+      // Codex Track-C review (major-1) follow-up: the prefix `[A-Z][A-Z0-9_]*`
+      // had no upper bound, so an attacker could move a long uppercase /
+      // token-shaped payload BEFORE the hyphen and slip past the suffix
+      // cap. Lock down the prefix at the same 64-character ceiling.
+      it("rejects a 65-character prefix (just over the prefix cap)", () => {
+        const prefix = "X".repeat(65); // only ASCII uppercase / digits / underscore allowed
+        const md = `<!-- generality-exemption: B-1 | ${prefix}-42 | v0.5.0 | over prefix cap -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/issue[- ]?key/i);
+      });
+
+      it("rejects a 200-character credential-shaped prefix (worst-case obfuscation)", () => {
+        const credentialish = "Z".repeat(200);
+        const md = `<!-- generality-exemption: B-1 | ${credentialish}-9 | v0.5.0 | prefix abuse -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/issue[- ]?key/i);
+      });
+
+      it("accepts a 64-character prefix (boundary, prefix max)", () => {
+        // 1 leading [A-Z] + 63 more = 64 total
+        const prefix = "X".repeat(64);
+        const md = `<!-- generality-exemption: B-1 | ${prefix}-42 | v0.5.0 | within prefix cap -->`;
+        expect(hasFileExemption(md, "B-1")).toBe(true);
+      });
+
       it("still accepts pre-existing semantic-slug forms (HARNESS-generality-self)", () => {
         const md = `<!-- generality-exemption: B-1 | HARNESS-generality-self | 2099-12-31 | preserved -->`;
         expect(hasFileExemption(md, "B-1")).toBe(true);
@@ -1813,6 +1886,45 @@ describe("exemption grammar (unified, pipe-separated)", () => {
       expect(titles[0].text).toContain("backtick title");
     });
 
+    // Codex Track-C review (major-2) follow-up: Vitest modifier chains
+    // (`it.only(...)`, `describe.skip(...)`, `it.each(...)`) are real
+    // surfaces that may carry test titles. Without explicit support the
+    // C-3 zone scan would silently skip those titles even though they
+    // are visible to the test runner. Cover the canonical modifiers
+    // (`only`, `skip`, `concurrent`, `each`, `todo`).
+    it("extractTestZones captures it.only / it.skip / describe.only modifier chains", () => {
+      const src =
+        'it.only("only title", () => {});\n' +
+        'it.skip("skip title", () => {});\n' +
+        'describe.only("describe-only title", () => {});\n' +
+        'describe.skip("describe-skip title", () => {});\n';
+      const zones = extractTestZones(src);
+      const titles = zones
+        .filter((z) => z.kind === "describe-title")
+        .map((z) => z.text);
+      expect(titles).toEqual(
+        expect.arrayContaining([
+          "only title",
+          "skip title",
+          "describe-only title",
+          "describe-skip title",
+        ]),
+      );
+    });
+
+    it("extractTestZones captures it.concurrent / it.todo modifiers", () => {
+      const src =
+        'it.concurrent("concurrent title", () => {});\n' +
+        'it.todo("todo title");\n';
+      const zones = extractTestZones(src);
+      const titles = zones
+        .filter((z) => z.kind === "describe-title")
+        .map((z) => z.text);
+      expect(titles).toEqual(
+        expect.arrayContaining(["concurrent title", "todo title"]),
+      );
+    });
+
     it("findHitsInTestZones detects a multi-line block-comment Round-N violation (B-3b)", () => {
       // Pre-extension: a per-line scan would still catch `Round 4` on its
       // own line, but the extension hardens this for cases like multi-line
@@ -1850,6 +1962,30 @@ describe("exemption grammar (unified, pipe-separated)", () => {
       expect(pattern).toBeDefined();
       const hits = findHitsInTestZones(src, pattern!);
       // Exempt by file-head declaration → no hits.
+      expect(hits).toHaveLength(0);
+    });
+
+    // Codex Track-C review (minor-1) follow-up: per the helper's contract
+    // ("exemption-aware like findHits"), line-level `// generality-
+    // exemption: B-N | …` declarations on a comment-line zone must be
+    // honoured too. Otherwise, a legitimate fixture comment that opted
+    // out via the line-level form would still surface as a hit.
+    it("findHitsInTestZones honours line-level full-form exemption on comment-line zones", () => {
+      const src =
+        '// Round 4 review // generality-exemption: B-3b | HARNESS-42 | v0.5.0 | fixture exempt\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3b");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
+      expect(hits).toHaveLength(0);
+    });
+
+    it("findHitsInTestZones honours short-form line-level exemption when file-head covers patternId", () => {
+      const src =
+        '/* generality-exemption: B-3b | HARNESS-42 | v0.5.0 | head exempts B-3b */\n' +
+        '// Round 4 // generality-exemption: B-3b\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3b");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
       expect(hits).toHaveLength(0);
     });
 

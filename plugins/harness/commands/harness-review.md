@@ -84,6 +84,26 @@ generic runbook のみ動く。
   `undefined` にフォールバックされる (stderr に warning)
 - 不正値時は addendum なしで generic runbook のみ動く (fail-open)
 
+#### Reviewer agent invocation contract
+
+`harness:reviewer` agent を呼ぶ際の input JSON は `loadConfig()` 経由で
+取得した validation 通過済みの path を `projectChecklistPath` フィールドに
+**そのまま** 渡す:
+
+```jsonc
+{
+  "type": "code",
+  "target": "...",
+  "files": [...],
+  "context": "...",
+  "projectChecklistPath": ".claude/skills/<project>-local-rules/references/review-runbook.md"
+  // ↑ undefined のときはフィールドを省略 (含めない)
+}
+```
+
+reviewer agent 側は `agents/reviewer.md` の "Project addendum (opt-in)"
+セクションに従ってこのフィールドを最初のステップで Read する。
+
 ### Step 3: レビュー結果出力
 
 ```markdown

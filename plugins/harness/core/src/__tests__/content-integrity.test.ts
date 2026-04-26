@@ -4171,3 +4171,30 @@ describe("Track B-2: harness:codex-sync invocations include `name` argument", ()
     });
   }
 });
+
+// Track C-1 (5b) follow-up (Codex review major-3): the reviewer addendum
+// contract spans three files (config.ts → harness-review.md → reviewer.md).
+// Without a content-integrity check the next maintainer can flip one
+// without the other and the addendum silently goes dark.
+describe("review.projectChecklistPath addendum chain (Track C-1 / 5b)", () => {
+  it("commands/harness-review.md が reviewer agent invocation contract を spec 化している", () => {
+    const content = readCommand("harness-review");
+    // The command must document the JSON shape that injects the path
+    // into the reviewer subagent input.
+    expect(content).toMatch(/Reviewer agent invocation contract/i);
+    expect(content).toMatch(/projectChecklistPath/);
+    // The section must mention loadConfig as the path source so the
+    // command never bypasses validation by reading the JSON directly.
+    expect(content).toMatch(/loadConfig\(\)/);
+  });
+
+  it("agents/reviewer.md が projectChecklistPath を入力 schema に含み addendum の Read 手順を記述する", () => {
+    const content = readAgent("reviewer");
+    // Input schema must mention the field so callers know how to populate it.
+    expect(content).toMatch(/projectChecklistPath/);
+    // Read step must be explicit (the reviewer agent only has the Read
+    // tool; without a documented step it will skip the addendum).
+    expect(content).toMatch(/Project addendum \(opt-in\)/i);
+    expect(content).toMatch(/Read/);
+  });
+});

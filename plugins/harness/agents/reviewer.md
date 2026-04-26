@@ -26,9 +26,27 @@ maxTurns: 20
   "type": "code | plan | scope",
   "target": "レビュー対象の説明",
   "files": ["レビュー対象ファイル一覧"],
-  "context": "実装背景・要件"
+  "context": "実装背景・要件",
+  "projectChecklistPath": "review.projectChecklistPath が設定されている場合のみ含まれる project-relative path"
 }
 ```
+
+### Project addendum (opt-in)
+
+`projectChecklistPath` フィールドが入力に含まれている場合、reviewer は
+**最初のステップ** として `Read` でその markdown を読み込み、stack-neutral
+な 4 観点 (Security / Performance / Quality / AI-slap) に project-local
+addendum (例: project-local skill が提供する review-runbook.md) を上乗せ
+する。
+
+呼び出し元 (`/harness-review`) は `harness.config.json` の
+`review.projectChecklistPath` を `loadConfig()` 経由で読み、validation
+通過後の path だけをこのフィールドに渡す責務を負う:
+- 絶対パス・`..`・空文字・制御文字は load 時に reject されて undefined に
+  fallback されるため、reviewer agent はこのフィールドが string で来たら
+  それを安全に Read してよい
+- フィールド未指定 (undefined) の場合は addendum なしで generic runbook
+  のみで動く (fail-open)
 
 ---
 
