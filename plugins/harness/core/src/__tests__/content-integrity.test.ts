@@ -567,9 +567,14 @@ describe("bin/cr-cli — binary name regression guard (coderabbit, not cr)", () 
   });
 
   it("imports CR_BINARY from core to avoid binary name split source (1 SoT)", () => {
-    // core/src/cr-cli.ts の `export const CR_BINARY` を bin/cr-cli が import
-    // していること。bin と core で binary 名が drift しないための structural guard。
-    expect(binCrCli).toMatch(/(?:CR_BINARY)\s*[,}]/);
+    // core/src/cr-cli.ts の `export const CR_BINARY` を bin/cr-cli が **import 経由**
+    // で取得していること (CR review round 4 指摘: 一般的な CR_BINARY identifier の出現
+    // ではなく、import / destructure 形式での取得を assert)。bin と core で binary 名が
+    // drift しないための structural guard。
+    expect(binCrCli).toMatch(
+      // ES module destructuring assignment from cliModule (現行実装)
+      /(?:const|let|var)\s*\{\s*(?:[A-Za-z_$][\w$]*\s*,\s*)*CR_BINARY(?:\s*,\s*[A-Za-z_$][\w$]*)*\s*\}\s*=\s*cliModule\b/,
+    );
     // 起動時 sanity check: CR_BINARY が string で非空であることを bin が検証
     expect(binCrCli).toMatch(/typeof\s+CR_BINARY\s*!==\s*["']string["']/);
   });
