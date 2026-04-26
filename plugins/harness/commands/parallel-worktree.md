@@ -80,7 +80,7 @@ coordinator は並列開発着手前に以下を全て検証:
 
 - [ ] `git status` clean (coordinator worktree)
 - [ ] feature_branch が origin と同期
-- [ ] 各 sub_task の `owned_files` / `forbidden_files` が相互に衝突しないか
+- [ ] 各 sub_task の `owned_files` / `forbidden_files` が相互に衝突しないか (**`detectOverlap()` helper で静的検査**、下記参照)
 - [ ] `depends_on` チェーンに循環がないか
 - [ ] `merge_priority` でマージ順序を決定
 - [ ] 各 worktree dir が既存ディレクトリと衝突しないか
@@ -88,6 +88,58 @@ coordinator は並列開発着手前に以下を全て検証:
 - [ ] `.coderabbit.yaml` から profile 取得 (未設定なら `chill`)
 
 **全項目が通ってから Phase 1 へ。**
+
+### Owned files overlap 静的検査 (`detectOverlap()`)
+
+過去に 2 つの worktree が同 file を同時編集 → merge 順次で conflict 必至になった事象が
+発生した。Pre-flight で `owned_files` 宣言を **静的に** 比較し、severity に応じて
+並列度の判断材料を提示する helper を導入:
+
+- 実装: `core/src/work/worktree-overlap.ts` (pure function、glob expansion なしの static analyzer)
+- test: `core/src/__tests__/worktree-overlap.test.ts` (17 ケース、Red→Green TDD)
+- API: `detectOverlap(subTasks)` → `OverlapReport`
+
+#### Severity 分類
+
+| severity | 条件 | 推奨アクション |
+|---|---|---|
+| **high** | 同 literal pattern が両側に declare、かつ片側 ownedFiles の 50% 超 | `consolidate-into-single-pr` (1 PR に統合する判断材料) |
+| **medium** | 親子 glob 関係 (`backend/**` ⊃ `backend/api/*`) のみ、または 50% 丁度の exact match | `serialize` (`merge_priority` で順次化) |
+| **low** | forbiddenFiles cross-violation のみ (実 owned 重複なし) | `parallel-ok` (警告のみ、並列実行可) |
+
+#### Recommendation
+
+`OverlapReport.summary.recommendation` は以下のいずれか:
+
+- `parallel-ok` — 全 pair が low or 重複なし → 当初の sub_task 配分で並列 OK
+- `serialize` — 1+ pair が medium、high なし → `merge_priority` 設定 + 順次 merge で衝突回避
+- `consolidate-into-single-pr` — 1+ pair が high → そのペアは同 PR に統合 (or 直列化) して conflict を構造的に排除
+
+#### 使用例
+
+```typescript
+import { detectOverlap } from "@cc-triad-relay/core/work/worktree-overlap";
+
+const report = detectOverlap([
+  { slug: "fe-foundation", ownedFiles: ["frontend/**"] },
+  { slug: "be-foundation", ownedFiles: ["backend/**"] },
+  { slug: "shared-types",  ownedFiles: ["shared/types.ts"] },
+]);
+// report.summary.recommendation === "parallel-ok"
+```
+
+```typescript
+const report2 = detectOverlap([
+  { slug: "task-a", ownedFiles: ["commands/harness-merge-train.md"] },
+  { slug: "task-b", ownedFiles: ["commands/harness-merge-train.md"] },
+]);
+// report2.pairs[0].severity === "high"
+// report2.summary.recommendation === "consolidate-into-single-pr"
+//   → 当初 2 PR 計画を 1 PR に統合する判断材料として coordinator に提示
+```
+
+`detectOverlap()` は **declarative input のみを比較する** 設計。glob expansion や fs
+アクセスは行わず、宣言済 territorial boundary の整合性を検査する。
 
 ### WorktreeCreate hook との共存
 
