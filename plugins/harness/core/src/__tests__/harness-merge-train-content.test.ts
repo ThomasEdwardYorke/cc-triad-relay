@@ -7,15 +7,15 @@
  * 構造的不変条件を CI 時点で固定する content test。
  *
  * 背景:
- *   gen-9 D-74 で `/harness-work` v4 の review/merge orchestration spec gap が
- *   発覚 (5 PR squash merge を gh api 直叩きで代替 → 鉄則 7 G3/G4/G5/G7 違反)。
- *   D-75 で本 skill を新設、複数 PR を Phase chain (M0-M9) で順次 squash merge
- *   する skill 経路を必須化する。
+ *   prior review で `/harness-work` の review/merge orchestration spec gap が
+ *   認識された (multi-PR squash merge を gh api 直叩きで代替 → consumer rules
+ *   G3/G4/G5/G7 違反)。これに対して merge-routing 専用 skill を新設、複数 PR
+ *   を Phase chain (M0-M9) で順次 squash merge する skill 経路を必須化する。
  *
- * 本 test は spec doc が D-75 で定義された不変条件を満たすことを保証する。
+ * 本 test は spec doc が merge-routing 仕様の不変条件を満たすことを保証する。
  *
  * 対応する harness rule:
- *   - .claude/rules/implementation-workflow.md 鉄則 7 G3-G8 (skill connectivity)
+ *   - consumer-side implementation-workflow rule の skill connectivity (G3-G8)
  *   - CONTRIBUTING.md §1.2 (internal tracker IDs leak 防止 = R2)
  *   - generality.test.ts blocklist (R3)
  *
@@ -23,10 +23,11 @@
  *   1. frontmatter (name / description / description-ja / allowed-tools / argument-hint)
  *   2. Phase chain M0-M9 が全て存在 + 各 phase の責務が明文化
  *   3. 各 phase の **skill 委譲先** (G4 codex-sync / G5 pseudo-coderabbit-loop /
- *      G6 coderabbit-review / G7 codex-team / G8 session-handoff) が明示
+ *      G6 coderabbit-review / G7 codex-team / G8 session-handoff) が明示、
+ *      かつ Phase 見出し内に該当委譲先が同居 (false-positive 回避の 2 要件束ね)
  *   4. fail-fast 契約
  *   5. Skill connectivity 原則 (gh CLI 直叩き禁止) の明文化
- *   6. 鉄則 7 ledger 自動追記の言及
+ *   6. consumer-side discipline ledger 自動追記の言及
  *   7. R2 / R3 / R1 generic 例示値 (project-specific paths/IDs を使わない)
  *   8. spec doc は 1500 行以下 (skill discipline)
  */
@@ -135,26 +136,56 @@ describe("/harness-merge-train spec (commands/harness-merge-train.md)", () => {
   // -----------------------------------------------------------------
   // 3. Skill 委譲先 (G4-G8) の明示
   // -----------------------------------------------------------------
-  describe("各 phase の skill 委譲先が明示される (鉄則 7 G4-G8)", () => {
-    it("G4: harness:codex-sync agent への委譲が明示", () => {
-      expect(content).toMatch(/harness:codex-sync|codex-sync/);
+  describe("各 phase の skill 委譲先が明示される (consumer rules G4-G8、Phase + 委譲先の 2 要件束ね)", () => {
+    // 2 要件束ね: 単純な単語一致だけだと別 section に偶然出現で false-positive。
+    // 各 G ラベルが対応する Phase 見出し配下 section 内で **同居** することを要求。
+    // helper extractSection(content, idx) は file 末尾で定義、idx 始点から次の
+    // 同 level または上位 level 見出しまでを切り出す。
+
+    it("G4: M2 section に harness:codex-sync agent 委譲 + G4 ラベル同居", () => {
+      const m2Idx = content.search(/^#{2,4}\s*M2\b/m);
+      expect(m2Idx).toBeGreaterThanOrEqual(0);
+      const m2 = extractSection(content, m2Idx);
+      expect(m2).toMatch(/G4/i);
+      expect(m2).toMatch(/harness:codex-sync|codex-sync/);
     });
 
-    it("G5: /pseudo-coderabbit-loop --local の呼出が明示", () => {
-      expect(content).toMatch(/pseudo-coderabbit-loop[\s\S]{0,80}?--local/);
+    it("G5: M2 section に /pseudo-coderabbit-loop --local + G5 ラベル同居", () => {
+      const m2Idx = content.search(/^#{2,4}\s*M2\b/m);
+      expect(m2Idx).toBeGreaterThanOrEqual(0);
+      const m2 = extractSection(content, m2Idx);
+      expect(m2).toMatch(/G5/i);
+      expect(m2).toMatch(/pseudo-coderabbit-loop[\s\S]{0,80}?--local/);
     });
 
-    it("G6: /coderabbit-review への委譲が明示", () => {
-      expect(content).toMatch(/coderabbit-review/);
+    it("G6: M5 section に /coderabbit-review + G6 ラベル同居", () => {
+      const m5Idx = content.search(/^#{2,4}\s*M5\b/m);
+      expect(m5Idx).toBeGreaterThanOrEqual(0);
+      const m5 = extractSection(content, m5Idx);
+      expect(m5).toMatch(/G6/i);
+      expect(m5).toMatch(/coderabbit-review/);
     });
 
-    it("G7: /codex-team adversarial への委譲が明示", () => {
-      expect(content).toMatch(/codex-team[\s\S]{0,80}?adversarial/i);
+    it("G7: M6 section に /codex-team adversarial + G7 ラベル同居", () => {
+      const m6Idx = content.search(/^#{2,4}\s*M6\b/m);
+      expect(m6Idx).toBeGreaterThanOrEqual(0);
+      const m6 = extractSection(content, m6Idx);
+      expect(m6).toMatch(/G7/i);
+      expect(m6).toMatch(/codex-team[\s\S]{0,80}?adversarial/i);
     });
 
-    it("G8: /session-handoff (update / archive) への委譲が明示", () => {
-      expect(content).toMatch(/session-handoff[\s\S]{0,200}?(?:update|archive)/);
-      expect(content).toMatch(/session-handoff[\s\S]{0,400}?archive/);
+    it("G8: M9 section に /session-handoff (update|archive) + G8 ラベル同居", () => {
+      const m9Idx = content.search(/^#{2,4}\s*M9\b/m);
+      expect(m9Idx).toBeGreaterThanOrEqual(0);
+      const m9 = extractSection(content, m9Idx);
+      expect(m9).toMatch(/G8/i);
+      expect(m9).toMatch(/session-handoff[\s\S]{0,200}?(?:update|archive)/);
+    });
+
+    it("Loop exit: 全 PR 完了後の archive 委譲が明示 (G8 補強)", () => {
+      // M9 単発の handoff update に加えて、loop exit ritual で session 単位 archive
+      // が宣言されていること (D-77 不変条件 #2 補強)。
+      expect(content).toMatch(/Loop\s*exit[\s\S]{0,400}?session-handoff[\s\S]{0,80}?archive/i);
     });
   });
 
@@ -314,6 +345,9 @@ describe("/harness-merge-train spec (commands/harness-merge-train.md)", () => {
  * Markdown header 始点 idx から、次の `## ` / `### ` / `#### ` 見出しまでの section を抽出する。
  * Phase header の責務 section を厳密に切り出すため、後続の `## ` (level-2) を見たら
  * その時点で section 終端とする (Phase chain 全体を 1 ブロックで包んでいる場合に対応)。
+ *
+ * 重要: fenced code block (` ``` ... ``` `) 内側の `# bash comment` を markdown heading と
+ * 誤検知しないよう、code block 状態を tracking する。
  */
 function extractSection(content: string, startIdx: number): string {
   const lines = content.slice(startIdx).split(/\r?\n/);
@@ -322,10 +356,21 @@ function extractSection(content: string, startIdx: number): string {
   if (!headerMatch) return lines.join("\n");
   const startLevel = headerMatch[1]!.length;
   const out: string[] = [lines[0]!];
+  let inCodeBlock = false;
   for (let i = 1; i < lines.length; i++) {
-    const m = lines[i]!.match(/^(#{1,4})\s/);
-    if (m && m[1]!.length <= startLevel) break;
-    out.push(lines[i]!);
+    const line = lines[i]!;
+    // fenced code block の開始 / 終了 (``` で始まる行)
+    if (/^```/.test(line)) {
+      inCodeBlock = !inCodeBlock;
+      out.push(line);
+      continue;
+    }
+    // code block 外でのみ markdown heading 判定
+    if (!inCodeBlock) {
+      const m = line.match(/^(#{1,4})\s/);
+      if (m && m[1]!.length <= startLevel) break;
+    }
+    out.push(line);
   }
   return out.join("\n");
 }
