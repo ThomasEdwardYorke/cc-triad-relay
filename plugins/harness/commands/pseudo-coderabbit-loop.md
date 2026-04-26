@@ -605,7 +605,7 @@ agent が `$WORKDIR/$RESULT` を自動管理する)。
 ```
 
 `--max-codex-parallel` フラグは **本 skill 内では no-op**
-(CodeRabbit review #43 nitpick clarification)。
+(CodeRabbit review clarification)。
 複数 PR を並列で走らせる際の Codex 並列度上限は **caller (coordinator)
 レイヤーで制御する** 責務であり、本 skill 内部の mimic agent 1 回呼出には
 影響しない。本フラグは coordinator (例: `/parallel-worktree` /

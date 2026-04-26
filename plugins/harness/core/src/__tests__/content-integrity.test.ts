@@ -4067,7 +4067,7 @@ describe("Track B-2: harness:codex-sync invocations include `name` argument", ()
   for (const cmd of targets) {
     it(`${cmd}.md は harness:codex-sync 呼出例に \`name\` argument を含む`, () => {
       const content = readCommand(cmd);
-      // CodeRabbit review #43 actionable: 旧実装は file 全域に対して
+      // CodeRabbit review actionable: 旧実装は file 全域に対して
       // `subagent_type` と `name:` の近接を見ていたため、別 Agent block の
       // `name` で誤って pass する余地があった。`Agent({...})` block を
       // brace-balanced scanner で抽出し、subagent_type:"harness:codex-sync"
@@ -4084,7 +4084,7 @@ describe("Track B-2: harness:codex-sync invocations include `name` argument", ()
       // repo 名は NG。codex-sync の name 例は `codex-sync-<purpose>` のような
       // placeholder か `codex-track-x-worker` のような generic を使う。
       // 個別の project tracker / personal naming が混入していないことを確認。
-      // CodeRabbit review #43 actionable: codex-sync block に限定して inspect
+      // CodeRabbit review actionable: codex-sync block に限定して inspect
       // することで、別 Agent block の name 値に generic placeholder が紛れて
       // いる場合に false negative を起こさないようにする。
       const content = readCommand(cmd);

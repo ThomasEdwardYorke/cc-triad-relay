@@ -298,7 +298,7 @@ describe("coderabbit-mimic agent: .coderabbit.yaml strict pre-parse regression",
       // tools list に Agent を追加する必要がある。subagent → subagent spawn は
       // 公式仕様で Agent tool が tools list にあれば可能 (本 task の設計判断)。
       // YAML 表記は inline array (`tools: [Read, Agent]`) と block list
-      // (`tools:\n  - Read\n  - Agent`) の双方を許容する (CodeRabbit review #43
+      // (`tools:\n  - Read\n  - Agent`) の双方を許容する (CodeRabbit review
       // actionable: regex が inline 限定だと block list 採用時に false positive)。
       const fm = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
       expect(fm).toMatch(
@@ -341,7 +341,7 @@ describe("coderabbit-mimic agent: .coderabbit.yaml strict pre-parse regression",
     });
 
     it("Step 3 が `Read` tool で OUTPUT_PATH を ingest する手順を明示", () => {
-      // CodeRabbit review #43 actionable: presence of `OUTPUT_PATH` 文字列
+      // CodeRabbit review actionable: presence of `OUTPUT_PATH` 文字列
       // のみでは「caller が Read で消費する」責務が成立した証拠にならない。
       // Read tool 呼出 (or 同義の cat / 読み込み) と OUTPUT_PATH (または
       // `$RESULT` 等の output file 参照) の近接を要求し、ingest 経路を強制する。
@@ -353,7 +353,7 @@ describe("coderabbit-mimic agent: .coderabbit.yaml strict pre-parse regression",
     });
 
     it("Step 3 / Step 4 が EXIT_CODE non-zero 分岐 (retry / abort 委譲) を明示", () => {
-      // CodeRabbit review #43 actionable: EXIT_CODE 文字列が出ていることだけで
+      // CodeRabbit review actionable: EXIT_CODE 文字列が出ていることだけで
       // 「失敗時 retry / abort を caller (= /pseudo-coderabbit-loop) に委譲する
       // 経路」が確立している証拠にはならない。EXIT_CODE 検出 → 当該 branch で
       // 「exit / 中断 / retry / 委譲 / fail-fast / 呼出元」のいずれかを示す
