@@ -114,6 +114,21 @@ export interface QualityGatesConfig {
      * reminder only when they opt in.
      */
     enforceHarnessWorkEssence: boolean;
+    /**
+     * Project-relative path to a markdown file that records harness
+     * discipline violations (e.g. when `/harness-merge-train` detects a
+     * skill bypass and falls back to a manual workaround).
+     *
+     * When set, the ledger writer (`appendDisciplineEntry` in
+     * `core/src/work/ledger.ts`) appends a single Markdown table row per
+     * violation. When unset, the writer is a no-op so projects without an
+     * opt-in ledger never see surprise file writes.
+     *
+     * Validation: project-relative paths only — absolute paths and `..`
+     * segments are rejected by the writer so it cannot escape the project
+     * root.
+     */
+    disciplineLedgerPath?: string;
 }
 /**
  * Task tracker source identifier consumed by `/harness-work` and related

@@ -19,9 +19,12 @@ G8 (handoff sync) の各品質ゲートを **必ず** 内挿することで、�
 > workflow rule (例: `<consumer>/.claude/rules/implementation-workflow.md`) で
 > AND 判定 (TDD / Codex 並列 / Pseudo CR / Real CR / Codex Phase 7 / handoff)
 > が定義されている場合、本 skill はその違反検出時に consumer 側 ledger へ
-> append-only 追記する責務を持つ (consumer 側で ledger path を `harness.config.json`
-> の `qualityGates.disciplineLedgerPath` に宣言する想定)。手動 rebase /
-> 手動 squash merge / Codex Phase 7 skip は構造規律違反として記録対象。
+> append-only 追記する責務を持つ。consumer は `harness.config.json` の
+> `work.qualityGates.disciplineLedgerPath` (project-relative path) に ledger
+> file を宣言し、本 skill はその path に対し `core/src/work/ledger-cli.ts`
+> 経由で 1 行 markdown table row を atomic append する。path 未宣言の
+> project は no-op で素通り (opt-in)。手動 rebase / 手動 squash merge /
+> Codex Phase 7 skip は構造規律違反として記録対象。
 
 ---
 
@@ -403,20 +406,43 @@ archive ファイル名は `archive/session-<YYYY-MM-DD>-merge-train-<lead-pr>.m
 
 ## Discipline ledger 自動追記
 
-以下を検出した場合、本 skill は鉄則 7 ledger に append-only で違反 entry を
-追記する (隠蔽撲滅 + 透明性確保):
+以下を検出した場合、本 skill は consumer-side ledger に append-only で違反
+entry を追記する (隠蔽撲滅 + 透明性確保):
 
-| 検出条件 | ledger entry 例 |
-|---|---|
-| M2.1 で codex-sync agent spawn 失敗 → 手動 codex 直叩き fallback | "G4 違反: codex-sync agent unavailable, used manual codex exec" |
-| M2.2 で `/pseudo-coderabbit-loop` skill 失敗 → 直接 `coderabbit-mimic` agent fallback | "G5 部分違反: skill 経由失敗、agent 直接呼出 fallback" |
-| M5 で `/coderabbit-review` skill 失敗 → fail-fast (gh api 直叩き fallback **禁止**) | "G6 違反: skill 経由失敗、fail-fast (skill bypass 禁止)" |
-| M6 で `/codex-team` skill 失敗 → 手動 Codex 呼出 fallback | "G7 違反: skill 経由失敗、手動 codex 呼出 fallback" |
-| `--no-skill-fallback` flag が指定されたが skill 失敗 | "fail-fast (skill 必須経路で代替不能)" |
+| 検出条件 | skillId | impact 例 |
+|---|---|---|
+| M2.1 で codex-sync agent spawn 失敗 → 手動 codex 直叩き fallback | `G4` | `codex-sync agent unavailable, used manual codex exec` |
+| M2.2 で `/pseudo-coderabbit-loop` skill 失敗 → 直接 `coderabbit-mimic` agent fallback | `G5` | `pseudo CR skill failed, fell back to direct mimic agent` |
+| M5 で `/coderabbit-review` skill 失敗 → fail-fast (gh api 直叩き fallback **禁止**) | `G6` | `coderabbit-review skill failed, fail-fast` |
+| M6 で `/codex-team` skill 失敗 → 手動 Codex 呼出 fallback | `G7` | `codex-team skill failed, manual codex exec fallback` |
+| `--no-skill-fallback` flag が指定されたが skill 失敗 | `M*` | `skill required, no fallback permitted` |
 
-ledger format は `.claude/rules/implementation-workflow.md` の鉄則 7 違反 ledger
-section を参照 (project-local rule、harness plugin core からは `<consumer>` 表記
-で参照する。pattern: `consumer-side rules path` というインターフェース契約)。
+### 実装契約
+
+- **設定**: consumer は `harness.config.json` の
+  `work.qualityGates.disciplineLedgerPath` に project-relative path を
+  宣言する (例: `.harness/discipline-ledger.md`)。未宣言なら本機能は no-op
+  (opt-in)。
+- **書込口**: 本 skill は `node` (or `tsx`) 経由で
+  `core/dist/work/ledger-cli.js append` を呼ぶ。直接 `fs.appendFileSync` を
+  shell から叩かない (path validation / markdown escape を CLI に集中)。
+- **CLI invocation 例** (M5 で `/coderabbit-review` skill が失敗した想定):
+  ```bash
+  node "${CC_TRIAD_RELAY_ROOT}/plugins/harness/core/dist/work/ledger-cli.js" \
+    append \
+    --session "${SESSION_SLUG}" \
+    --skill G6 \
+    --impact "coderabbit-review skill failed at M5, polling fallback rejected" \
+    --remediation "investigate skill error, retry after fix"
+  ```
+- **exit code 規約**: `0` = appended **or** no-op-no-config (どちらも
+  正常)、`1` = validation error (絶対 path / parent traversal)、`2` =
+  usage error (argv 不足)。skill は exit code を見て fail-fast の
+  trigger 判断には使わず、**もとの violation を fail-fast** する。
+- **ledger format** は consumer-side `.claude/rules/implementation-workflow.md`
+  の鉄則 7 違反 ledger section と同じ markdown table 形式
+  (`| Date | Session | Skill | Impact | Remediation |`)。`appendDisciplineEntry`
+  が pipe / newline を escape し、O_APPEND atomic で書く。
 
 ---
 
