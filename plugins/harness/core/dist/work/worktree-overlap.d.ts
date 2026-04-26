@@ -6,8 +6,32 @@
  * editing-territory overlap that would cause merge conflicts during parallel
  * execution.
  *
+ * Pattern language (restricted, NOT full glob):
+ *
+ *   - Literal POSIX paths: 'src/api/foo.ts', 'backend/models.py'.
+ *   - Territory patterns:  'backend/' followed by double-star (covers all
+ *     paths under backend/). The double-star MUST be the trailing segment.
+ *   - NOT supported: single-star wildcards ('src/' star '.ts',
+ *     star '.test.ts'), suffix-bearing double-star
+ *     ('src/' double-star '/test.ts'), character classes,
+ *     question-mark placeholders, Windows backslashes, leading './',
+ *     double slashes, trailing whitespace.
+ *
+ * (literal asterisks in pattern examples are spelled out as 'star' /
+ * 'double-star' inside this JSDoc to avoid prematurely terminating the
+ * comment block.)
+ *
+ * Unsupported patterns are **rejected at input validation time** (`detectOverlap`
+ * throws). This is a deliberate API contract: full glob semantics would require
+ * a glob library and runtime fs comparison, which contradicts the declarative
+ * Pre-flight phase design (worktrees are not yet populated). Authors who need
+ * fine-grained file selection should declare literal paths; authors who need
+ * broad territory coverage should use a trailing double-star territory
+ * pattern. Anything in between (e.g., "all files matching star-dot-test-dot-ts")
+ * is out of scope for this analyzer.
+ *
  * The analyzer is intentionally **purely declarative** — it does not expand
- * glob patterns against the working tree, because:
+ * patterns against the working tree, because:
  *   1. The check runs Pre-flight (before worktrees are populated), so the file
  *      tree is not yet committed in either worktree.
  *   2. The intent is to surface the **declared** territorial boundaries the

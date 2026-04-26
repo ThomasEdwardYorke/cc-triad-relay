@@ -100,44 +100,147 @@ describe("detectOverlap — direct owned overlap", () => {
   });
 });
 
-describe("detectOverlap — parent/child glob relationship", () => {
-  it("親 (`backend/**`) と子 (`backend/api/*`) は medium 判定 (heuristic)", () => {
+describe("detectOverlap — parent/child territory pattern relationship", () => {
+  it("親 (`backend/**`) と literal 子 (`backend/api/foo.ts`) は medium 判定", () => {
     const r = detectOverlap([
       { slug: "task-a", ownedFiles: ["backend/**"] },
-      { slug: "task-b", ownedFiles: ["backend/api/*"] },
+      { slug: "task-b", ownedFiles: ["backend/api/foo.ts"] },
     ]);
     expect(r.pairs.length).toBe(1);
     expect(r.pairs[0]!.severity).toBe("medium");
     expect(r.summary.recommendation).toBe("serialize");
   });
 
-  it("親子関係 (任意方向) を検出 (`backend/api/*` と `backend/**` でも同じ)", () => {
+  it("親子関係 (任意方向) を検出 (literal 子と territory 親でも同じ)", () => {
     const r = detectOverlap([
-      { slug: "task-a", ownedFiles: ["backend/api/*"] },
+      { slug: "task-a", ownedFiles: ["backend/api/foo.ts"] },
       { slug: "task-b", ownedFiles: ["backend/**"] },
     ]);
     expect(r.pairs.length).toBe(1);
     expect(r.pairs[0]!.severity).toBe("medium");
   });
 
-  it("非親子関係 (`backend/api/*` と `backend/db/*`) は overlap なし", () => {
+  it("territory 親同士で非親子関係 (`backend/api/**` と `backend/db/**`) は overlap なし", () => {
     const r = detectOverlap([
-      { slug: "task-a", ownedFiles: ["backend/api/*"] },
-      { slug: "task-b", ownedFiles: ["backend/db/*"] },
+      { slug: "task-a", ownedFiles: ["backend/api/**"] },
+      { slug: "task-b", ownedFiles: ["backend/db/**"] },
     ]);
     expect(r.pairs).toEqual([]);
     expect(r.summary.recommendation).toBe("parallel-ok");
   });
 });
 
+describe("detectOverlap — input validation (Option A: pattern language contract)", () => {
+  it("空 pattern を reject", () => {
+    expect(() =>
+      detectOverlap([{ slug: "a", ownedFiles: [""] }]),
+    ).toThrow(/empty|non-string/i);
+  });
+
+  it("単一星 wildcard `src/*.ts` を reject (false negative 防止)", () => {
+    expect(() =>
+      detectOverlap([{ slug: "a", ownedFiles: ["src/*.ts"] }]),
+    ).toThrow(/unsupported.*wildcard|wildcard.*unsupported/i);
+  });
+
+  it("単一星 wildcard `*.test.ts` を reject", () => {
+    expect(() =>
+      detectOverlap([{ slug: "a", ownedFiles: ["*.test.ts"] }]),
+    ).toThrow(/unsupported.*wildcard/i);
+  });
+
+  it("`dir/*` (1-level wildcard) を reject", () => {
+    expect(() =>
+      detectOverlap([{ slug: "a", ownedFiles: ["backend/api/*"] }]),
+    ).toThrow(/unsupported.*wildcard/i);
+  });
+
+  it("suffix-bearing `**` (`src/**/test.ts`) を reject (false positive 防止)", () => {
+    expect(() =>
+      detectOverlap([{ slug: "a", ownedFiles: ["src/**/test.ts"] }]),
+    ).toThrow(/unsupported.*wildcard/i);
+  });
+
+  it("先頭 `**/foo.ts` を reject", () => {
+    expect(() =>
+      detectOverlap([{ slug: "a", ownedFiles: ["**/foo.ts"] }]),
+    ).toThrow(/unsupported.*wildcard/i);
+  });
+
+  it("`?` placeholder を reject", () => {
+    expect(() =>
+      detectOverlap([{ slug: "a", ownedFiles: ["src/foo?.ts"] }]),
+    ).toThrow(/\?/);
+  });
+
+  it("character class `[abc]` を reject", () => {
+    expect(() =>
+      detectOverlap([{ slug: "a", ownedFiles: ["src/[abc].ts"] }]),
+    ).toThrow(/character class|\[/);
+  });
+
+  it("Windows backslash を reject", () => {
+    expect(() =>
+      detectOverlap([{ slug: "a", ownedFiles: ["src\\foo.ts"] }]),
+    ).toThrow(/backslash|forward slash/i);
+  });
+
+  it("先頭 `./` を reject", () => {
+    expect(() =>
+      detectOverlap([{ slug: "a", ownedFiles: ["./src/foo.ts"] }]),
+    ).toThrow(/\.\/|leading/i);
+  });
+
+  it("連続 `//` を reject", () => {
+    expect(() =>
+      detectOverlap([{ slug: "a", ownedFiles: ["src//foo.ts"] }]),
+    ).toThrow(/consecutive|\/\//);
+  });
+
+  it("trailing whitespace を reject", () => {
+    expect(() =>
+      detectOverlap([{ slug: "a", ownedFiles: ["src/foo.ts "] }]),
+    ).toThrow(/whitespace|trim/i);
+  });
+
+  it("forbiddenFiles も同じ validation を受ける", () => {
+    expect(() =>
+      detectOverlap([
+        { slug: "a", ownedFiles: ["a.ts"], forbiddenFiles: ["src/*.ts"] },
+      ]),
+    ).toThrow(/forbiddenFiles/);
+  });
+
+  it("正当 pattern (literal + dir/**) は accept", () => {
+    expect(() =>
+      detectOverlap([
+        { slug: "a", ownedFiles: ["src/api/foo.ts", "backend/**"] },
+        { slug: "b", ownedFiles: ["frontend/**"] },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("`dir/**/` (trailing slash) も accept", () => {
+    expect(() =>
+      detectOverlap([{ slug: "a", ownedFiles: ["src/**/"] }]),
+    ).not.toThrow();
+  });
+
+  it("trailing 単独 `**` (root territory) も accept", () => {
+    expect(() =>
+      detectOverlap([{ slug: "a", ownedFiles: ["**"] }]),
+    ).not.toThrow();
+  });
+});
+
 describe("detectOverlap — forbidden cross-violation", () => {
   it("A.owned が B.forbidden に含まれる: forbiddenViolations に記録 + low severity", () => {
     const r = detectOverlap([
-      { slug: "task-a", ownedFiles: ["backend/api/*"] },
+      { slug: "task-a", ownedFiles: ["backend/api/**"] },
       {
         slug: "task-b",
-        ownedFiles: ["backend/db/*"],
-        forbiddenFiles: ["backend/api/*"],
+        ownedFiles: ["backend/db/**"],
+        forbiddenFiles: ["backend/api/**"],
       },
     ]);
     expect(r.pairs.length).toBe(1);
@@ -145,7 +248,7 @@ describe("detectOverlap — forbidden cross-violation", () => {
     expect(r.pairs[0]!.forbiddenViolations[0]).toMatchObject({
       from: "task-a",
       to: "task-b",
-      pattern: "backend/api/*",
+      pattern: "backend/api/**",
     });
     expect(r.pairs[0]!.severity).toBe("low");
   });

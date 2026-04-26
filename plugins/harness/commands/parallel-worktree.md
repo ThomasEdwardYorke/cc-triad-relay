@@ -96,8 +96,29 @@ coordinator は並列開発着手前に以下を全て検証:
 並列度の判断材料を提示する helper を導入:
 
 - 実装: `core/src/work/worktree-overlap.ts` (pure function、glob expansion なしの static analyzer)
-- test: `core/src/__tests__/worktree-overlap.test.ts` (17 ケース、Red→Green TDD)
+- test: `core/src/__tests__/worktree-overlap.test.ts` (36 ケース、Red→Green TDD)
 - API: `detectOverlap(subTasks)` → `OverlapReport`
+
+#### Pattern language (restricted)
+
+`detectOverlap()` は full glob を扱わず、以下の **restricted pattern language** のみ受理する。Unsupported pattern は `validatePattern()` で input 時に **throw** で reject される (false negative / false positive 防止)。
+
+| 形式 | 例 | 扱い |
+|---|---|---|
+| Literal POSIX path | `src/api/foo.ts`、`backend/models.py` | ✅ accept |
+| Trailing 領域 pattern | `backend/**`、`frontend/**/`、`**` | ✅ accept (territory: 末尾の double-star のみ valid) |
+| 単独星 wildcard | `src/*.ts`、`*.test.ts`、`backend/api/*` | ❌ reject |
+| Suffix-bearing 領域 | `src/**/test.ts`、`**/foo.ts`、`dir/**/file.ts` | ❌ reject (false positive 防止) |
+| Character class | `[abc].ts` | ❌ reject |
+| `?` placeholder | `src/foo?.ts` | ❌ reject |
+| Windows backslash | `src\\foo.ts` | ❌ reject |
+| Leading `./` | `./src/foo.ts` | ❌ reject |
+| 連続 `//` | `src//foo.ts` | ❌ reject |
+| Trailing whitespace | `src/foo.ts ` | ❌ reject |
+
+**設計判断**: full glob semantics は glob library + runtime fs 比較が必要だが、Pre-flight phase は worktree 未populated のため fs 比較不可。Author は (a) literal path で fine-grained 宣言、(b) trailing `dir/**` で broad territory 宣言の **2 択** に絞る。中間の `*.test.ts` 系は本 analyzer の対象外として明示的に reject。
+
+
 
 #### Severity 分類
 
