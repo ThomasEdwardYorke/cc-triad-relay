@@ -18,10 +18,21 @@
  *   Projects without a path see no file writes.
  *
  * Atomicity:
- * - Each append is a single `fs.appendFileSync` call. POSIX `O_APPEND`
- *   guarantees that writes < `PIPE_BUF` (4096 B on macOS / Linux) are
- *   atomic across concurrent processes — entries are short single-row
- *   markdown rows so the bound holds easily.
+ * - Each append is a single `fs.appendFileSync` call. The kernel
+ *   `write(2)` syscall under `O_APPEND` is POSIX-atomic for payloads
+ *   below `PIPE_BUF` (4096 B on macOS / Linux); entries are short
+ *   single-row markdown rows so the bound holds easily. That is the
+ *   guarantee on which **cross-process** safety rests — the writer is
+ *   safe even when several Node.js processes append to the same
+ *   ledger concurrently, as long as the underlying filesystem honours
+ *   the POSIX guarantee (local disks do; network filesystems may not).
+ * - **Within a single Node.js process** the synchronous fs API is
+ *   serialised by the event loop, so interleaving cannot occur there
+ *   either. The in-process 50-parallel test in `ledger.test.ts`
+ *   verifies that serialisation; it does not (and cannot, with
+ *   `appendFileSync`) re-prove the cross-process invariant. Replicate
+ *   that path with `child_process.fork` if a regression suite ever
+ *   needs to assert it directly.
  * - Initial creation uses `writeFileSync` with `flag: "wx"` so two
  *   racing creators cannot both write the header. The loser falls back
  *   to a regular append after the file appears.

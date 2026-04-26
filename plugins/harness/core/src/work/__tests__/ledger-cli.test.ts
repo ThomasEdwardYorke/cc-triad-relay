@@ -129,6 +129,83 @@ describe("runLedgerCli", () => {
     });
   });
 
+  describe("flag forms", () => {
+    it("accepts the `--key=value` form on every flag", () => {
+      tmpRoot = mkProject(".harness/ledger.md");
+      const io = captureIo();
+      const code = runLedgerCli(
+        [
+          "append",
+          "--session=harness/test",
+          "--skill=G2",
+          "--impact=eq form smoke",
+          "--remediation=verify",
+          "--date=2026-04-26",
+        ],
+        { cwd: tmpRoot, stdout: io.out, stderr: io.err },
+      );
+      expect(code).toBe(0);
+      const content = readFileSync(
+        join(tmpRoot, ".harness/ledger.md"),
+        "utf-8",
+      );
+      expect(content).toContain(
+        "| 2026-04-26 | harness/test | G2 |",
+      );
+    });
+
+    it("treats `--key=` (empty RHS) as a missing value (exit 2)", () => {
+      tmpRoot = mkProject(".harness/ledger.md");
+      const io = captureIo();
+      const code = runLedgerCli(
+        [
+          "append",
+          "--session=",
+          "--skill=G2",
+          "--impact=x",
+          "--remediation=y",
+        ],
+        { cwd: tmpRoot, stdout: io.out, stderr: io.err },
+      );
+      expect(code).toBe(2);
+      expect(io.stderr.join("\n")).toMatch(/--session/);
+    });
+
+    it("rejects unknown `--key=value` flag the same way as space form", () => {
+      tmpRoot = mkProject(".harness/ledger.md");
+      const io = captureIo();
+      const code = runLedgerCli(
+        ["append", "--bogus=hi"],
+        { cwd: tmpRoot, stdout: io.out, stderr: io.err },
+      );
+      expect(code).toBe(2);
+      expect(io.stderr.join("\n")).toMatch(/unknown flag --bogus/);
+    });
+
+    it("accepts a mix of `--key value` and `--key=value` in one invocation", () => {
+      tmpRoot = mkProject(".harness/ledger.md");
+      const io = captureIo();
+      const code = runLedgerCli(
+        [
+          "append",
+          "--session=mixed",
+          "--skill",
+          "G7",
+          "--impact=mixed-form smoke",
+          "--remediation",
+          "verify",
+        ],
+        { cwd: tmpRoot, stdout: io.out, stderr: io.err },
+      );
+      expect(code).toBe(0);
+      const content = readFileSync(
+        join(tmpRoot, ".harness/ledger.md"),
+        "utf-8",
+      );
+      expect(content).toContain("| mixed | G7 | mixed-form smoke |");
+    });
+  });
+
   describe("happy path", () => {
     it("writes a row + prints absolute ledger path on success (exit 0)", () => {
       tmpRoot = mkProject(".harness/ledger.md");

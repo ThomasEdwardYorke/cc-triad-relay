@@ -97,7 +97,29 @@ export function runLedgerCli(
       opts.stderr(USAGE);
       return 2;
     }
-    const key = arg.slice(2);
+    const body = arg.slice(2);
+
+    // GNU-style `--key=value` short-circuits the next-arg lookup so
+    // shell scripts that quote the entire token (`"--session=$slug"`)
+    // and downstream callers using either form both work.
+    const eqIdx = body.indexOf("=");
+    if (eqIdx !== -1) {
+      const inlineKey = body.slice(0, eqIdx);
+      const inlineValue = body.slice(eqIdx + 1);
+      if (!KNOWN_APPEND_FLAGS.has(inlineKey)) {
+        opts.stderr(`unknown flag --${inlineKey}`);
+        opts.stderr(USAGE);
+        return 2;
+      }
+      if (inlineValue === "") {
+        opts.stderr(`flag --${inlineKey} is missing its value`);
+        return 2;
+      }
+      flags[inlineKey] = inlineValue;
+      continue;
+    }
+
+    const key = body;
     if (!KNOWN_APPEND_FLAGS.has(key)) {
       opts.stderr(`unknown flag --${key}`);
       opts.stderr(USAGE);

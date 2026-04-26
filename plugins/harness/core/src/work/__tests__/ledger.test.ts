@@ -6,12 +6,17 @@
  * a project-relative ledger file declared via
  * `harness.config.json` → `work.qualityGates.disciplineLedgerPath`.
  *
- * Writes are atomic at the OS level: a single `fs.appendFileSync` call
- * goes through `O_APPEND` so concurrent processes appending entries
- * smaller than `PIPE_BUF` (≥ 4096 B on Linux/macOS) cannot interleave
- * partial bytes. Path validation rejects absolute paths and any segment
- * that escapes the project root so the writer cannot leave the
- * sandbox.
+ * Cross-process atomicity is a POSIX `write(2)` / `O_APPEND` invariant
+ * for payloads under `PIPE_BUF` (≥ 4096 B on Linux/macOS). The
+ * 50-parallel race test below uses `Promise.all` over the synchronous
+ * `fs.appendFileSync` API, which is serialised by Node.js's event loop
+ * — that proves entries do not interleave **within the same process**
+ * (the harness's intended workload). Asserting the actual cross-process
+ * invariant would require `child_process.fork` and is out of scope for
+ * this unit test; see `ledger.ts` for the architectural rationale.
+ *
+ * Path validation rejects absolute paths and any segment that escapes
+ * the project root so the writer cannot leave the sandbox.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
