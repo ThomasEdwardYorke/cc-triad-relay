@@ -487,14 +487,26 @@ describe("harness-work command の profile 読取り fallback", () => {
   });
 });
 
-describe("coderabbit-mimic agent の STDERR_LOG cleanup / 参照", () => {
+describe("coderabbit-mimic agent の merged stdout+stderr lifecycle (Track B-1 後継)", () => {
+  // Track B-1 (codex-sync 経由 refactor) で codex-sync.md D-49 redirect 契約が
+  // stdout + stderr をマージして $RESULT に書く方式に変わった。よって legacy
+  // `STDERR_LOG` 単独 file は廃止され、新ライフサイクル (mergedしたうえで
+  // [codex] progress 行を grep -v で除外、cleanup は WORKDIR trap に集約) が
+  // 文書化されている必要がある。
   const content = readAgent("coderabbit-mimic");
 
-  it("STDERR_LOG の参照方法または cleanup が明記されている", () => {
-    // 分離した stderr ログが parse 失敗時のデバッグに使われる or 成功時に削除される
-    // ことを示す記述 (rm / tail / 参照方法 / cleanup) が存在すること。
-    const hasLifecycle = /STDERR_LOG[\s\S]{0,600}?(rm\s|tail\s|cleanup|削除|参照)/i;
-    expect(content).toMatch(hasLifecycle);
+  it("merged result file の cleanup が WORKDIR trap で吸収される旨を明記", () => {
+    // legacy: 個別 STDERR_LOG を `rm` で削除。
+    // 新: trap 'rm -rf "$WORKDIR"' EXIT が `$RESULT` / `$RESULT.clean` を含む
+    // tree ごと自動 cleanup する。
+    expect(content).toMatch(/trap[\s\S]{0,300}?WORKDIR/);
+    expect(content).toMatch(/(?:RESULT[\s\S]{0,100}?(?:cleanup|削除|trap))|trap[\s\S]{0,200}?(?:RESULT|cleanup\s+も|tree)/i);
+  });
+
+  it("parse 失敗時の debug 経路 (tail of merged file) が記述", () => {
+    // 旧 STDERR_LOG の tail と同じ目的で、merged file の tail を debug 用に
+    // surface することを文書化。
+    expect(content).toMatch(/tail\s+-n\s+20[\s\S]{0,200}?(?:RESULT|merged|stderr)/i);
   });
 });
 
@@ -3940,6 +3952,30 @@ describe("agents/codex-sync.md — output file-redirect の PROMPT_FILE material
 
   it("PROMPT_FILE を trap で必ず削除 (temp file leak 防止)", () => {
     expect(content).toMatch(/trap\s+'rm\s+-f\s+"\$PROMPT_FILE"'\s+EXIT/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// Track B-1 follow-up: pseudo-coderabbit-loop の stale 説明を refactor 後表現
+// に更新 (Codex review minor 指摘)。
+// ---------------------------------------------------------------------
+describe("pseudo-coderabbit-loop.md: coderabbit-mimic 内部 codex 直接呼出 説明が stale ではない", () => {
+  const content = readCommand("pseudo-coderabbit-loop");
+
+  it("`内部で Codex を直接呼ぶ` の旧 narrative が refactor 後表現に更新", () => {
+    // Track B-1 で coderabbit-mimic Step 3 が codex-sync 経由 + output-file
+    // marker に refactor された。pseudo-coderabbit-loop.md 側の「将来 work
+    // (coderabbit-mimic を codex-sync 経由に refactor 後) で有効化される
+    // forward-looking 配線」narrative は実装済になったため、stale。
+    // 強い禁止: 「coderabbit-mimic agent は内部で Codex を直接呼ぶ」が
+    // 残っていないこと。
+    expect(content).not.toMatch(/coderabbit-mimic`?\s*agent\s*は内部で\s*Codex\s*を直接呼ぶ/);
+  });
+
+  it("`coderabbit-mimic を codex-sync 経由に refactor 後` の future-tense 表現が現在形に更新", () => {
+    // 「将来 work / refactor 後で有効化」が現在形 (実装済 / 既に有効) に
+    // 書き換わっていることを assert。
+    expect(content).not.toMatch(/将来\s*work\s*\(`?coderabbit-mimic`?\s*を\s*`?codex-sync`?\s*経由に\s*refactor\s*後\)/);
   });
 });
 

@@ -326,12 +326,22 @@ Agent tool 経由)。`name` を明示することで `SendMessage` resume も可
 truncate recovery への退避路を確保する (codex-sync.md "Handling Mid-Response
 Truncation" 参照)。
 
+**重要 — handoff の具体手順**: Agent tool 呼出時の `prompt:` 引数には、上記
+`$WORKDIR/prompt.md` の **内容を verbatim でそのまま** 渡す (placeholder 文字列
+ではなく実テキスト)。具体的には mimic agent (caller) は `Read` tool で
+`$WORKDIR/prompt.md` を読み込み (末尾に `[output-file: $RESULT]` marker が
+append 済であることを確認した上で)、その全文を `prompt:` に投入する。
+placeholder のまま spawn すると codex-sync は marker を検出できず、redirect
+契約が起動せずに inline mode に fall back する (= context overflow 復活)。
+
 ```text
+# concrete invocation (placeholder ではなく Read で取得した prompt.md 全文を投入する):
 Agent({
   subagent_type: "harness:codex-sync",
   name: "coderabbit-mimic-codex-sync",
   description: "pseudo-CodeRabbit LLM review (output-file redirect)",
-  prompt: "<PROMPT_BODY 全文 + 末尾に [output-file: ${RESULT}] marker>",
+  prompt: "<verbatim contents of $WORKDIR/prompt.md, including the
+           [output-file: $RESULT] marker that was appended above>",
   run_in_background: false
 })
 ```
@@ -339,47 +349,69 @@ Agent({
 `harness:codex-sync` は marker を検出して以下を実行する:
 
 1. Codex companion を foreground 実行
-2. Codex stdout (full review JSON) を `$RESULT` に直接 redirect
+2. Codex stdout + stderr を `$RESULT` に redirect (`> "$RESULT" 2>&1`、codex-sync.md
+   D-49 contract)
 3. caller (本 mimic agent) には `OUTPUT_PATH=$RESULT` / `OUTPUT_BYTES=<n>` のみ
    返す (~120 bytes、context overflow 回避)
+4. Codex が non-zero で exit した場合のみ、第 3 行に `EXIT_CODE=<n>` を追記
 
-本 mimic agent (caller) の責務: 返値から `OUTPUT_PATH` を抽出し、`Read` tool で
-`$RESULT` を読み込み Step 4 で post-process。post-process 完了後 trap (Step 1 で
-登録済) が `WORKDIR` ごと cleanup するため、`$RESULT` も自動的に削除される
-(明示的な `rm` は不要、`trap 'rm -rf "$WORKDIR"' EXIT` が同 file を含む)。
+本 mimic agent (caller) の責務:
+
+1. 返値から `OUTPUT_PATH` / `OUTPUT_BYTES` / 任意の `EXIT_CODE` 行を抽出
+2. **`EXIT_CODE` 行が存在する場合**: Codex 失敗。`$RESULT` の末尾を tail で読み
+   原因を stderr に echo した上で `exit 1` (Step 4 の JSON 検証へは進まない、
+   retry 判断は呼出元 `/pseudo-coderabbit-loop` に委ねる)
+3. `EXIT_CODE` 行が無い場合: 正常完了。`Read` tool で `$RESULT` を読み込み
+   Step 4 で post-process
+4. post-process 完了後、trap (Step 1 で登録済) が `WORKDIR` ごと cleanup する
+   ため、`$RESULT` も自動的に削除される (明示的な `rm` は不要、
+   `trap 'rm -rf "$WORKDIR"' EXIT` が同 file を含む)
 
 ### Step 4. 結果の post-process
 
-`$RESULT` の JSON 妥当性を検証。validator は `jq` を優先、無ければ `python3 -m json.tool`、さらに無ければ `node -e` に degrade する。3 つとも不在ならば「未検証」警告を出しつつ post-process を継続する (silently 崩壊させない)。
+`$RESULT` には codex-sync.md D-49 redirect 契約により Codex の **stdout + stderr が
+マージされた** 内容が書かれている。codex-companion.mjs の progress reporter は
+stderr に `[codex] ...` 形式の行を出すため、それを strict JSON validator にそのまま
+渡すと常に fail する。よって validation 前に `[codex]` で始まる progress 行を
+filter (grep -v で除外) し、純粋な JSON body のみを抽出した上で検証する。
+validator は `jq` を優先、無ければ `python3 -m json.tool`、さらに無ければ
+`node -e` に degrade する。3 つとも不在ならば「未検証」警告を出しつつ post-process
+を継続する (silently 崩壊させない)。
 
 ```bash
+# stdout+stderr がマージされた $RESULT から `[codex]` progress 行を filter で
+# 除外し、JSON body だけを `$RESULT.clean` に書き出す。grep -v は POSIX、
+# extended regex 不要。stderr が空ならば $RESULT.clean は $RESULT と同等になる。
+RESULT_CLEAN="$RESULT.clean"
+grep -v '^\[codex\]' "$RESULT" > "$RESULT_CLEAN" 2>/dev/null || cp "$RESULT" "$RESULT_CLEAN"
+
 # 3 段 fallback で JSON 検証 (command -v で明示的にバイナリ存在確認)
 JSON_OK="unchecked"
 if command -v jq >/dev/null 2>&1; then
-  jq empty "$RESULT" 2>/dev/null && JSON_OK=yes || JSON_OK=no
+  jq empty "$RESULT_CLEAN" 2>/dev/null && JSON_OK=yes || JSON_OK=no
 elif command -v python3 >/dev/null 2>&1; then
-  python3 -m json.tool "$RESULT" >/dev/null 2>&1 && JSON_OK=yes || JSON_OK=no
+  python3 -m json.tool "$RESULT_CLEAN" >/dev/null 2>&1 && JSON_OK=yes || JSON_OK=no
 elif command -v node >/dev/null 2>&1; then
   node -e "try{JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));process.exit(0)}catch(e){process.exit(1)}" \
-    "$RESULT" 2>/dev/null && JSON_OK=yes || JSON_OK=no
+    "$RESULT_CLEAN" 2>/dev/null && JSON_OK=yes || JSON_OK=no
 else
   echo "WARN: no JSON validator available (jq / python3 / node all missing); proceeding without validation" >&2
 fi
 
 if [ "$JSON_OK" = "no" ]; then
-  echo "ERROR: Codex task returned non-JSON output." >&2
-  echo "---STDERR content (tail -n 20)---" >&2
-  tail -n 20 "$STDERR_LOG" >&2
-  echo "---end STDERR---" >&2
-  # WORKDIR は trap で自動 cleanup される
+  echo "ERROR: Codex task returned non-JSON output (after [codex] progress filter)." >&2
+  echo "---Merged stdout+stderr tail (last 20 lines of $RESULT)---" >&2
+  tail -n 20 "$RESULT" >&2
+  echo "---end tail---" >&2
+  # WORKDIR は trap で自動 cleanup される ($RESULT_CLEAN も同じ tree 内で消える)
   exit 1
 fi
 ```
 
-- post-process は JSON を parse して findings を severity 降順にソート
+- post-process は `$RESULT_CLEAN` の JSON を parse して findings を severity 降順にソート
 - Profile 上限で切り詰め
 - `path_instructions` で explicit に reject されている findings を drop
-- 正常終了時は trap で `WORKDIR` ごと cleanup (STDERR_LOG も含めて削除)
+- 正常終了時は trap で `WORKDIR` ごと cleanup (`$RESULT` / `$RESULT_CLEAN` も同 tree 配下で削除)
 - 呼出元に以下の形式で返す:
 
 ```json

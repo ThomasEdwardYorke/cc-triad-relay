@@ -343,6 +343,40 @@ describe("coderabbit-mimic agent: .coderabbit.yaml strict pre-parse regression",
         /(?:append|末尾|bottom|very\s+bottom|最後|追加)[\s\S]{0,300}?\[output-file:|\[output-file:[\s\S]{0,200}?(?:append|末尾|bottom|prompt\s+body)/i,
       );
     });
+
+    // ---------------------------------------------------------------
+    // Codex Phase 4 review (Track B-1) で指摘された 3 件の handoff/失敗時
+    // 経路を CI 上で固定する追加 assertion。
+    // ---------------------------------------------------------------
+
+    it("Step 3 が generated prompt body を Agent prompt に渡す具体手順を記述 (handoff gap 防止)", () => {
+      // Codex review (major): mimic agent が `Agent({ prompt: \"<placeholder>\" })`
+      // のように placeholder のまま spawn すると、生成済 prompt.md (marker 含む)
+      // が codex-sync に届かず redirect が起動しない。caller は prompt.md
+      // の内容を verbatim で Agent prompt に投入する旨を明記する必要がある。
+      expect(step3Block).toMatch(
+        /(?:Read\s+tool|Read\s*して|読み取って|読み込んで|verbatim|そのまま|全文|cat|読み取り後)[\s\S]{0,300}?(?:prompt|prompt\.md)|prompt\.md[\s\S]{0,300}?(?:verbatim|そのまま|全文|そのまま渡|verbatim 渡|verbatim で|全文を)/i,
+      );
+    });
+
+    it("Step 3/4 が EXIT_CODE 第三 line への対応を明示 (failure branch)", () => {
+      // codex-sync.md D-49: 「When the underlying Codex run exits non-zero,
+      // the agent appends a third line `EXIT_CODE=<n>`」。mimic agent はこれを
+      // 検出して JSON post-process を skip し、retry / fail-fast 判断に使う
+      // 必要がある。
+      expect(content).toMatch(/EXIT_CODE/);
+    });
+
+    it("Step 4 が stdout+stderr マージ output から strict JSON 抽出する手順を記述", () => {
+      // Codex review (major): codex-sync.md D-49 redirect は `> file 2>&1` で
+      // stdout + stderr を同一 file に書く。Codex companion の progress reporter
+      // が stderr に `[codex] ...` を出すため、その file を直接 strict JSON
+      // validator に渡すと常に fail する。`[codex]` 行 filter / JSON 抽出の
+      // 手順を明記する必要がある。
+      expect(content).toMatch(
+        /\[codex\][\s\S]{0,400}?(?:filter|grep -v|除外|削除|strip|抽出|extract)|(?:filter|grep -v|除外|strip|抽出|extract)[\s\S]{0,400}?\[codex\]/i,
+      );
+    });
   });
 });
 
