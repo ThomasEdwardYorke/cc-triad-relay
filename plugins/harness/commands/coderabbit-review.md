@@ -322,7 +322,7 @@ while :; do
       }
     }' -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F pr="$PR" $CURSOR_ARG)
   PAGE_COUNT=$(echo "$PAGE" | jq '[.data.repository.pullRequest.reviewThreads.nodes[]
-    | select(.comments.nodes[0].author.login == "coderabbitai")
+    | select(.comments.nodes[0].author.login == "coderabbitai" or .comments.nodes[0].author.login == "coderabbitai[bot]")
     | select(.isResolved == false)] | length')
   UNRESOLVED=$((UNRESOLVED + PAGE_COUNT))
   HAS_NEXT=$(echo "$PAGE" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
@@ -330,12 +330,14 @@ while :; do
   PAGE_CURSOR=$(echo "$PAGE" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')
 done
 
-# 最新 review body から actionable count
+# 最新 review body から actionable count (現 HEAD_SHA に対する review のみ対象、
+# 古い commit の review を見て false-clear する事故を防止)
 # CR body 形式 drift 対策: grep が空を返した場合は "0" にフォールバックせず
 # "unknown" として扱い、後続の strict equality 判定 ([ ... = "0" ]) を false にする
 # (false-clear / false auto-resolve injection の予防)
+[ -z "${HEAD_SHA:-}" ] && HEAD_SHA=$(gh pr view "$PR" --repo "$REPO" --json headRefOid --jq '.headRefOid')
 LATEST_BODY=$(gh api "repos/${REPO}/pulls/${PR}/reviews" \
-  --jq "[.[] | select(.user.login==\"coderabbitai[bot]\")] | last | .body")
+  | jq --arg head "$HEAD_SHA" -r '[.[] | select(.user.login=="coderabbitai[bot]" and .commit_id==$head)] | last | .body // empty')
 ACTIONABLE_LATEST=$(echo "$LATEST_BODY" | grep -oE 'Actionable comments posted:\s*[0-9]+' \
   | grep -oE '[0-9]+' | head -1)
 if [ -z "$ACTIONABLE_LATEST" ]; then
@@ -394,7 +396,7 @@ if [ -x "$CR_CHAT_BIN" ] && [ "$ACTIONABLE_LATEST" = "0" ] && [ "$UNRESOLVED" -g
           }
         }' -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F pr="$PR" $CURSOR_ARG)
       PAGE_COUNT=$(echo "$PAGE" | jq '[.data.repository.pullRequest.reviewThreads.nodes[]
-        | select(.comments.nodes[0].author.login == "coderabbitai")
+        | select(.comments.nodes[0].author.login == "coderabbitai" or .comments.nodes[0].author.login == "coderabbitai[bot]")
         | select(.isResolved == false)] | length')
       UNRESOLVED_NOW=$((UNRESOLVED_NOW + PAGE_COUNT))
       HAS_NEXT=$(echo "$PAGE" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
@@ -482,7 +484,7 @@ review を自動発火する (公式 changelog: request-changes-workflow)。
 
 ```bash
 CR_STATE=$(gh api "repos/${REPO}/pulls/${PR}/reviews" \
-  --jq '[.[] | select(.user.login=="coderabbitai[bot]")] | last | .state // empty')
+  | jq --arg head "$HEAD_SHA" -r '[.[] | select(.user.login=="coderabbitai[bot]" and .commit_id==$head)] | last | .state // empty')
 APPROVED=false
 [ "$CR_STATE" = "APPROVED" ] && APPROVED=true
 ```
@@ -491,7 +493,7 @@ APPROVED=false
 
 ```bash
 LATEST_BODY=$(gh api "repos/${REPO}/pulls/${PR}/reviews" \
-  --jq "[.[] | select(.user.login==\"coderabbitai[bot]\")] | last | .body")
+  | jq --arg head "$HEAD_SHA" -r '[.[] | select(.user.login=="coderabbitai[bot]" and .commit_id==$head)] | last | .body // empty')
 ACTIONABLE=$(echo "$LATEST_BODY" | grep -oE 'Actionable comments posted:\s*[0-9]+' \
   | grep -oE '[0-9]+' | head -1)
 # CR body 形式 drift 対策: grep が空を返した場合は "0" にフォールバックせず
@@ -528,7 +530,7 @@ while :; do
       }
     }' -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F pr="$PR" $CURSOR_ARG)
   PAGE_COUNT=$(echo "$PAGE" | jq '[.data.repository.pullRequest.reviewThreads.nodes[]
-    | select(.comments.nodes[0].author.login == "coderabbitai")
+    | select(.comments.nodes[0].author.login == "coderabbitai" or .comments.nodes[0].author.login == "coderabbitai[bot]")
     | select(.isResolved == false)] | length')
   UNRESOLVED=$((UNRESOLVED + PAGE_COUNT))
   HAS_NEXT=$(echo "$PAGE" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
