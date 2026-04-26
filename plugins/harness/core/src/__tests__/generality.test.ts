@@ -240,8 +240,8 @@ const BLOCK_PATTERNS: BlockPattern[] = [
     appliesToTests: true,
   },
   {
-    // Pseudo CodeRabbit (cc-mimic, chill profile) outside-diff 指摘で追加 + Round 2
-    // 指摘で lookbehind 強化。Session 世代 ID `gen-N` は consumer-side handoff archive
+    // Pseudo CodeRabbit pre-review の outside-diff 指摘で追加 + 後続 review feedback
+    // で lookbehind 強化。Session 世代 ID `gen-N` は consumer-side handoff archive
     // (`session-<YYYY-MM-DD>-genNN-*.md`) で使われる project-local 用語であり、shipped
     // spec (plugins/harness/**) には混入禁止。
     //
@@ -249,7 +249,7 @@ const BLOCK_PATTERNS: BlockPattern[] = [
     //   - `(?<![\w-])` lookbehind: 直前が word char または `-` ではない (= 単語境界 +
     //     ハイフン区切りコンパウンド語境界)。これにより:
     //       - `general-13` no match (`gen` 後が `-` でない)
-    //       - `9th-gen-13` no match (Round 2 fix、`gen` 直前が `-`)
+    //       - `9th-gen-13` no match (compound prefix、`gen` 直前が `-`)
     //       - `next-gen-4` no match (同上)
     //       - `gen-13` (単独/文頭/whitespace 後) match
     //   - `\b` 末尾: `gen-13a` は `\d+` の `13` 後に word char `a` → no match
@@ -2115,9 +2115,9 @@ describe("exemption grammar (unified, pipe-separated)", () => {
     });
   });
 
-  // ─────────────── B-3f boundary regression (CR review nitpick で固定) ───────────────
-  // Real CodeRabbit (chill profile) review #45 で B-3f の境界 case を専用 regression test
-  // で固定するよう推奨された (2 要件組合せで false-positive 回避の coding guideline)。
+  // ─────────────── B-3f boundary regression (external review nitpick で固定) ───────────────
+  // 外部 code review の nitpick で B-3f の境界 case を専用 regression test で固定する
+  // よう推奨された (2 要件組合せで false-positive 回避の coding guideline)。
   // pattern `(?<![\w-])gen-\d+\b` の Node.js empirical 検証 (positive 1 + negative 5) を
   // CI に固定し、将来の regex 調整時の false-positive 回帰を防ぐ。
   describe("B-3f boundary regression (positive / negative match cases)", () => {
