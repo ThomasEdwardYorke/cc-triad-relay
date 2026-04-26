@@ -385,20 +385,29 @@ stderr に `[codex] ...` 形式の行を出すほか、warnings / diagnostics �
 # 利用不能な場合は line filter (`[codex]` progress 行のみ除外) に degrade する。
 RESULT_CLEAN="$RESULT.clean"
 
-# 1 次: python3 で JSON-aware extraction (堅牢)。raw_decode は最初に到達した
-# valid JSON object を抽出するので、前後の non-JSON テキスト (progress 行 /
-# warnings / stderr 全般) を全て無視できる。
+# 1 次: python3 で JSON-aware extraction (堅牢)。raw_decode を全 `{` 候補位置で
+# 試行し、最初に成功した JSON object を抽出する。前後の non-JSON テキスト
+# (progress 行 / warnings / stderr 全般) は全て無視できる。pre-JSON 診断行に
+# brace 断片 (例: `WARN: {x}`) が含まれていても、raw_decode が次の候補位置に
+# 進むので robust。
 if command -v python3 >/dev/null 2>&1 && python3 -c '
 import json, sys
+# 全 `{` 候補位置を順に試行し、最初に成功した JSON object を採用する。
+# pre-JSON 診断行に brace 断片 (例: WARN: {x}) があっても次候補へ進むため robust。
 try:
     raw = open(sys.argv[1], "r", encoding="utf-8", errors="replace").read()
-    # 最初に出現する `{` を起点に raw_decode で 1 個目の JSON object だけを抽出。
-    idx = raw.find("{")
-    if idx < 0:
-        sys.exit(2)
     decoder = json.JSONDecoder()
-    obj, _end = decoder.raw_decode(raw[idx:])
-    json.dump(obj, open(sys.argv[2], "w", encoding="utf-8"), ensure_ascii=False)
+    pos, extracted = 0, None
+    while True:
+        idx = raw.find("{", pos)
+        if idx < 0: break
+        try:
+            obj, _end = decoder.raw_decode(raw[idx:])
+            extracted = obj; break
+        except json.JSONDecodeError:
+            pos = idx + 1
+    if extracted is None: sys.exit(2)
+    json.dump(extracted, open(sys.argv[2], "w", encoding="utf-8"), ensure_ascii=False)
     sys.exit(0)
 except Exception:
     sys.exit(2)
