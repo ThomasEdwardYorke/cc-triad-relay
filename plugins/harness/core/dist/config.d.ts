@@ -276,6 +276,19 @@ export interface TddEnforceConfig {
     /** Max Codex review loop iterations per Phase 5 round. */
     maxCodexReviewRetries: number;
 }
+/**
+ * Identifier of the CodeRabbit subscription tier configured for this
+ * project. Drives bucket-allocation guidance: `pro` keeps the legacy
+ * single-bucket prediction (5 PR reviews / hour); `oss` opts into the
+ * separate PR + CLI buckets the OSS plan provides; `free` is the
+ * baseline (no automated review).
+ *
+ * Verified against CodeRabbit docs (2026-04-26 — see
+ * https://docs.coderabbit.ai/): OSS plan exposes a CLI review bucket
+ * independent of the PR review bucket, so projects on OSS can run
+ * `cr review` locally without consuming PR-bucket capacity.
+ */
+export type CodeRabbitPlan = "free" | "oss" | "pro";
 export interface CodeRabbitConfig {
     /** GitHub login of the CodeRabbit bot (for comment authorship checks). */
     botLogin: string;
@@ -293,6 +306,34 @@ export interface CodeRabbitConfig {
     proBucketSize: number;
     /** Window (in minutes) for the CodeRabbit Pro review bucket. */
     proBucketWindowMinutes: number;
+    /**
+     * Subscription tier driving bucket allocation. `pro` (default) keeps
+     * the legacy single-bucket model; `oss` enables the dual PR + CLI
+     * buckets the OSS plan exposes; `free` documents that the project
+     * has no automated CodeRabbit review.
+     */
+    plan: CodeRabbitPlan;
+    /**
+     * PR review bucket size per `proBucketWindowMinutes` window.
+     *
+     * Default `5` matches Pro. When `plan` flips to `oss`, the consumer
+     * **must explicitly** set this to `2` (CodeRabbit's published OSS
+     * quota) — `mergeConfig` does not auto-derive a per-plan value, so
+     * leaving the field at its default while only changing `plan` is a
+     * configuration bug, not a feature. Use this field for new code
+     * paths; `proBucketSize` is preserved for backwards compatibility.
+     */
+    prReviewBucketSize: number;
+    /**
+     * CLI review bucket size per `proBucketWindowMinutes` window.
+     *
+     * Default `0` documents that the CLI path is unavailable for the
+     * current plan (Pro / Free). OSS exposes `2/h` independent of the
+     * PR bucket — set this to `2` explicitly when flipping `plan` to
+     * `oss`. As with `prReviewBucketSize`, no automatic fallback is
+     * applied.
+     */
+    cliReviewBucketSize: number;
 }
 /**
  * Stack-detection knobs. Kept separate from `work.*` because these answer

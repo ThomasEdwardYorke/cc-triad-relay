@@ -320,6 +320,20 @@ export interface TddEnforceConfig {
   maxCodexReviewRetries: number;
 }
 
+/**
+ * Identifier of the CodeRabbit subscription tier configured for this
+ * project. Drives bucket-allocation guidance: `pro` keeps the legacy
+ * single-bucket prediction (5 PR reviews / hour); `oss` opts into the
+ * separate PR + CLI buckets the OSS plan provides; `free` is the
+ * baseline (no automated review).
+ *
+ * Verified against CodeRabbit docs (2026-04-26 — see
+ * https://docs.coderabbit.ai/): OSS plan exposes a CLI review bucket
+ * independent of the PR review bucket, so projects on OSS can run
+ * `cr review` locally without consuming PR-bucket capacity.
+ */
+export type CodeRabbitPlan = "free" | "oss" | "pro";
+
 export interface CodeRabbitConfig {
   /** GitHub login of the CodeRabbit bot (for comment authorship checks). */
   botLogin: string;
@@ -337,6 +351,34 @@ export interface CodeRabbitConfig {
   proBucketSize: number;
   /** Window (in minutes) for the CodeRabbit Pro review bucket. */
   proBucketWindowMinutes: number;
+  /**
+   * Subscription tier driving bucket allocation. `pro` (default) keeps
+   * the legacy single-bucket model; `oss` enables the dual PR + CLI
+   * buckets the OSS plan exposes; `free` documents that the project
+   * has no automated CodeRabbit review.
+   */
+  plan: CodeRabbitPlan;
+  /**
+   * PR review bucket size per `proBucketWindowMinutes` window.
+   *
+   * Default `5` matches Pro. When `plan` flips to `oss`, the consumer
+   * **must explicitly** set this to `2` (CodeRabbit's published OSS
+   * quota) — `mergeConfig` does not auto-derive a per-plan value, so
+   * leaving the field at its default while only changing `plan` is a
+   * configuration bug, not a feature. Use this field for new code
+   * paths; `proBucketSize` is preserved for backwards compatibility.
+   */
+  prReviewBucketSize: number;
+  /**
+   * CLI review bucket size per `proBucketWindowMinutes` window.
+   *
+   * Default `0` documents that the CLI path is unavailable for the
+   * current plan (Pro / Free). OSS exposes `2/h` independent of the
+   * PR bucket — set this to `2` explicitly when flipping `plan` to
+   * `oss`. As with `prReviewBucketSize`, no automatic fallback is
+   * applied.
+   */
+  cliReviewBucketSize: number;
 }
 
 /**
@@ -734,6 +776,13 @@ export const DEFAULT_CONFIG: HarnessConfig = {
     maxPseudoLoopIterations: 5,
     proBucketSize: 5,
     proBucketWindowMinutes: 60,
+    plan: "pro",
+    // PR review bucket size — mirrors `proBucketSize` on the Pro
+    // default. New code paths read `prReviewBucketSize` so OSS
+    // projects can drop it to 2 without touching the legacy field.
+    prReviewBucketSize: 5,
+    // CLI review bucket size — `0` on Pro / Free, OSS sets `2`.
+    cliReviewBucketSize: 0,
   },
   tooling: {
     // Deliberately excludes `backend/` — plugin ships stack-neutral,
@@ -866,7 +915,10 @@ function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
       ...DEFAULT_CONFIG.tddEnforce,
       ...(partial.tddEnforce ?? {}),
     }),
-    codeRabbit: { ...DEFAULT_CONFIG.codeRabbit, ...(partial.codeRabbit ?? {}) },
+    codeRabbit: validateCodeRabbit({
+      ...DEFAULT_CONFIG.codeRabbit,
+      ...(partial.codeRabbit ?? {}),
+    }),
     tooling: { ...DEFAULT_CONFIG.tooling, ...(partial.tooling ?? {}) },
     release: validateRelease({
       ...DEFAULT_CONFIG.release,
@@ -975,6 +1027,63 @@ function validateTddEnforce(cfg: TddEnforceConfig): TddEnforceConfig {
     };
   }
   return cfg;
+}
+
+/**
+ * Mirror of `validateTddEnforce` for the codeRabbit section. Guards
+ * against:
+ *   1. `plan` set outside the `CodeRabbitPlan` union — typos
+ *      (`"OSS"`, `"open-source"`) silently fall back to `"pro"` with a
+ *      stderr warning rather than corrupting downstream bucket
+ *      arithmetic.
+ *   2. `prReviewBucketSize` / `cliReviewBucketSize` set to a negative
+ *      integer or a non-finite number — clamped to `0` with a
+ *      warning so the bucket predictor never receives a value that
+ *      would underflow.
+ *
+ * The function is total (always returns a valid `CodeRabbitConfig`),
+ * matching the existing behaviour of `validateTddEnforce` /
+ * `validateRelease`. Callers spread `DEFAULT_CONFIG.codeRabbit` first
+ * so any field not provided by the user keeps its default.
+ */
+const VALID_CODERABBIT_PLANS: readonly CodeRabbitPlan[] = [
+  "free",
+  "oss",
+  "pro",
+];
+function validateCodeRabbit(cfg: CodeRabbitConfig): CodeRabbitConfig {
+  let next: CodeRabbitConfig = cfg;
+  if (!VALID_CODERABBIT_PLANS.includes(next.plan)) {
+    process.stderr.write(
+      `[harness config] codeRabbit.plan=${JSON.stringify(next.plan)} is not one of ${JSON.stringify(
+        VALID_CODERABBIT_PLANS,
+      )}; falling back to "${DEFAULT_CONFIG.codeRabbit.plan}".\n`,
+    );
+    next = { ...next, plan: DEFAULT_CONFIG.codeRabbit.plan };
+  }
+  if (
+    !Number.isFinite(next.prReviewBucketSize) ||
+    next.prReviewBucketSize < 0
+  ) {
+    process.stderr.write(
+      `[harness config] codeRabbit.prReviewBucketSize=${JSON.stringify(
+        next.prReviewBucketSize,
+      )} must be a non-negative finite number; clamping to 0.\n`,
+    );
+    next = { ...next, prReviewBucketSize: 0 };
+  }
+  if (
+    !Number.isFinite(next.cliReviewBucketSize) ||
+    next.cliReviewBucketSize < 0
+  ) {
+    process.stderr.write(
+      `[harness config] codeRabbit.cliReviewBucketSize=${JSON.stringify(
+        next.cliReviewBucketSize,
+      )} must be a non-negative finite number; clamping to 0.\n`,
+    );
+    next = { ...next, cliReviewBucketSize: 0 };
+  }
+  return next;
 }
 
 // `VALID_IMAGE_REASONING_EFFORTS` and `VALID_IMAGE_ASPECT_RATIOS` are

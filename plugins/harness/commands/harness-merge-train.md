@@ -113,6 +113,21 @@ slash command 動的置換で **未サポート**、`$ARGUMENTS` / `$ARGUMENTS[N
 - `--order` は positional 引数 (or filter 結果) の subset でなければ fail-fast
 - profile が allowlist (chill / assertive / strict) 外なら WARN 出して chill に fallback
 
+### PROFILE resolver — precedence chain
+
+`--profile` flag を含む実行時 profile 解決は以下の precedence で評価する。
+最高優先 (1) で値が見つかった時点で確定し、低位は無視する:
+
+| 優先順位 | source | 解決ロジック | 実装状況 |
+|---|---|---|---|
+| 1 (最高) | `--profile=<value>` flag | 本 skill 引数解析で直接読む。allowlist 外なら WARN を 1 行 stderr に出し chill に fallback (固定) | active (本 skill + `/pseudo-coderabbit-loop`) |
+| 2 | `.coderabbit.yaml` の `reviews.profile` | `/pseudo-coderabbit-loop` が yq / PyYAML / stdlib regex の 3 段 fallback で読む。allowlist (chill / assertive) 外は WARN + chill fallback (公式 schema 範囲外、strict は CLI のみ) | active (`/pseudo-coderabbit-loop` Step 0) |
+| 3 (最低) | default `chill` | 全 source 不在時の固定値 | active |
+
+**未実装 (将来案、本 chain には含めない)**: env `HARNESS_CR_PROFILE` / `harness.config.json tddEnforce.pseudoCoderabbitProfile` を resolver の入口にする案は spec 上は自然だが、現時点で本 skill / `/pseudo-coderabbit-loop` のいずれも読み出していない。先取り spec が implementation drift を生むため、追加するなら別 PR で実装と spec を同時投入する。
+
+**実装メモ**: 解決値は M2.2 `/pseudo-coderabbit-loop --local --profile=<resolved>` の引数に渡され、CodeRabbit 公式 profile 仕様 (chill / assertive) + harness 拡張 (strict) のいずれかになる。allowlist 外を chill fallback する判定は **解決時 1 回のみ**実行し、phase chain 内で再評価しない (1 PR 内で profile を切り替えると Pseudo CR loop と Real CR の review 観点が分裂するため)。
+
 ---
 
 ## Phase chain M0 — M9 (各 PR 順次)
