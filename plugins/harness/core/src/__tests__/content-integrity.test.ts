@@ -1212,6 +1212,7 @@ describe("plugin.json component 宣言 (Anthropic 公式仕様: 明示宣言で�
     "branch-merge",
     "coderabbit-review",
     "codex-team",
+    "harness-merge-train",
     "harness-plan",
     "harness-release",
     "harness-review",
