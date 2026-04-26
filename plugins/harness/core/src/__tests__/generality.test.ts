@@ -410,7 +410,7 @@ interface ExemptionDeclaration {
 // Issue key: uppercase PREFIX, then hyphen, then alphanumeric / underscore / hyphen body.
 // Slug forms (e.g. HARNESS-generality-self) are allowed for self-reference cases.
 //
-// Track C-2 (5k) hardening: cap BOTH prefix and suffix at 64 characters total
+// exemption-grammar hardening hardening: cap BOTH prefix and suffix at 64 characters total
 // each (Codex review major-1 follow-up). Capping only the suffix lets an
 // attacker move a long credential-shaped payload before the hyphen — the
 // prefix `[A-Z][A-Z0-9_]*` would otherwise still accept arbitrary length.
@@ -420,7 +420,7 @@ interface ExemptionDeclaration {
 // side of the hyphen.
 const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]{0,63}-[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/;
 const EXPIRY_SEMVER_RE = /^v\d+\.\d+\.\d+$/;
-// Track C-2 (5k) hardening: tighten ISO date numeric-domain so impossible
+// exemption-grammar hardening hardening: tighten ISO date numeric-domain so impossible
 // dates like 2026-13-32 (month 13, day 32) and 2026-04-00 (day zero) are
 // rejected at parse time. We deliberately stop at numeric-domain checks
 // (month 01-12 / day 01-31) rather than full Gregorian validation —
@@ -437,7 +437,7 @@ const PATTERN_ID_EXTRACT_RE = /\bB-\d+[a-z]?\b/g;
 // Full-string CSV match for short-form idsPart: rejects any trailing/non-ID text
 // so legacy fragments like "B-1, legacy reason" cannot bypass 4-field requirement.
 const PATTERN_ID_CSV_RE = /^B-\d+[a-z]?(?:,B-\d+[a-z]?)*$/;
-// Track C-2 (5k) hardening: scope the all-keyword guard to pattern-ids field
+// exemption-grammar hardening hardening: scope the all-keyword guard to pattern-ids field
 // grammar (CSV of B-\d+[a-z]? tokens). Previous shape `(?:^|\W)['"`]?all['"`]?
 // (?:$|\W)` would also have flagged a legitimate issue-key like `ALL-42` if
 // the regex were ever applied to the issue-key field. Anchoring the
@@ -783,7 +783,7 @@ function findHits(
 }
 
 // ---------------------------------------------------------------------------
-// Track C-3 (5j): test-file zone extraction
+// test-file zone scan: test-file zone extraction
 // ---------------------------------------------------------------------------
 //
 // Extract `comment-block` (`/* ... */`), `comment-line` (`// ...`), and
@@ -1180,7 +1180,7 @@ describeFileBlocklistTests(
   (p) => p.appliesToTests,
 );
 
-// Track C-3 (5j): test-file zone scan
+// test-file zone scan: test-file zone scan
 //
 // The line-based WARN_TARGETS scan above misses multi-line `/* ... */`
 // block-comment violations whose tracker fragment wraps across newlines
@@ -1189,7 +1189,7 @@ describeFileBlocklistTests(
 // each zone's full text so multi-line violations are caught. File-head
 // `generality-exemption` declarations apply identically (the existing
 // audit-tagged fixtures stay green).
-describe("generality blocklist: test-file zones (Track C-3 / 5j multi-line catch)", () => {
+describe("generality blocklist: test-file zones (zone scan multi-line catch)", () => {
   const allFiles = WARN_TARGETS.flatMap((t) => listFiles(t));
 
   for (const pattern of BLOCK_PATTERNS) {
@@ -1679,9 +1679,9 @@ describe("exemption grammar (unified, pipe-separated)", () => {
   });
 
   // ----------------------------------------------------------------------
-  // Track C-2 (5k): exemption-grammar regex 強化
+  // exemption-grammar hardening: exemption-grammar regex 強化
   // ----------------------------------------------------------------------
-  // Background: PR #17 follow-up (security). The three regex below were
+  // Background: legacy security follow-up (security). The three regex below were
   // accepting inputs that violated their semantic intent:
   //
   //   1. ISSUE_KEY_RE — no upper bound on suffix length, so a malicious or
@@ -1702,7 +1702,7 @@ describe("exemption grammar (unified, pipe-separated)", () => {
   // suite (running the whole generality.test.ts must stay green), so the
   // adversarial cases below are paired with positive cases that lock in
   // the previously accepted shapes.
-  describe("exemption grammar regex hardening (Track C-2 / 5k)", () => {
+  describe("exemption grammar regex hardening (exemption regex hardening)", () => {
     describe("ISSUE_KEY_RE suffix 64-char cap", () => {
       it("accepts a 64-character suffix (boundary)", () => {
         // Total suffix length = 64: 1 leading [A-Za-z0-9_] + 63 more.
@@ -1847,7 +1847,7 @@ describe("exemption grammar (unified, pipe-separated)", () => {
   });
 
   // ----------------------------------------------------------------------
-  // Track C-3 (5j): test-file comment / describe-title 走査拡張
+  // test-file zone scan: test-file comment / describe-title 走査拡張
   // ----------------------------------------------------------------------
   // Background: existing WARN_TARGETS line-based scan already catches a
   // tracker-ID violation when it sits on a single line of a test file
@@ -1875,7 +1875,7 @@ describe("exemption grammar (unified, pipe-separated)", () => {
   //   - `findHitsInTestZones(content, pattern)` → array of hits (line
   //     ranges + matched text), exempt-aware (skips zones covered by
   //     file-head or in-zone `generality-exemption` markers).
-  describe("test-file zone extraction (Track C-3 / 5j)", () => {
+  describe("test-file zone extraction (zone scan extension)", () => {
     it("extractTestZones returns block comments, line comments, and describe / it titles", () => {
       const src =
         '/* block start\n internal note */\n' +
