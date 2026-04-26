@@ -3,7 +3,7 @@ name: harness-merge-train
 description: "Multi-PR review/merge orchestration skill. Iterates a phase chain (M0-M9) over each PR — Clear judgment, rebase, pre-merge gates (Codex parallel + Pseudo CodeRabbit), push, CI wait, Real CodeRabbit Clear, Codex adversarial second opinion, squash merge, worktree cleanup, handoff sync — with fail-fast on any failure. Use when shipping 2+ open PRs in sequence, or when the user requests merge / merge-train / squash-multiple."
 description-ja: "複数 PR の review/merge orchestration を skill 経路で完遂する統合 skill。各 PR に対して M0-M9 の phase chain (Clear 判定 → rebase → pre-merge gate (Codex 並列 + 疑似 CodeRabbit) → push → CI wait → Real CodeRabbit Clear → Codex 敵対的セカンドオピニオン → squash merge → worktree cleanup → handoff sync) を順次実行し、いずれかで失敗したら fail-fast で停止。`/harness-work` v5 の merge mode から委譲される、または直接 `/harness-merge-train [PR# ...]` で起動可能。"
 allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Skill", "Agent", "Monitor", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"]
-argument-hint: "[PR-number...|filter|order|dry-run|profile|max-iterations|no-commit|no-skill-fallback]"
+argument-hint: "[pr-number|filter|order|dry-run|profile|max-iterations|no-commit|no-skill-fallback]"
 ---
 
 # `/harness-merge-train` — Multi-PR squash merge orchestrator (Phase chain M0-M9)
@@ -87,7 +87,7 @@ slash command 動的置換で **未サポート**、`$ARGUMENTS` / `$ARGUMENTS[N
 
 複数 PR 番号を space 区切りで列挙:
 
-```
+```text
 /harness-merge-train 30 31 32 33 34
 ```
 
@@ -142,15 +142,20 @@ gh pr checks "$PR" --repo "$REPO" --required 2>&1 | grep -E '(fail|pending)' && 
 # 3. Clear 判定 (Step 7.4 マトリクス: APPROVED / unresolved=0 / blocker 不在)
 #    既存 /coderabbit-review skill Step 7.1-7.3 と同一 logic を本 phase で先取り評価
 #    BOT_LOGIN は harness.config.json の codeRabbit.botLogin から load (default: coderabbitai)
-BOT_LOGIN=$(test -f harness.config.json \
+#    config 値が "coderabbitai[bot]" のような suffix 付き形式でも double-suffix にならないよう
+#    BOT_LOGIN_RAW から `[bot]` を必ず剥がして normalize し、review API 用の suffix 付き形式は
+#    BOT_LOGIN_REVIEW として derive する。両 API (review = suffix 付き / comment = 素) を同時 match。
+BOT_LOGIN_RAW=$(test -f harness.config.json \
   && jq -r '.codeRabbit.botLogin // "coderabbitai"' harness.config.json 2>/dev/null \
   || echo "coderabbitai")
-# review API は `[bot]` suffix 付き、issue/PR comment author は suffix なし
-# (GitHub API contract、本 spec は両形式を select で同時 match)
+case "$BOT_LOGIN_RAW" in
+  *"[bot]") BOT_LOGIN="${BOT_LOGIN_RAW%\[bot\]}" ;;
+  *)        BOT_LOGIN="$BOT_LOGIN_RAW" ;;
+esac
 BOT_LOGIN_REVIEW="${BOT_LOGIN}[bot]"
 
 CR_STATE=$(gh api "repos/${REPO}/pulls/${PR}/reviews" \
-  --jq "[.[] | select(.user.login==\"$BOT_LOGIN_REVIEW\")] | last | .state // empty")
+  --jq "[.[] | select(.user.login==\"$BOT_LOGIN\" or .user.login==\"$BOT_LOGIN_REVIEW\")] | last | .state // empty")
 UNRESOLVED=$(gh api graphql -f query='
   query($owner: String!, $name: String!, $pr: Int!) {
     repository(owner: $owner, name: $name) {
@@ -162,12 +167,12 @@ UNRESOLVED=$(gh api graphql -f query='
     }
   }' -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F pr="$PR" \
   --jq "[.data.repository.pullRequest.reviewThreads.nodes[]
-    | select(.comments.nodes[0].author.login == \"$BOT_LOGIN\")
+    | select(.comments.nodes[0].author.login == \"$BOT_LOGIN\" or .comments.nodes[0].author.login == \"$BOT_LOGIN_REVIEW\")
     | select(.isResolved == false)] | length")
 
 # 4. rate-limit marker (15 分以内に active なら blocker)
 RATE_LIMITED=$(gh pr view "$PR" --repo "$REPO" --json comments \
-  --jq "[.comments[] | select(.author.login == \"$BOT_LOGIN\")
+  --jq "[.comments[] | select(.author.login == \"$BOT_LOGIN\" or .author.login == \"$BOT_LOGIN_REVIEW\")
          | select(.body | contains(\"rate limited by coderabbit.ai\"))] | last | .createdAt // empty")
 ```
 
@@ -214,13 +219,13 @@ fi
 
 #### M2.1 G4: `harness:codex-sync` agent で fix 内容を独立検証
 
-```
+```text
 Skill({skill: "codex-team", args: "review --uncommitted"})
 ```
 
 または Agent tool 直接:
 
-```
+```text
 Agent({
   subagent_type: "harness:codex-sync",
   description: "M2.1 fix verification",
@@ -242,7 +247,7 @@ review (max 3 iteration) → clean まで反復。
 
 #### M2.2 G5: `/pseudo-coderabbit-loop --local --profile=$PROFILE` で push 前 pre-review
 
-```
+```text
 # テンプレート表記 (<PROFILE> / <WORKTREE> は spec 上のプレースホルダ、
 # coordinator が pre-flight で解決した実値を埋め込む)
 Skill({skill: "pseudo-coderabbit-loop", args: "--local --profile=<PROFILE> --worktree=<WORKTREE>"})
@@ -310,7 +315,7 @@ done`,
 
 ### M5 — Real CodeRabbit Clear 判定 (G6)
 
-```
+```text
 # テンプレート表記 (<PR> は当該 PR 番号の placeholder、coordinator が実値を埋込)
 Skill({skill: "coderabbit-review", args: "<PR>"})
 
@@ -333,7 +338,7 @@ fail-fast + ledger 追記。
 
 ### M6 — Codex Phase 7 (`/codex-team adversarial`、G7 強制)
 
-```
+```text
 Skill({skill: "codex-team", args: "adversarial"})
 ```
 
@@ -378,7 +383,7 @@ git worktree prune
 
 ### M9 — Handoff sync (G8 強制)
 
-```
+```text
 Skill({skill: "session-handoff", args: "update"})
 ```
 
@@ -393,7 +398,7 @@ file 編集のみで git commit を skip (次 session に委譲)。
 
 ## 全 PR 完了後 (Loop exit ritual)
 
-```
+```text
 Skill({skill: "session-handoff", args: "archive"})
 ```
 
@@ -439,7 +444,7 @@ section を参照 (project-local rule、harness plugin core からは `<consumer
 
 実 API call / 書込を一切行わず、以下を表示して exit:
 
-```
+```text
 ## /harness-merge-train Plan
 
 | Order | PR# | branch | base | mergeable | M0 verdict |
@@ -520,7 +525,7 @@ OSS plan 申請は CodeRabbit dashboard (https://app.coderabbit.ai/) で手動�
 
 ## 完了報告 template
 
-```
+```text
 ## /harness-merge-train 結果
 
 | PR | M0 | M1 | M2 (G4/G5) | M3 | M4 | M5 (G6) | M6 (G7) | M7 | M8 | M9 (G8) |

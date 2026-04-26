@@ -75,20 +75,27 @@ describe("/harness-merge-train spec (commands/harness-merge-train.md)", () => {
       expect(fm).toMatch(/allowed-tools:\s*\[[^\]]*"Monitor"[^\]]*\]/);
     });
 
-    it("argument-hint が strict pipe-separated bracketed form (CR consistency)", () => {
+    it("argument-hint が strict pipe-separated bracketed form (token-only、no spaces/ellipsis)", () => {
       // CodeRabbit が要求する `argument-hint: [word|word|...]` strict form。
-      // pseudo-coderabbit-loop.md と同等の token-only style。詳細値 (jq syntax /
-      // profile allowlist 等) は本文 ## 入力仕様 section で扱う。
-      expect(content).toMatch(/^argument-hint:\s*"\[[A-Za-z0-9._\- ]+(?:\|[A-Za-z0-9._\- ]+)+\]"\s*$/m);
-      // 主要 token がすべて含まれていること (semantic check)
-      const fm = content.match(/^argument-hint:\s*"([^"]*)"/m)?.[1] ?? "";
-      expect(fm).toMatch(/PR/);
-      expect(fm).toMatch(/filter/);
-      expect(fm).toMatch(/order/);
-      expect(fm).toMatch(/dry-run/);
-      expect(fm).toMatch(/profile/);
-      expect(fm).toMatch(/max-iterations/);
-      expect(fm).toMatch(/no-commit/);
+      // token charset は `[A-Za-z0-9-]` のみ (空白 / ドット / ellipsis は禁止、純粋な
+      // dash-separated identifier。詳細値 (jq syntax / profile allowlist 等) は
+      // 本文 ## 入力仕様 section で扱う)。
+      const fm = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+      expect(fm).toMatch(/^argument-hint:\s*"\[[A-Za-z0-9-]+(?:\|[A-Za-z0-9-]+)+\]"\s*$/m);
+      // 主要 token (semantic check) — extract したものを set として比較。
+      const hint = fm.match(/^argument-hint:\s*"([^"]*)"/m)?.[1] ?? "";
+      const tokens = hint.replace(/^\[|\]$/g, "").split("|");
+      expect(tokens).toEqual(
+        expect.arrayContaining([
+          "pr-number",
+          "filter",
+          "order",
+          "dry-run",
+          "profile",
+          "max-iterations",
+          "no-commit",
+        ]),
+      );
     });
   });
 
