@@ -4179,13 +4179,15 @@ describe("Track B-2: harness:codex-sync invocations include `name` argument", ()
 describe("review.projectChecklistPath addendum chain", () => {
   it("commands/harness-review.md が reviewer agent invocation contract を spec 化している", () => {
     const content = readCommand("harness-review");
-    // The command must document the JSON shape that injects the path
-    // into the reviewer subagent input.
-    expect(content).toMatch(/Reviewer agent invocation contract/i);
-    expect(content).toMatch(/projectChecklistPath/);
-    // The section must mention loadConfig as the path source so the
-    // command never bypasses validation by reading the JSON directly.
-    expect(content).toMatch(/loadConfig\(\)/);
+    // CR review round 2 nitpick: section 限定で false-positive 排除。
+    // `Reviewer agent invocation contract` セクション内で contract が記述
+    // されていることを assert (無関係 section の文言一致で通る弱さを排除)。
+    const contractSection =
+      /Reviewer agent invocation contract[\s\S]*?(?=\n## |\n### |$)/i.exec(content)?.[0] ?? "";
+    expect(contractSection.length).toBeGreaterThan(0);
+    expect(contractSection).toMatch(/projectChecklistPath/);
+    // loadConfig を path source として明記 (validation bypass 防止)
+    expect(contractSection).toMatch(/loadConfig\(\)/);
   });
 
   it("agents/reviewer.md が projectChecklistPath を入力 schema に含み addendum の Read 手順を section 限定で記述する", () => {
@@ -4202,7 +4204,8 @@ describe("review.projectChecklistPath addendum chain", () => {
     expect(addendumSection).toMatch(/\bRead\b/);
     // Opt-in semantics: projectChecklistPath が未指定の場合 addendum を読まない
     // 旨を spec で明記している (caller が path を populate する責務、未指定 = no addendum)。
-    expect(content).toMatch(
+    // CR review round 2 nitpick: opt-in semantics 検証も addendumSection 限定で
+    expect(addendumSection).toMatch(
       /projectChecklistPath[\s\S]{0,400}?(?:not provided|omitted|absent|not set|未指定|undefined)[\s\S]{0,400}?(?:no addendum|addendum なし|skip|skipped|読み込まない|読まない|fail.?open|fall.?back)/i,
     );
   });
