@@ -559,17 +559,35 @@ gh pr list --repo <repo> --state open --json number,title,headRefName,baseRefNam
 artifacts は build 再生成で解消、source-level conflict は手動で対応:
 
 ```bash
+# REPO_ROOT を保存し、ループ内で `git -C "$REPO_ROOT"` を使うことで CWD 汚染を防ぐ。
+# 各 iteration をサブシェル `( ... )` で隔離し、cd の影響を次のループに伝播させない。
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
 for PR_BRANCH in <branch-a> <branch-b> <branch-c>; do
-  WORKTREE_DIR=$(git worktree list --porcelain | grep "branch refs/heads/$PR_BRANCH" | grep worktree | awk '{print $2}')
-  [ -z "$WORKTREE_DIR" ] && { echo "Worktree for $PR_BRANCH not found"; exit 1; }
-  cd "$WORKTREE_DIR"
-  git fetch origin
-  git rebase origin/main  # or origin/<base-branch>
-  if git status --short | grep -E '^(UU|AA)'; then
-    npm run build 2>&1 | tail -5
-    git add dist/ package-lock.json 2>/dev/null || true
-    git rebase --continue
-  fi
+  (
+    # `git worktree list --porcelain` は以下のレコード構造で出力される:
+    #   worktree /absolute/path/to/wt-a
+    #   HEAD <sha>
+    #   branch refs/heads/<branch>
+    #   (空行)
+    # `grep "branch ..."` だけ抽出すると path 行を失う。awk で worktree path を
+    # 直前のレコード単位で覚えておき、branch 行が match した時点で path を出す。
+    WORKTREE_DIR=$(
+      git -C "$REPO_ROOT" worktree list --porcelain | awk -v branch="$PR_BRANCH" '
+        /^worktree / { path = $2 }
+        $0 == "branch refs/heads/" branch { print path; exit }
+      '
+    )
+    [ -z "$WORKTREE_DIR" ] && { echo "Worktree for $PR_BRANCH not found"; exit 1; }
+    cd "$WORKTREE_DIR"
+    git fetch origin
+    git rebase origin/main  # or origin/<base-branch>
+    if git status --short | grep -E '^(UU|AA)'; then
+      npm run build 2>&1 | tail -5
+      git add dist/ package-lock.json 2>/dev/null || true
+      git rebase --continue
+    fi
+  ) || exit 1
 done
 ```
 
@@ -639,11 +657,17 @@ LEDGER_PATH=$(jq -r '.work.qualityGates.disciplineLedgerPath // ""' harness.conf
 [ -n "$LEDGER_PATH" ] && {
   node "${CC_TRIAD_RELAY_ROOT}/plugins/harness/core/dist/work/ledger-cli.js" append \
     --session "fallback-merge-train-<short-slug>" \
-    --skill "G3" \
-    --impact "/harness-merge-train skill 不在 (plugin reload 待機)、手動 gh pr merge --squash 経路で M0-M9 substitute 実行、quality gate M2 (G4/G5) / M5 (G6) / M6 (G7) を手動 skill で代替実施" \
+    --skill "merge-train-skill-absent" \
+    --impact "/harness-merge-train skill 不在 (plugin reload 待機)、手動 gh pr merge --squash 経路で M0-M9 substitute 実行、quality gate M2 (G4/G5) / M5 (G6) / M6 (G7) / M9 (G8) の skill 連鎖 (consumer-side 鉄則 7 の G3+G4+G5+G6+G7+G8 複合) を手動 skill で代替実施" \
     --remediation "次 session で claude restart → plugin reload 確認、以後は /harness-merge-train skill 経由を強制"
 }
 ```
+
+`--skill` 値は consumer-side 鉄則 7 ledger の skill ID 規約に準拠する。本 fallback は
+`/harness-merge-train` skill 全体 (内部で G3/G4/G5/G6/G7/G8 を強制) の代替経路で、
+特定 phase の単一 G ID では意味論的に正確でない。よって `merge-train-skill-absent`
+という複合 skill を表す semantic identifier を使い、impact 欄で具体的な代替範囲
+(G3+G4+G5+G6+G7+G8) を明示する規約とする。
 
 **ledger 追記は mandatory**。skip / 隠蔽は鉄則 7 違反 (consumer-side
 implementation-workflow.md AND 判定の規律違反 transparency 規約) として **重大規律違反**
