@@ -43,7 +43,7 @@
  *   fully resolved path is double-checked to live under `projectRoot`
  *   so symlink-free dot games cannot escape the sandbox either.
  */
-import { appendFileSync, existsSync, mkdirSync, writeFileSync, } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync, } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 /** Markdown header for a freshly-created ledger file. */
 const LEDGER_HEADER = [
@@ -99,6 +99,32 @@ export function appendDisciplineEntry(config, projectRoot, entry) {
     const row = formatEntry(entry);
     const parent = dirname(ledgerAbs);
     mkdirSync(parent, { recursive: true });
+    // Resolve projectRoot's *real* path once so the symlink-rejection
+    // checks below compare apples to apples. macOS keeps `/tmp` as a
+    // symlink to `/private/tmp`, so a caller passing a `/tmp/...`
+    // projectRoot would otherwise see every realpath result classified
+    // as "outside" via the `/private/tmp/...` prefix mismatch.
+    const realProjectRoot = realpathSync(projectRoot);
+    // Symlink defence (post-mkdirSync): once the parent dir exists,
+    // resolve its real path. If the real path lives outside projectRoot
+    // the writer refuses — a malicious symlink on disk could otherwise
+    // make the textual `relative()` check pass while the actual writes
+    // land somewhere unexpected.
+    assertWithinProjectRoot(realpathSync(parent), realProjectRoot, ledgerRel, "parent");
+    if (existsSync(ledgerAbs)) {
+        // `lstatSync` follows no symlinks — `isSymbolicLink()` is the only
+        // reliable Node.js test. Refusing all ledger symlinks (rather than
+        // resolving + re-checking) keeps the policy auditable: a symlinked
+        // ledger is never a legitimate configuration in this writer.
+        if (lstatSync(ledgerAbs).isSymbolicLink()) {
+            throw new Error(`appendDisciplineEntry: existing ledger "${ledgerAbs}" is a symlink (refusing to follow)`);
+        }
+        // TOCTOU mitigation: the ledger file existed at the lstat call
+        // above, but a racing actor could have replaced it. Resolve once
+        // more and re-check the boundary. Native O_NOFOLLOW would be
+        // stronger but Node.js's high-level fs API does not expose it.
+        assertWithinProjectRoot(realpathSync(ledgerAbs), realProjectRoot, ledgerRel, "ledger");
+    }
     if (!existsSync(ledgerAbs)) {
         // `wx` flag => fail if file already exists. On a race the loser
         // falls through to the append branch below.
@@ -116,6 +142,19 @@ export function appendDisciplineEntry(config, projectRoot, entry) {
     }
     appendFileSync(ledgerAbs, `${row}\n`);
     return { status: "appended", ledgerPath: ledgerAbs };
+}
+/**
+ * Throw if the resolved real path no longer sits under `projectRoot`.
+ * The same check is shared by the parent-dir post-mkdir verification
+ * and the pre-write existing-ledger TOCTOU re-check.
+ */
+function assertWithinProjectRoot(realPath, projectRoot, ledgerRel, kind) {
+    const realRel = relative(projectRoot, realPath);
+    if (realRel.startsWith("..") ||
+        realRel.startsWith(`..${sep}`) ||
+        isAbsolute(realRel)) {
+        throw new Error(`appendDisciplineEntry: ${kind} of "${ledgerRel}" resolves to "${realPath}" outside projectRoot via symlink (refusing)`);
+    }
 }
 /**
  * Format one ledger row. Pipes are escaped so they do not break the

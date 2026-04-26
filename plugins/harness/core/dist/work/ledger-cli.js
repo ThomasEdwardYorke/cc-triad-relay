@@ -25,7 +25,7 @@
  * module can be invoked directly via `node` / `tsx`.
  */
 import { fileURLToPath } from "node:url";
-import { loadConfigSafe } from "../config.js";
+import { loadConfigWithError } from "../config.js";
 import { appendDisciplineEntry } from "./ledger.js";
 const REQUIRED_APPEND_FLAGS = [
     "session",
@@ -138,7 +138,18 @@ export function runLedgerCli(argv, opts) {
         impact: required.impact,
         remediation: required.remediation,
     };
-    const config = loadConfigSafe(projectRoot);
+    // The audit ledger must never silently swallow a corrupt
+    // harness.config.json: a broken file would otherwise be treated as
+    // "no path configured" and the violation would never reach the
+    // ledger. `loadConfigWithError` distinguishes "absent" (valid
+    // opt-in-to-defaults state) from "broken" (parse / I/O failure) so
+    // the CLI can fail loudly only on the latter.
+    const outcome = loadConfigWithError(projectRoot);
+    if (outcome.error !== undefined) {
+        opts.stderr(`harness.config.json could not be loaded: ${outcome.error}`);
+        return 1;
+    }
+    const config = outcome.config;
     try {
         const result = appendDisciplineEntry(config, projectRoot, entry);
         if (result.status === "no-op-no-config") {

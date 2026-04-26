@@ -311,6 +311,80 @@ describe("runLedgerCli", () => {
     });
   });
 
+  describe("strict config loading (F37-1)", () => {
+    it("exits 1 with stderr error when harness.config.json is malformed JSON", () => {
+      tmpRoot = mkProject(undefined);
+      // Overwrite with broken JSON so loadConfigSafe would silently
+      // fall back to defaults.
+      writeFileSync(
+        join(tmpRoot, "harness.config.json"),
+        "{ this is not json",
+      );
+      const io = captureIo();
+      const code = runLedgerCli(
+        [
+          "append",
+          "--session",
+          "s",
+          "--skill",
+          "G2",
+          "--impact",
+          "i",
+          "--remediation",
+          "r",
+        ],
+        { cwd: tmpRoot, stdout: io.out, stderr: io.err },
+      );
+      expect(code).toBe(1);
+      expect(io.stderr.join("\n")).toMatch(
+        /harness\.config\.json|JSON|parse|load/i,
+      );
+    });
+
+    it("exits 1 when harness.config.json is a JSON value but not an object", () => {
+      tmpRoot = mkProject(undefined);
+      writeFileSync(join(tmpRoot, "harness.config.json"), "[1,2,3]");
+      const io = captureIo();
+      const code = runLedgerCli(
+        [
+          "append",
+          "--session",
+          "s",
+          "--skill",
+          "G2",
+          "--impact",
+          "i",
+          "--remediation",
+          "r",
+        ],
+        { cwd: tmpRoot, stdout: io.out, stderr: io.err },
+      );
+      expect(code).toBe(1);
+      expect(io.stderr.join("\n")).toMatch(/object|array/i);
+    });
+
+    it("treats absent config as valid (no error, no-op-no-config)", () => {
+      tmpRoot = mkProject(undefined); // no config file at all
+      const io = captureIo();
+      const code = runLedgerCli(
+        [
+          "append",
+          "--session",
+          "s",
+          "--skill",
+          "G2",
+          "--impact",
+          "i",
+          "--remediation",
+          "r",
+        ],
+        { cwd: tmpRoot, stdout: io.out, stderr: io.err },
+      );
+      expect(code).toBe(0);
+      expect(io.stdout.join("\n")).toMatch(/no-op/i);
+    });
+  });
+
   describe("validation errors", () => {
     it("exits 1 on absolute disciplineLedgerPath", () => {
       tmpRoot = mkProject("/etc/passwd");

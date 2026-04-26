@@ -20,8 +20,15 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, readFileSync, existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import {
+  mkdirSync,
+  readFileSync,
+  existsSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { DEFAULT_CONFIG, type HarnessConfig } from "../../config.js";
 import { appendDisciplineEntry, type DisciplineEntry } from "../ledger.js";
@@ -234,6 +241,48 @@ describe("appendDisciplineEntry", () => {
       // CR + LF are both collapsed to space, no literal CR remains
       expect(lastRow).not.toMatch(/\r/);
       expect(lastRow).toMatch(/line-a\s+line-b/);
+    });
+  });
+
+  describe("symlink rejection (F37-2)", () => {
+    it("rejects an existing ledger file when it is a symlink", () => {
+      const ledgerRel = "ledger.md";
+      const config = makeConfig(ledgerRel);
+      const realTarget = join(tmpRoot, "real-target.md");
+      writeFileSync(realTarget, "decoy\n");
+      symlinkSync(realTarget, join(tmpRoot, ledgerRel));
+
+      expect(() =>
+        appendDisciplineEntry(config, tmpRoot, sampleEntry),
+      ).toThrow(/symlink/i);
+    });
+
+    it("rejects when the parent directory escapes projectRoot via symlink", () => {
+      // Outside-projectRoot directory the attacker controls.
+      const escapeRoot = join(
+        tmpdir(),
+        `ledger-escape-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      );
+      mkdirSync(escapeRoot, { recursive: true });
+      try {
+        // .harness inside projectRoot is a symlink that points outside.
+        symlinkSync(escapeRoot, join(tmpRoot, ".harness"));
+
+        const config = makeConfig(".harness/ledger.md");
+        expect(() =>
+          appendDisciplineEntry(config, tmpRoot, sampleEntry),
+        ).toThrow(/symlink|escape|outside/i);
+      } finally {
+        rmSync(escapeRoot, { recursive: true, force: true });
+      }
+    });
+
+    it("accepts a regular real subdirectory (no symlink involved)", () => {
+      // Sanity: legitimate `.harness/` subdirectory still works after
+      // the realpath check is added.
+      const config = makeConfig(".harness/ledger.md");
+      const result = appendDisciplineEntry(config, tmpRoot, sampleEntry);
+      expect(result.status).toBe("appended");
     });
   });
 
