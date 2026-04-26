@@ -2834,7 +2834,26 @@ describe(".coderabbit.yaml — repository-level CodeRabbit config", () => {
   it("reviews.profile: chill (actionable-only、nitpick は assertive profile 専用の公式仕様)", () => {
     const reviews = coderabbitConfig["reviews"] as Record<string, unknown>;
     expect(reviews["profile"]).toBe("chill");
-    expect(reviews["request_changes_workflow"]).toBe(false);
+    // request_changes_workflow: true は APPROVED state 自動発火の前提
+    // (公式 changelog: request-changes-workflow)。これと
+    // /coderabbit-review Step 7.B.1 (CLEAR_STRONG) が連動する。
+    expect(reviews["request_changes_workflow"]).toBe(true);
+  });
+
+  it("reviews.pre_merge_checks: explicit pre-merge gate (公式キー + 個別 mode 固定)", () => {
+    const reviews = coderabbitConfig["reviews"] as Record<string, unknown>;
+    const checks = reviews["pre_merge_checks"] as Record<string, unknown>;
+    expect(checks).toBeTypeOf("object");
+    expect(checks).not.toBeNull();
+    // CodeRabbit schema v2 公式キー: custom_checks / description / docstrings
+    expect(checks["custom_checks"]).toBeTypeOf("object");
+    expect(checks["description"]).toBeTypeOf("object");
+    expect(checks["docstrings"]).toBeTypeOf("object");
+    // mode は意味論的に意図された値で個別固定 (drift guard、allowed-set だと
+    // custom_checks=error / docstrings=warning 等の昇格が test を通り抜ける)
+    expect((checks["custom_checks"] as Record<string, unknown>)["mode"]).toBe("warning");
+    expect((checks["description"] as Record<string, unknown>)["mode"]).toBe("warning");
+    expect((checks["docstrings"] as Record<string, unknown>)["mode"]).toBe("off");
   });
 
   it("reviews.auto_review: enabled + drafts=false + base_branches に ^main$ (regex 形式)", () => {

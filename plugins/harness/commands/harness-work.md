@@ -26,7 +26,7 @@ argument-hint: "[all|task-number|N-M|PR-number|fix|feature|parallel|breezing|seq
 > | 実装 task (Plans.md 駆動 / 単発) | `/harness-work` → `/tdd-implement` v2 / `/parallel-worktree` v1 |
 > | **merge orchestration (複数 PR squash merge)** | **`/harness-work` (`--merge`) → `/harness-merge-train` (v5 で新設)** |
 > | 単一 feature → dev/main の linear merge | `/branch-merge` (本 dispatcher のスコープ外) |
-> | Real CR 単一 PR | `/coderabbit-review` |
+> | Real CR 単一 PR (Stop polling + Merge ready 2 段判定) | **`/coderabbit-review` 必須経由、独自 polling 禁止** (`gh api ... reviews` / `commits/.../status` 直叩きは skill bypass) |
 > | Pseudo CR (push 前) | `/pseudo-coderabbit-loop --local` |
 > | Codex セカンドオピニオン | `/codex-team` |
 > | Codex 並列実装 / 検証 | `harness:codex-sync` agent |

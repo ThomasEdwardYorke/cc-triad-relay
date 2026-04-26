@@ -291,6 +291,14 @@ fi
 
 push 後に PR を作成すると CodeRabbit が自動レビュー開始。これをクリアするまで反復。
 
+> **`/coderabbit-review` skill 必須経由**。本 phase は内部で
+> `gh api ... reviews` や `gh api ... commits/.../status` を **直接 polling
+> しない** (skill bypass 禁止)。Stop polling 判定 (commit_status watch) と
+> Merge ready 判定 (4 signal AND) は `/coderabbit-review` Step 7 が責任を持つ。
+> Phase 6 は skill の結果 (`CLEAR_STRONG` / `CLEAR_SOFT`) を **そのまま信頼** し、
+> **独自 polling 禁止** (skill 必須経由、規律違反は consumer-side discipline
+> ledger に追記される)。
+
 ### 6.1 PR 作成
 
 ```bash
@@ -304,10 +312,15 @@ gh pr create --repo <owner>/<repo> --base <base> --head <head> \
 /coderabbit-review <pr-number>
 ```
 
-内部で以下を自動判定（Clear 3 段判定、`coderabbit-review.md` Step 7.1-7.4 準拠）:
-- **最強**: `reviews[-1].state == "APPROVED"`
-- **中**: unresolved CodeRabbit threads == 0
-- **阻害なし**: `rate limited` / `Reviews paused` marker が最新 15 分に不在
+内部で以下を自動判定（2 段判定、`coderabbit-review.md` Step 7.A / 7.B 準拠）:
+
+- **Step 7.A — Stop polling**: `commit_status pending → success "Review completed"`
+  を primary signal として watch (per-commit lifecycle、CR が新 commit ごとに発火)
+- **Step 7.B — Merge ready** (4 signal AND):
+  - **最強**: `reviews[-1].state == "APPROVED"` (`request_changes_workflow: true`)
+  - **中**: actionable=0 + unresolved CodeRabbit threads == 0
+  - **阻害なし**: `rate limited` / `Reviews paused` marker が最新 15 分に不在
+  - 欠落時は Step 6.5 で `@coderabbitai resolve` auto-issue → 30s wait → 再判定
 
 ### 6.3 Rate limit ヒット時の分岐（重要）
 
@@ -380,7 +393,7 @@ Codex が新たな critical を発見したら Phase 5 に戻って修正。appr
 - **テストカバレッジ**: 新機能は必ずテストを書く
 - **Codex レビュー (Phase 5)**: 全観点 OK
 - **疑似 CodeRabbit (Phase 5.5)**: `chill` 以上で actionable=0
-- **本物 CodeRabbit (Phase 6)**: Clear 3 段判定クリア
+- **本物 CodeRabbit (Phase 6)**: 2 段判定 (Stop polling 7.A / Merge ready 7.B) クリア
 - **既存テスト**: 全パス（1 つも壊さない）
 - **エントリポイント**: 全て同一フロー
 - **ドキュメント**: 最新状態
@@ -438,7 +451,7 @@ Codex がスタックした場合:
 |---|---|
 | `/pseudo-coderabbit-loop` | Phase 5.5 の核 / Phase 6 rate-limited 時の代替 |
 | `harness:coderabbit-mimic` | `/pseudo-coderabbit-loop` から呼ばれる Codex-based reviewer agent |
-| `/coderabbit-review` | Phase 6 の CodeRabbit 監視（Clear 3 段判定 + rate limit 検出） |
+| `/coderabbit-review` | Phase 6 の CodeRabbit 監視 (2 段判定 Stop polling / Merge ready + rate limit 検出) |
 | `/codex-team` | Phase 4 / 5 / 6.5 の Codex 呼出 |
 | `harness:codex-sync` | 並列 Codex 呼出用 agent |
 

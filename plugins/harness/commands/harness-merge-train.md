@@ -139,48 +139,17 @@ gh pr checks "$PR" --repo "$REPO" --required 2>&1 | grep -E '(fail|pending)' && 
   echo "PR #$PR has failing/pending required checks — fail-fast"; exit 1;
 }
 
-# 3. Clear 判定 (Step 7.4 マトリクス: APPROVED / unresolved=0 / blocker 不在)
-#    既存 /coderabbit-review skill Step 7.1-7.3 と同一 logic を本 phase で先取り評価
-#    BOT_LOGIN は harness.config.json の codeRabbit.botLogin から load (default: coderabbitai)
-#    config 値が "coderabbitai[bot]" のような suffix 付き形式でも double-suffix にならないよう
-#    BOT_LOGIN_RAW から `[bot]` を必ず剥がして normalize し、review API 用の suffix 付き形式は
-#    BOT_LOGIN_REVIEW として derive する。両 API (review = suffix 付き / comment = 素) を同時 match。
-BOT_LOGIN_RAW=$(test -f harness.config.json \
-  && jq -r '.codeRabbit.botLogin // "coderabbitai"' harness.config.json 2>/dev/null \
-  || echo "coderabbitai")
-case "$BOT_LOGIN_RAW" in
-  *"[bot]") BOT_LOGIN="${BOT_LOGIN_RAW%\[bot\]}" ;;
-  *)        BOT_LOGIN="$BOT_LOGIN_RAW" ;;
-esac
-BOT_LOGIN_REVIEW="${BOT_LOGIN}[bot]"
-
-CR_STATE=$(gh api "repos/${REPO}/pulls/${PR}/reviews" \
-  --jq "[.[] | select(.user.login==\"$BOT_LOGIN\" or .user.login==\"$BOT_LOGIN_REVIEW\")] | last | .state // empty")
-UNRESOLVED=$(gh api graphql -f query='
-  query($owner: String!, $name: String!, $pr: Int!) {
-    repository(owner: $owner, name: $name) {
-      pullRequest(number: $pr) {
-        reviewThreads(first: 100) {
-          nodes { isResolved comments(first: 1) { nodes { author { login } } } }
-        }
-      }
-    }
-  }' -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F pr="$PR" \
-  --jq "[.data.repository.pullRequest.reviewThreads.nodes[]
-    | select(.comments.nodes[0].author.login == \"$BOT_LOGIN\" or .comments.nodes[0].author.login == \"$BOT_LOGIN_REVIEW\")
-    | select(.isResolved == false)] | length")
-
-# 4. rate-limit marker (15 分以内に active なら blocker)
-RATE_LIMITED=$(gh pr view "$PR" --repo "$REPO" --json comments \
-  --jq "[.comments[] | select(.author.login == \"$BOT_LOGIN\" or .author.login == \"$BOT_LOGIN_REVIEW\")
-         | select(.body | contains(\"rate limited by coderabbit.ai\"))] | last | .createdAt // empty")
+# 3. CR Clear / rate-limit / blocker の判定は本 phase では行わない
+#    (Skill connectivity 原則: M0 は trivial state check のみ、Real CR Clear 判定は
+#    `/coderabbit-review` skill (M5) に **完全委譲**。本 phase で gh api .../reviews や
+#    GraphQL unresolved query を直接走らせると skill bypass になる)
 ```
 
 **判定** (mergeable / mergeStateStatus 両方を見る、stale-but-mergeable を bypass しない):
 - `MERGEABLE=CONFLICTING` → M1 (rebase) に進む
 - `MERGE_STATE=BEHIND` (mergeable=MERGEABLE でも base ahead) → M1 (rebase) に進む
 - `MERGE_STATE=BLOCKED` / `DIRTY` / `UNSTABLE` → fail-fast (該当 PR で停止、user 判断)
-- `MERGEABLE=MERGEABLE` + `MERGE_STATE=CLEAN` + Clear (`CR_STATE=APPROVED` または `UNRESOLVED=0`) + rate-limit clear → 単一の skip path で **M2/M3/M4 をスキップして M5 へ** (push 不要、Clear 確定済)
+- `MERGEABLE=MERGEABLE` + `MERGE_STATE=CLEAN` → M2 (pre-merge gate) へ進む。**Clear / rate-limit 判定は M5 の `/coderabbit-review` skill が責任を持つ** (M0 で先取り判定しない、skill bypass 防止)
 - それ以外 → M2 (pre-merge gate) を強制実行
 
 ### M1 — Rebase (mergeable=CONFLICTING または stale 時)
@@ -315,6 +284,15 @@ done`,
 
 ### M5 — Real CodeRabbit Clear 判定 (G6)
 
+> **`/coderabbit-review` skill 必須経由**。本 phase は内部で
+> `gh api ... reviews` や `gh api ... commits/.../status` を **直接 polling
+> しない** (skill bypass 禁止)。Stop polling 判定 (commit_status watch) と
+> Merge ready 判定 (4 signal AND) は `/coderabbit-review` Step 7 が責任を持つ。
+> M5 は skill の結果 (`CLEAR_STRONG` / `CLEAR_SOFT`) を **そのまま信頼** し、
+> **独自 polling 禁止** (規律違反は consumer-side discipline ledger に
+> append-only 自動追記される、`harness-work.md` Skill connectivity 原則 box
+> 参照)。
+
 ```text
 # テンプレート表記 (<PR> は当該 PR 番号の placeholder、coordinator が実値を埋込)
 Skill({skill: "coderabbit-review", args: "<PR>"})
@@ -323,15 +301,17 @@ Skill({skill: "coderabbit-review", args: "<PR>"})
 Skill({skill: "coderabbit-review", args: "<pr-number-literal>"})
 ```
 
-`/coderabbit-review` skill が Step 7.4 マトリクスで Clear 確定するまで監視 +
+`/coderabbit-review` skill が Step 7.B.5 マトリクスで Clear 確定するまで監視 +
 反復:
 
-| CLEAR (strong) | CLEAR_SOFT | blocker | 結果 |
-|---|---|---|---|
-| `state == APPROVED` | — | — | **完全 clear** → M6 |
-| — | `unresolved == 0` | rate-limit 不在 | **ソフト clear** → M6 (APPROVED でない旨記録) |
-| false | false | — | **未 clear** → finding 反映 → M3 へ戻る |
-| — | — | rate-limit active | **blocker** → cooldown 待機 or `/pseudo-coderabbit-loop <pr-number>` に切替 |
+| STOP_POLLING | APPROVED | ACTIONABLE | UNRESOLVED | blocker | 結果 |
+|---|---|---|---|---|---|
+| ✅ | ✅ | 0 | — | 不在 | **CLEAR_STRONG** → M6 |
+| ✅ | — | 0 | 0 | 不在 | **CLEAR_SOFT** → M6 (APPROVED でない旨記録) |
+| ✅ | — | >0 | — | 不在 | **未 clear** → finding 反映 → M3 へ戻る |
+| ✅ | — | 0 | >0 | 不在 | **resolve 必要** → skill が Step 6.5 で `@coderabbitai resolve` auto-issue → 30s wait → 再判定 |
+| ❌ | — | — | — | — | **Stop polling 未成立** → skill が Step 3 polling 継続 |
+| — | — | — | — | active | **blocker** → cooldown 待機 or `/pseudo-coderabbit-loop <pr-number>` に切替 |
 
 `--max-iterations=N` (default 5) で M5 → M3 → M5 ループ上限を制御。超過時は
 fail-fast + ledger 追記。
@@ -430,7 +410,7 @@ archive ファイル名は `archive/session-<YYYY-MM-DD>-merge-train-<lead-pr>.m
 |---|---|
 | M2.1 で codex-sync agent spawn 失敗 → 手動 codex 直叩き fallback | "G4 違反: codex-sync agent unavailable, used manual codex exec" |
 | M2.2 で `/pseudo-coderabbit-loop` skill 失敗 → 直接 `coderabbit-mimic` agent fallback | "G5 部分違反: skill 経由失敗、agent 直接呼出 fallback" |
-| M5 で `/coderabbit-review` skill 失敗 → `gh api` polling fallback | "G6 違反: skill 経由失敗、gh api 直叩き fallback" |
+| M5 で `/coderabbit-review` skill 失敗 → fail-fast (gh api 直叩き fallback **禁止**) | "G6 違反: skill 経由失敗、fail-fast (skill bypass 禁止)" |
 | M6 で `/codex-team` skill 失敗 → 手動 Codex 呼出 fallback | "G7 違反: skill 経由失敗、手動 codex 呼出 fallback" |
 | `--no-skill-fallback` flag が指定されたが skill 失敗 | "fail-fast (skill 必須経路で代替不能)" |
 
