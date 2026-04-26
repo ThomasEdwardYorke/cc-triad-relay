@@ -608,7 +608,7 @@ if mode != "merge" and any(task.has_label("wt:avoid") for task in selected_tasks
 
 **merge mode の `detect_merge_orchestration()` 4 シグナル** (詳細は前掲「判定フロー」section):
 
-1. **PR 番号 ≥ 2** が positional 引数に含まれる (例: `/harness-work 30 31 32`)
+1. **PR 番号 ≥ 2** が positional 引数に含まれる (例: `/harness-work <pr-a> <pr-b> <pr-c>`)
 2. **handoff backlog の Top Priority に merge keyword** あり ("merge orchestration" / "Clear 判定 + merge" / "/harness-merge-train" 等)
 3. **`gh pr list --state=open` で自分の open PR ≥ 2 件**、かつ全て CI green
 4. **ユーザー明示 `--merge` flag**
@@ -780,8 +780,8 @@ Auto Mode Detection 結果:
 
 | 検出シグナル | PR args の構築方法 |
 |---|---|
-| Signal 1 (positional PR ≥ 2) | `args.positional` の数字 token を順序保持で渡す: `"30 31 32"` |
-| Signal 2 (handoff backlog merge keyword) | backlog から `pr:` field を抽出、PR 番号順にソート: `"31 33 34"` |
+| Signal 1 (positional PR ≥ 2) | `args.positional` の数字 token を順序保持で渡す: `"<pr-a> <pr-b> <pr-c>"` |
+| Signal 2 (handoff backlog merge keyword) | backlog から `pr:` field を抽出、PR 番号順にソート: `"<pr-a> <pr-b> <pr-c>"` |
 | Signal 3 (open PR ≥ 2 + guard 通過) | `gh pr list --state=open --author=@me --json=number` の number array を昇順 |
 | Signal 4 (`--merge` flag のみ) | `args.positional` から数字 token、または `--filter` 経由で動的 fetch |
 
@@ -789,8 +789,8 @@ Auto Mode Detection 結果:
 # テンプレート表記 (<PROFILE> は spec 上のプレースホルダ)
 Skill({skill: "harness-merge-train", args: "<PR# ...> --profile=<PROFILE>"})
 
-# 実際の呼出例 (PROFILE=assertive、PR=30 31 32 を merge する場合)
-Skill({skill: "harness-merge-train", args: "30 31 32 --profile=assertive"})
+# 実際の呼出例 (PROFILE=assertive、PR を 3 件 merge する場合のテンプレート、coordinator が実 PR 番号を埋める)
+Skill({skill: "harness-merge-train", args: "<pr-a> <pr-b> <pr-c> --profile=assertive"})
 
 # --filter 経由 (positional 引数なしで自分の open PR を全件)
 Skill({skill: "harness-merge-train", args: "--filter='.[] | select(.author.login==\"me\" and .state==\"OPEN\")' --profile=chill"})

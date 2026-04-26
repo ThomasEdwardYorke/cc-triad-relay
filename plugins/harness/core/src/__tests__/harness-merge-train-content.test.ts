@@ -216,9 +216,23 @@ describe("/harness-merge-train spec (commands/harness-merge-train.md)", () => {
   // 8. 入力仕様 (positional + flags)
   // -----------------------------------------------------------------
   describe("入力仕様", () => {
-    it("複数 PR 番号を positional で受ける", () => {
+    it("複数 PR 番号を positional で受ける (placeholder 表記のみ許容)", () => {
+      // R3 generality: spec doc には生 PR 番号 literal を書かない、必ず
+      // <pr-a> <pr-b> ... 等の placeholder を使う。test 自体も regex で
+      // bare digit literal を許容する pattern (`\d+\s+\d+\s+\d+` 等) を使わない。
       expect(content).toMatch(/PR[\s\S]{0,80}?番号|PR\s*number/);
-      expect(content).toMatch(/(?:複数|multiple|N\+|\d+\s+\d+\s+\d+|`30 31 32 33 34`|positional)/);
+      expect(content).toMatch(/(?:複数|multiple|positional|<pr-[a-z]+>\s+<pr-[a-z]+>|<pr-?(?:number|id)?>)/i);
+    });
+
+    it("spec body に生 PR 番号 literal が含まれていない (R3 generality)", () => {
+      // 連続する数字 token (例: `<a> <b>`, `<a> <b> <c>`, `<a>,<b>,<c>` の bare-digit 形)
+      // を spec doc から完全排除する。time/duration / sleep / `30 分` /
+      // `60-90 min` 等の数字は single token なので regex から除外。連続
+      // PR-number-like literal のみ禁止。検出 pattern: 数字を 2-5 個、
+      // 空白 or カンマで区切ったもの。dash 区切り (range 表記) は match しない。
+      const violations = content.match(/(?<![<>\w])\d{1,4}(?:[\s,]+\d{1,4}){1,4}(?![\w/-])/g);
+      const filtered = violations ?? [];
+      expect(filtered, `Raw PR-number literals found in spec: ${JSON.stringify(filtered)}`).toEqual([]);
     });
 
     it("--filter で gh pr list 経由フィルタ可能", () => {

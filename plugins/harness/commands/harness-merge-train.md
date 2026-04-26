@@ -60,12 +60,12 @@ G8 (handoff sync) の各品質ゲートを **必ず** 内挿することで、�
 
 | 状況 | 起動例 |
 |---|---|
-| 複数 PR (引数指定) | `/harness-merge-train 30 31 32 33 34` |
+| 複数 PR (引数指定) | `/harness-merge-train <pr-a> <pr-b> <pr-c> <pr-d> <pr-e>` |
 | 自分の open PR を全て | `/harness-merge-train --filter='.[] \| select(.author.login=="me" and .state=="OPEN")'` |
 | 特定 label 付き PR を一括 | `/harness-merge-train --filter='.[] \| select(.labels[].name=="ready-to-merge")'` |
-| merge 順序指定 | `/harness-merge-train 30 31 --order=30,31` (default は番号昇順) |
-| plan 表示のみ | `/harness-merge-train 30 31 --dry-run` |
-| profile 指定 | `/harness-merge-train 30 --profile=assertive` |
+| merge 順序指定 | `/harness-merge-train <pr-a> <pr-b> --order=<pr-a>,<pr-b>` (default は番号昇順) |
+| plan 表示のみ | `/harness-merge-train <pr-a> <pr-b> --dry-run` |
+| profile 指定 | `/harness-merge-train <pr> --profile=assertive` |
 
 ## 起動経路
 
@@ -88,7 +88,7 @@ slash command 動的置換で **未サポート**、`$ARGUMENTS` / `$ARGUMENTS[N
 複数 PR 番号を space 区切りで列挙:
 
 ```text
-/harness-merge-train 30 31 32 33 34
+/harness-merge-train <pr-a> <pr-b> <pr-c> <pr-d> <pr-e>
 ```
 
 各 PR 番号は数字のみ受理 (regex `^[0-9]+$`、誤ったときは fail-fast)。
@@ -98,7 +98,7 @@ slash command 動的置換で **未サポート**、`$ARGUMENTS` / `$ARGUMENTS[N
 | flag | 説明 | default |
 |---|---|---|
 | `--filter=<jq>` | `gh pr list --json` 経由 jq filter (positional 引数と排他) | - |
-| `--order=<順序>` | merge 順序を明示 (`30,31,32` のような CSV)。未指定なら PR 番号昇順 | 昇順 |
+| `--order=<順序>` | merge 順序を明示 (`<pr-a>,<pr-b>,<pr-c>` のような CSV)。未指定なら PR 番号昇順 | 昇順 |
 | `--dry-run` | plan + 委譲先のみ表示、書込 / API call なし | false |
 | `--profile=chill\|assertive\|strict` | Pseudo CR / `coderabbit-mimic` agent profile | env / yaml resolve |
 | `--max-iterations=N` | M2 / M5 の review-loop 上限 (1 PR あたり) | 5 |
@@ -229,7 +229,7 @@ Skill({skill: "codex-team", args: "review --uncommitted"})
 Agent({
   subagent_type: "harness:codex-sync",
   description: "M2.1 fix verification",
-  name: "merge-train-codex-<PR>",  # <PR> は spec 上のプレースホルダ、coordinator が実値で置換 (例: "merge-train-codex-30")
+  name: "merge-train-codex-<pr-id>",  # <pr-id> は spec 上のプレースホルダ、coordinator が実 PR 番号で置換
   prompt: "...",
   run_in_background: false
 })
@@ -319,8 +319,8 @@ done`,
 # テンプレート表記 (<PR> は当該 PR 番号の placeholder、coordinator が実値を埋込)
 Skill({skill: "coderabbit-review", args: "<PR>"})
 
-# 実際の呼出例 (PR=30 の場合)
-Skill({skill: "coderabbit-review", args: "30"})
+# 実際の呼出例 (coordinator が PR 番号を実値で埋めた場合のテンプレート)
+Skill({skill: "coderabbit-review", args: "<pr-number-literal>"})
 ```
 
 `/coderabbit-review` skill が Step 7.4 マトリクスで Clear 確定するまで監視 +
@@ -449,9 +449,9 @@ section を参照 (project-local rule、harness plugin core からは `<consumer
 
 | Order | PR# | branch | base | mergeable | M0 verdict |
 |---|---|---|---|---|---|
-| 1 | 30 | feature/foo | main | MERGEABLE | proceed-to-M3 |
-| 2 | 31 | feature/bar | main | CONFLICTING | proceed-to-M1 (rebase) |
-| 3 | 32 | feature/baz | main | UNKNOWN | proceed-to-M0 (re-evaluate) |
+| 1 | <pr-a> | feature/foo | main | MERGEABLE | proceed-to-M3 |
+| 2 | <pr-b> | feature/bar | main | CONFLICTING | proceed-to-M1 (rebase) |
+| 3 | <pr-c> | feature/baz | main | UNKNOWN | proceed-to-M0 (re-evaluate) |
 
 Estimated phases: 3 PR × 10 phases = up to 30 skill invocations
 Estimated duration: 30-90 min (CI wait 含む)
