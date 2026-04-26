@@ -120,7 +120,7 @@ slash command 動的置換で **未サポート**、`$ARGUMENTS` / `$ARGUMENTS[N
 
 | 優先順位 | source | 解決ロジック | 実装状況 |
 |---|---|---|---|
-| 1 (最高) | `--profile=<value>` flag | 本 skill 引数解析で直接読む。allowlist (chill / assertive / strict) 外なら WARN を 1 行 stderr に出し次 source へ fallthrough | active (本 skill + `/pseudo-coderabbit-loop`) |
+| 1 (最高) | `--profile=<value>` flag | 本 skill の引数解析で直接読み取る。allowlist (chill / assertive / strict) 外なら WARN を 1 行 stderr に出し次 source へ fallthrough | active (本 skill + `/pseudo-coderabbit-loop`) |
 | 2 | env `HARNESS_CR_PROFILE` | `/pseudo-coderabbit-loop` Step 0 が trim 後 allowlist 検証。harness-local 拡張なので strict も許可、invalid は WARN + 次 source へ fallthrough | active (`/pseudo-coderabbit-loop` Step 0) |
 | 3 | `harness.config.json tddEnforce.pseudoCoderabbitProfile` | loadConfig で validate 済の field を `/pseudo-coderabbit-loop` Step 0 が `jq` 経由で読む。harness-local 拡張なので strict も許可 | active (`/pseudo-coderabbit-loop` Step 0) |
 | 4 | `.coderabbit.yaml` の `reviews.profile` | `/pseudo-coderabbit-loop` が yq / PyYAML / stdlib regex の 3 段 fallback で読む。allowlist (chill / assertive) 外は WARN + 次 source へ fallthrough (公式 schema 範囲外、strict は yaml 経由不可) | active (`/pseudo-coderabbit-loop` Step 0) |
