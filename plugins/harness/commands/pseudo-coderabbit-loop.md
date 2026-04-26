@@ -193,21 +193,39 @@ if [ -n "$ENV_PROFILE_RAW" ]; then
 fi
 
 # 3. CFG_PROFILE — harness.config.json.tddEnforce.pseudoCoderabbitProfile
-# loadConfig が validate 済の前提だが、jq 経路の defensive check も併設
-# (raw json を読むため、validate 漏れがあれば fallthrough)。
+# loadConfig が validate 済の前提だが、bash 経路で raw JSON を直接読むため
+# defensive check + 失敗経路の透明化を併設する。
+#
+# 過去の silent fallthrough bug への対応 (Codex G7 Major):
+#   - jq 不在時 → これまで silent で chill に倒れていた → harness.config.json で
+#     strict/assertive を強制したつもりが効かない事故が発生 → WARN を必ず出す
+#   - jq exit != 0 (malformed JSON 等) → 同様に silent fallthrough → 明示 WARN
+#   - jq stderr 出力 → /dev/null に捨てず一旦 capture して内容で fallthrough or 警告
 CFG_PROFILE=""
-if [ -f harness.config.json ] && command -v jq >/dev/null 2>&1; then
-  CFG_PROFILE_RAW=$(jq -r '.tddEnforce.pseudoCoderabbitProfile // ""' harness.config.json 2>/dev/null || true)
-  case "$CFG_PROFILE_RAW" in
-    chill|assertive|strict)
-      CFG_PROFILE="$CFG_PROFILE_RAW"
-      ;;
-    "")
-      ;;
-    *)
-      echo "WARN: harness.config.json tddEnforce.pseudoCoderabbitProfile='$CFG_PROFILE_RAW' is invalid; falling through" >&2
-      ;;
-  esac
+if [ -f harness.config.json ]; then
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "WARN: harness.config.json exists but jq is not installed; CFG_PROFILE source will be skipped (use env HARNESS_CR_PROFILE or --profile flag instead)" >&2
+  else
+    JQ_STDERR=$(mktemp)
+    CFG_PROFILE_RAW=$(jq -r '.tddEnforce.pseudoCoderabbitProfile // ""' harness.config.json 2>"$JQ_STDERR")
+    JQ_EXIT=$?
+    if [ "$JQ_EXIT" -ne 0 ]; then
+      JQ_ERR_MSG=$(tr '\n' ' ' < "$JQ_STDERR" | head -c 300)
+      echo "WARN: jq failed to parse harness.config.json (exit=$JQ_EXIT, stderr='$JQ_ERR_MSG'); CFG_PROFILE source skipped (config 修復推奨)" >&2
+      CFG_PROFILE_RAW=""
+    fi
+    rm -f "$JQ_STDERR"
+    case "$CFG_PROFILE_RAW" in
+      chill|assertive|strict)
+        CFG_PROFILE="$CFG_PROFILE_RAW"
+        ;;
+      "")
+        ;;
+      *)
+        echo "WARN: harness.config.json tddEnforce.pseudoCoderabbitProfile='$CFG_PROFILE_RAW' is invalid; falling through" >&2
+        ;;
+    esac
+  fi
 fi
 
 # 4. YAML_PROFILE — .coderabbit.yaml から profile を取得 (3 段フォールバック)
@@ -217,7 +235,12 @@ fi
 PROFILE=""
 if [ -f .coderabbit.yaml ]; then
   if command -v yq >/dev/null 2>&1; then
-    PROFILE=$(yq '.reviews.profile // ""' .coderabbit.yaml 2>/dev/null || true)
+    # `yq -r` を強制 (raw output) + xargs で whitespace 正規化。
+    # mike-farah/yq (Go 製) は default raw、kislyuk/yq (Python wrapper) は quote-wrap
+    # する場合がある。`-r` flag を両 implementations 共通で raw 化、xargs で trim。
+    # 過去 silent fallthrough bug (Codex G7 Major): kislyuk yq から `'assertive'`
+    # (quote 付き) が返ると後続の case match が外れて default に倒れていた。
+    PROFILE=$(yq -r '.reviews.profile // ""' .coderabbit.yaml 2>/dev/null | xargs || true)
   fi
   if [ -z "$PROFILE" ] && command -v python3 >/dev/null 2>&1; then
     PROFILE=$(python3 -c "
