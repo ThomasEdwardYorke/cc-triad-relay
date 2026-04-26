@@ -572,8 +572,13 @@ describe("bin/cr-cli — binary name regression guard (coderabbit, not cr)", () 
     // ではなく、import / destructure 形式での取得を assert)。bin と core で binary 名が
     // drift しないための structural guard。
     expect(binCrCli).toMatch(
-      // ES module destructuring assignment from cliModule (現行実装)
-      /(?:const|let|var)\s*\{\s*(?:[A-Za-z_$][\w$]*\s*,\s*)*CR_BINARY(?:\s*,\s*[A-Za-z_$][\w$]*)*\s*\}\s*=\s*cliModule\b/,
+      // ES module destructuring assignment from cliModule with `const` (immutable binding 強制)
+      /const\s*\{\s*(?:[A-Za-z_$][\w$]*\s*,\s*)*CR_BINARY(?:\s*,\s*[A-Za-z_$][\w$]*)*\s*\}\s*=\s*cliModule\b/,
+    );
+    // CR review round 5 指摘: `let` / `var` でも tests が通ると再代入で SoT が破壊
+    // される余地がある。CR_BINARY を含む let/var destructure は禁止 (再代入経路 close)。
+    expect(binCrCli).not.toMatch(
+      /\b(?:let|var)\s*\{[^}]*\bCR_BINARY\b[^}]*\}\s*=\s*cliModule\b/,
     );
     // 起動時 sanity check: CR_BINARY が string で非空であることを bin が検証
     expect(binCrCli).toMatch(/typeof\s+CR_BINARY\s*!==\s*["']string["']/);
