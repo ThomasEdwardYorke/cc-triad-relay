@@ -90,6 +90,13 @@ export const DEFAULT_CONFIG = {
         maxPseudoLoopIterations: 5,
         proBucketSize: 5,
         proBucketWindowMinutes: 60,
+        plan: "pro",
+        // PR review bucket size — mirrors `proBucketSize` on the Pro
+        // default. New code paths read `prReviewBucketSize` so OSS
+        // projects can drop it to 2 without touching the legacy field.
+        prReviewBucketSize: 5,
+        // CLI review bucket size — `0` on Pro / Free, OSS sets `2`.
+        cliReviewBucketSize: 0,
     },
     tooling: {
         // Deliberately excludes `backend/` — plugin ships stack-neutral,
@@ -220,7 +227,10 @@ function mergeConfig(partial) {
             ...DEFAULT_CONFIG.tddEnforce,
             ...(partial.tddEnforce ?? {}),
         }),
-        codeRabbit: { ...DEFAULT_CONFIG.codeRabbit, ...(partial.codeRabbit ?? {}) },
+        codeRabbit: validateCodeRabbit({
+            ...DEFAULT_CONFIG.codeRabbit,
+            ...(partial.codeRabbit ?? {}),
+        }),
         tooling: { ...DEFAULT_CONFIG.tooling, ...(partial.tooling ?? {}) },
         release: validateRelease({
             ...DEFAULT_CONFIG.release,
@@ -317,6 +327,46 @@ function validateTddEnforce(cfg) {
         };
     }
     return cfg;
+}
+/**
+ * Mirror of `validateTddEnforce` for the codeRabbit section. Guards
+ * against:
+ *   1. `plan` set outside the `CodeRabbitPlan` union — typos
+ *      (`"OSS"`, `"open-source"`) silently fall back to `"pro"` with a
+ *      stderr warning rather than corrupting downstream bucket
+ *      arithmetic.
+ *   2. `prReviewBucketSize` / `cliReviewBucketSize` set to a negative
+ *      integer or a non-finite number — clamped to `0` with a
+ *      warning so the bucket predictor never receives a value that
+ *      would underflow.
+ *
+ * The function is total (always returns a valid `CodeRabbitConfig`),
+ * matching the existing behaviour of `validateTddEnforce` /
+ * `validateRelease`. Callers spread `DEFAULT_CONFIG.codeRabbit` first
+ * so any field not provided by the user keeps its default.
+ */
+const VALID_CODERABBIT_PLANS = [
+    "free",
+    "oss",
+    "pro",
+];
+function validateCodeRabbit(cfg) {
+    let next = cfg;
+    if (!VALID_CODERABBIT_PLANS.includes(next.plan)) {
+        process.stderr.write(`[harness config] codeRabbit.plan=${JSON.stringify(next.plan)} is not one of ${JSON.stringify(VALID_CODERABBIT_PLANS)}; falling back to "${DEFAULT_CONFIG.codeRabbit.plan}".\n`);
+        next = { ...next, plan: DEFAULT_CONFIG.codeRabbit.plan };
+    }
+    if (!Number.isFinite(next.prReviewBucketSize) ||
+        next.prReviewBucketSize < 0) {
+        process.stderr.write(`[harness config] codeRabbit.prReviewBucketSize=${JSON.stringify(next.prReviewBucketSize)} must be a non-negative finite number; clamping to 0.\n`);
+        next = { ...next, prReviewBucketSize: 0 };
+    }
+    if (!Number.isFinite(next.cliReviewBucketSize) ||
+        next.cliReviewBucketSize < 0) {
+        process.stderr.write(`[harness config] codeRabbit.cliReviewBucketSize=${JSON.stringify(next.cliReviewBucketSize)} must be a non-negative finite number; clamping to 0.\n`);
+        next = { ...next, cliReviewBucketSize: 0 };
+    }
+    return next;
 }
 // `VALID_IMAGE_REASONING_EFFORTS` and `VALID_IMAGE_ASPECT_RATIOS` are
 // imported from `./models/resolver.js` at the top of this file —

@@ -159,6 +159,16 @@ describe("loadConfig / loadConfigSafe", () => {
       expect(DEFAULT_CONFIG.codeRabbit.proBucketWindowMinutes).toBe(60);
     });
 
+    it("codeRabbit default plan / prReviewBucketSize / cliReviewBucketSize", () => {
+      // Default plan = "pro" (5 PR/h, no CLI bucket). OSS plan opt-in
+      // is via harness.config.json override; the legacy proBucketSize /
+      // proBucketWindowMinutes fields stay populated for backwards
+      // compatibility with Pro-only consumers that already wired them.
+      expect(DEFAULT_CONFIG.codeRabbit.plan).toBe("pro");
+      expect(DEFAULT_CONFIG.codeRabbit.prReviewBucketSize).toBe(5);
+      expect(DEFAULT_CONFIG.codeRabbit.cliReviewBucketSize).toBe(0);
+    });
+
     it("loadConfig deep-merges worktree and preserves default parentDir when user only overrides maxParallel", () => {
       writeFileSync(
         join(projectRoot, "harness.config.json"),
@@ -202,6 +212,76 @@ describe("loadConfig / loadConfigSafe", () => {
       expect(cfg.codeRabbit.proBucketSize).toBe(5);
       expect(cfg.codeRabbit.proBucketWindowMinutes).toBe(60);
       expect(cfg.codeRabbit.approvedStateAsClear).toBe(true);
+    });
+
+    it("loadConfig honours codeRabbit.plan = oss with separate PR + CLI buckets", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          codeRabbit: {
+            plan: "oss",
+            prReviewBucketSize: 2,
+            cliReviewBucketSize: 2,
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.codeRabbit.plan).toBe("oss");
+      expect(cfg.codeRabbit.prReviewBucketSize).toBe(2);
+      expect(cfg.codeRabbit.cliReviewBucketSize).toBe(2);
+      // Backwards compatibility: pre-existing Pro-only fields stay
+      // populated even when plan flips to oss so older callers reading
+      // proBucketSize keep working.
+      expect(cfg.codeRabbit.proBucketSize).toBe(5);
+      expect(cfg.codeRabbit.proBucketWindowMinutes).toBe(60);
+    });
+
+    it("validateCodeRabbit falls back to default when plan is outside the union", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          codeRabbit: {
+            plan: "OSS",
+          },
+        }),
+      );
+      withCapturedStderr((writes) => {
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.codeRabbit.plan).toBe("pro");
+        expect(writes.join("")).toMatch(/codeRabbit\.plan.*"OSS".*pro/);
+      });
+    });
+
+    it("validateCodeRabbit clamps negative prReviewBucketSize to 0 with a warning", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          codeRabbit: {
+            prReviewBucketSize: -3,
+          },
+        }),
+      );
+      withCapturedStderr((writes) => {
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.codeRabbit.prReviewBucketSize).toBe(0);
+        expect(writes.join("")).toMatch(/prReviewBucketSize.*-3.*non-negative/);
+      });
+    });
+
+    it("validateCodeRabbit clamps negative cliReviewBucketSize to 0 with a warning", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          codeRabbit: {
+            cliReviewBucketSize: -1,
+          },
+        }),
+      );
+      withCapturedStderr((writes) => {
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.codeRabbit.cliReviewBucketSize).toBe(0);
+        expect(writes.join("")).toMatch(/cliReviewBucketSize.*-1.*non-negative/);
+      });
     });
 
     it("loadConfig deep-merges work.qualityGates without clobbering other gates", () => {

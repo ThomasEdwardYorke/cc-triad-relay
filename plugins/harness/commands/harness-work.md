@@ -749,13 +749,15 @@ for task in selected_tasks:
 
 #### 4.4 Test Pipeline モード
 
-API 不使用のコストゼロパイプライン確認 (既存ロジック維持):
-- 依存関係 import 確認
-- プロジェクト固有のデータディレクトリ (`harness.config.json` の `protectedDirectories` / `.claude/rules/*.md` で宣言) の存在・スキーマ確認 (**project-local skill に委譲推奨**)
-- 主要クラスの import 確認
-- 出力 artifact スキーマ検証 (存在時)
+API 不使用のコストゼロパイプライン確認は本 skill 直下では実装しない。
+project の test pipeline 検証 (依存関係 import / データディレクトリ存在 / 主要クラス import / 出力 artifact schema 等) は **project-local skill に完全委譲** する。canonical layout は以下のいずれか (どちらも有効、project の好みで選択):
 
-`/tdd-implement` への委譲はしない (independent flow)。
+- `<consumer>/.claude/skills/<project>-test-pipeline/` — 専用 skill ディレクトリ
+- `<consumer>/.claude/skills/<project>-local-rules/references/pipeline-check.md` — local-rules skill 配下 reference (CHANGELOG v4.2 / `generality.test.ts` の commentary と整合する canonical example)
+
+`harness.config.json` の `protectedDirectories` / `.claude/rules/*.md` で宣言された project 固有資産は、generic な harness core では schema を持ち得ないためである。
+
+`/tdd-implement` への委譲も行わない (independent flow)。本モードを呼び出す場合、`/harness-work` は detection 後に project-local skill に直接 dispatch するのが通常経路。
 
 #### 4.5 Dry-run モード
 
@@ -827,7 +829,9 @@ Skill({skill: "harness-merge-train", args: "--filter='.[] | select(.author.login
    - Phase 5.5 疑似 CodeRabbit clean ✅
    - Phase 6 本物 CodeRabbit Clear (APPROVED or unresolved=0) ✅
    - Phase 7 Codex セカンドオピニオン ✅
-3. **省略されていたら `/harness-work --resume <task>` で再実行**
+3. **省略されていた場合**: 該当タスク (Plans-mode なら Plans.md 担当表の task-id、Handoff-mode なら `BacklogEntry.id`) を引数にして `/harness-work <task-id>` を再 dispatch。`--resume` フラグは存在しない (本 skill の `argument-hint` を参照)、再 dispatch は通常の task-id 経路で行う。
+
+   **task-id は single-token (空白不可)**: 本 skill の引数 parser は `read -r -a ARGS_TOKENS <<< "$ARGUMENTS"` で word splitting するため、Plans-mode 担当表の task-id / Handoff-mode `BacklogEntry.id` の双方で **空白文字を含まない単一 token** を必須とする。`argument-hint` の `[task-number|N-M|PR-number|...]` も同じ single-token 前提で書かれている (例: `T-001` / `42-44` / `pr-123`、空白入り ID は parser 不整合)。consumer 側 (Plans.md / backlog.md) の規約として ID 命名で空白を許さない設計を強制すること。
 
 #### Plans-mode (default)
 

@@ -275,7 +275,25 @@
         "approvedStateAsClear": { "type": "boolean", "default": true },
         "maxPseudoLoopIterations": { "type": "integer", "minimum": 1, "default": 5 },
         "proBucketSize": { "type": "integer", "minimum": 1, "default": 5 },
-        "proBucketWindowMinutes": { "type": "integer", "minimum": 1, "default": 60 }
+        "proBucketWindowMinutes": { "type": "integer", "minimum": 1, "default": 60 },
+        "plan": {
+          "type": "string",
+          "enum": ["free", "oss", "pro"],
+          "default": "pro",
+          "description": "CodeRabbit subscription tier driving bucket allocation. `pro` (default) keeps the legacy single-bucket prediction (5 PR reviews / hour). `oss` enables the dual PR + CLI buckets the OSS plan exposes. `free` documents that the project has no automated review."
+        },
+        "prReviewBucketSize": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 5,
+          "description": "PR review bucket size per `proBucketWindowMinutes` window. On Pro (default) this is 5. On OSS, CodeRabbit publishes a lower per-hour PR quota — set this to `2` explicitly when `plan` is flipped to `oss` (no automatic fallback is applied; mergeConfig keeps the user value verbatim). New code paths read this field; `proBucketSize` is preserved for backwards compatibility."
+        },
+        "cliReviewBucketSize": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "CLI review bucket size per `proBucketWindowMinutes` window. Default `0` means the CLI path is unavailable for this plan (Pro / Free). OSS exposes `2/h` independent of the PR bucket — set this to `2` explicitly when `plan` is flipped to `oss` (no automatic fallback)."
+        }
       }
     },
     "tooling": {
