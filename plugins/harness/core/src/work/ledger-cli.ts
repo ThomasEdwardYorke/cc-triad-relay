@@ -25,6 +25,7 @@
  * module can be invoked directly via `node` / `tsx`.
  */
 
+import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfigWithError } from "../config.js";
 import { appendDisciplineEntry, type DisciplineEntry } from "./ledger.js";
@@ -155,6 +156,17 @@ export function runLedgerCli(
   }
 
   const projectRoot = flags["project-root"] ?? opts.cwd;
+  // Absolute-path enforcement at parse time so a misconfigured caller
+  // gets a usage error (exit 2) instead of falling through to the
+  // ledger writer's runtime check (exit 1). The runtime guard inside
+  // `appendDisciplineEntry` stays as defence-in-depth.
+  if (!isAbsolute(projectRoot)) {
+    opts.stderr(
+      `--project-root must be an absolute path; got "${projectRoot}"`,
+    );
+    opts.stderr(USAGE);
+    return 2;
+  }
   const date = flags.date ?? new Date().toISOString().slice(0, 10);
 
   const entry: DisciplineEntry = {

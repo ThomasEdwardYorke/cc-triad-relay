@@ -162,11 +162,12 @@ export function appendDisciplineEntry(
   const ledgerAbs = resolve(projectRoot, ledgerRel);
 
   // Defence in depth: even after segment filtering, double-check the
-  // resolved path lives under projectRoot. Catches odd inputs that
-  // might still resolve outside (`//etc/passwd` on POSIX, drive
-  // letters on Windows, etc.).
+  // resolved path lives under projectRoot. The check uses precise
+  // segment matching (`rel === ".."` or `rel` starts with `..${sep}`)
+  // so legitimate filenames that merely begin with two dots
+  // (`..ledger.md`) survive.
   const rel = relative(projectRoot, ledgerAbs);
-  if (rel.startsWith("..") || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+  if (escapesProjectRoot(rel)) {
     throw new Error(
       `appendDisciplineEntry: disciplineLedgerPath escapes projectRoot "${ledgerRel}" → "${ledgerAbs}"`,
     );
@@ -219,7 +220,11 @@ export function appendDisciplineEntry(
 
   if (!existsSync(ledgerAbs)) {
     // `wx` flag => fail if file already exists. On a race the loser
-    // falls through to the append branch below.
+    // falls through to the append branch below — but the EEXIST
+    // catch must re-validate so an attacker who races a symlink in
+    // between our `existsSync` and `writeFileSync` cannot make the
+    // append touch their target. See the "writeFileSync race
+    // re-check" branch below.
     try {
       writeFileSync(ledgerAbs, `${LEDGER_HEADER}\n${row}\n`, { flag: "wx" });
       return { status: "appended", ledgerPath: ledgerAbs };
@@ -228,12 +233,42 @@ export function appendDisciplineEntry(
       if (code !== "EEXIST") {
         throw err;
       }
-      // fall through to append
+      // writeFileSync race re-check: another writer (or a hostile
+      // actor) created a file at `ledgerAbs` between our presence
+      // probe and the wx attempt. Re-run both guards before the
+      // fall-through append so the racer cannot smuggle in a symlink
+      // or out-of-bound path.
+      if (lstatSync(ledgerAbs).isSymbolicLink()) {
+        throw new Error(
+          `appendDisciplineEntry: ledger "${ledgerAbs}" was replaced by a symlink during the create race (refusing to follow)`,
+        );
+      }
+      assertWithinProjectRoot(
+        realpathSync(ledgerAbs),
+        realProjectRoot,
+        ledgerRel,
+        "ledger",
+      );
     }
   }
 
   appendFileSync(ledgerAbs, `${row}\n`);
   return { status: "appended", ledgerPath: ledgerAbs };
+}
+
+/**
+ * Returns true when the textual relative path from `projectRoot` to a
+ * resolved ledger location is itself a parent reference. Strict
+ * equality on the `..` segment + `..${sep}` prefix avoids the
+ * `rel.startsWith("..")` over-match that would have rejected the
+ * legitimate filename `..ledger.md`.
+ */
+function escapesProjectRoot(rel: string): boolean {
+  return (
+    rel === ".." ||
+    rel.startsWith(`..${sep}`) ||
+    isAbsolute(rel)
+  );
 }
 
 /**
@@ -248,11 +283,7 @@ function assertWithinProjectRoot(
   kind: "parent" | "ledger",
 ): void {
   const realRel = relative(projectRoot, realPath);
-  if (
-    realRel.startsWith("..") ||
-    realRel.startsWith(`..${sep}`) ||
-    isAbsolute(realRel)
-  ) {
+  if (escapesProjectRoot(realRel)) {
     throw new Error(
       `appendDisciplineEntry: ${kind} of "${ledgerRel}" resolves to "${realPath}" outside projectRoot via symlink (refusing)`,
     );

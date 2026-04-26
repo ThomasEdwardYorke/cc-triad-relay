@@ -135,6 +135,24 @@ describe("appendDisciplineEntry", () => {
         appendDisciplineEntry(config, "relative/project", sampleEntry),
       ).toThrow(/projectRoot/i);
     });
+
+    it("does not falsely reject filenames that merely begin with `..`", () => {
+      // `..ledger.md` is a literal filename, not a parent reference.
+      // The previous heuristic `rel.startsWith("..")` would have
+      // rejected this; the precise check requires the exact `..`
+      // segment or `..${sep}` prefix.
+      const config = makeConfig("..ledger.md");
+      const result = appendDisciplineEntry(config, tmpRoot, sampleEntry);
+      expect(result.status).toBe("appended");
+      expect(existsSync(join(tmpRoot, "..ledger.md"))).toBe(true);
+    });
+
+    it("rejects exact `..` as the entire path", () => {
+      const config = makeConfig("..");
+      expect(() =>
+        appendDisciplineEntry(config, tmpRoot, sampleEntry),
+      ).toThrow(/parent|escape/i);
+    });
   });
 
   describe("file creation + append", () => {
@@ -283,6 +301,31 @@ describe("appendDisciplineEntry", () => {
       const config = makeConfig(".harness/ledger.md");
       const result = appendDisciplineEntry(config, tmpRoot, sampleEntry);
       expect(result.status).toBe("appended");
+    });
+
+    it("re-runs symlink check when the wx-create races against another writer", () => {
+      // Pre-create the ledger as a symlink to a file outside projectRoot.
+      // The writer's pre-write `existsSync` will see the symlink and the
+      // existing-file branch must catch it before any append touches
+      // the symlink target. This mirrors the post-EEXIST race the
+      // CR reviewer flagged: even when the wx race lands on an
+      // attacker-controlled path, the second symlink check guards.
+      const escape = join(
+        tmpdir(),
+        `ledger-race-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      );
+      writeFileSync(escape, "decoy\n");
+      try {
+        symlinkSync(escape, join(tmpRoot, "ledger.md"));
+        const config = makeConfig("ledger.md");
+        expect(() =>
+          appendDisciplineEntry(config, tmpRoot, sampleEntry),
+        ).toThrow(/symlink/i);
+        // The decoy must remain untouched.
+        expect(readFileSync(escape, "utf-8")).toBe("decoy\n");
+      } finally {
+        rmSync(escape, { force: true });
+      }
     });
   });
 

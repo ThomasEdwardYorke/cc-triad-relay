@@ -261,6 +261,33 @@ describe("runLedgerCli", () => {
       expect(content).toContain(`| ${today} | s | G3 |`);
     });
 
+    it("rejects relative --project-root with usage exit code (2)", () => {
+      tmpRoot = mkProject(".harness/ledger.md");
+      const io = captureIo();
+      const code = runLedgerCli(
+        [
+          "append",
+          "--session",
+          "s",
+          "--skill",
+          "G2",
+          "--impact",
+          "i",
+          "--remediation",
+          "r",
+          "--project-root",
+          "relative/path",
+        ],
+        { cwd: "/", stdout: io.out, stderr: io.err },
+      );
+      // Usage error: caller passed a relative path, the CLI must
+      // refuse before the runtime ledger writer is invoked.
+      expect(code).toBe(2);
+      expect(io.stderr.join("\n")).toMatch(
+        /--project-root.*absolute|absolute.*--project-root/i,
+      );
+    });
+
     it("respects --project-root over cwd", () => {
       tmpRoot = mkProject(".harness/ledger.md");
       const io = captureIo();
