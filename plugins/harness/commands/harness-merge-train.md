@@ -173,25 +173,44 @@ gh pr checks "$PR" --repo "$REPO" --required 2>&1 | grep -E '(fail|pending)' && 
 ### M1 — Rebase (mergeable=CONFLICTING または stale 時)
 
 ```bash
-WORKTREE_DIR="${WORKTREE_DIR:-$(git worktree list --porcelain | grep -A1 "branch refs/heads/$HEAD_BRANCH" | grep worktree | awk '{print $2}')}"
+# WORKTREE_DIR 検出は Skill 不在 fallback section と同じ awk record parser を使う。
+# `--porcelain` の出力構造は worktree path / HEAD / branch の 3 行 1 レコードなので、
+# `grep "branch ..." | grep worktree` は worktree 行を含まない (常に空) → 旧実装の
+# `grep -A1` も `branch + 空行` を出すだけで worktree 行を拾えない bug があった。
+# bash subshell で REPO_ROOT 基点 + cd 隔離を保つ。
+REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel)}"
+WORKTREE_DIR="${WORKTREE_DIR:-$(
+  git -C "$REPO_ROOT" worktree list --porcelain | awk -v branch="$HEAD_BRANCH" '
+    /^worktree / { path = $2 }
+    $0 == "branch refs/heads/" branch { print path; exit }
+  '
+)}"
 [ -z "$WORKTREE_DIR" ] && { echo "Worktree for $HEAD_BRANCH not found — manual intervention required"; exit 1; }
 
 cd "$WORKTREE_DIR"
 git fetch origin
 git rebase "origin/${BASE_BRANCH}" 2>&1 | tee /tmp/merge-train-rebase-$PR.log
 
-if grep -q "CONFLICT" /tmp/merge-train-rebase-$PR.log; then
+# Conflict / unmerged 判定は POSIX-portable な手段で行う:
+# `git diff --name-only --diff-filter=U` は dash / ash でも問題なく動作し、
+# unmerged 全状態 (UU/AA/DU/UD/UA/AU/DD) を一括カバーする (旧 `git status --short
+# | grep -E '^(UU|AA) ...'` は DU/UD/UA/AU/DD を見落としていた)。
+UNMERGED=$(git diff --name-only --diff-filter=U)
+if [ -n "$UNMERGED" ] || grep -q "CONFLICT" /tmp/merge-train-rebase-$PR.log; then
   # auto-gen artifacts (dist/ / package-lock.json) は build 再生成
-  if git status --short | grep -E '^(UU|AA) (dist/|package-lock\.json)'; then
+  AUTOGEN_UNMERGED=$(echo "$UNMERGED" | grep -E '^(dist/|package-lock\.json)' || true)
+  if [ -n "$AUTOGEN_UNMERGED" ]; then
     npm run build 2>&1 | tail -10
     git add dist/ package-lock.json 2>/dev/null || true
     git rebase --continue 2>&1 | tee -a /tmp/merge-train-rebase-$PR.log
   fi
 
   # source-level conflict は手動マージ必須 → fail-fast
-  if grep -q "CONFLICT" /tmp/merge-train-rebase-$PR.log; then
+  REMAINING_UNMERGED=$(git diff --name-only --diff-filter=U)
+  if [ -n "$REMAINING_UNMERGED" ] || grep -q "CONFLICT" /tmp/merge-train-rebase-$PR.log; then
     git rebase --abort
-    echo "Source-level conflict in PR #$PR — fail-fast (manual rebase required)"
+    echo "Source-level conflict in PR #$PR — fail-fast (manual rebase required)" >&2
+    echo "Unmerged files: $REMAINING_UNMERGED" >&2
     exit 1
   fi
 fi
@@ -201,6 +220,8 @@ fi
 - `dist/` / `package-lock.json` 等の auto-gen artifact は build 再生成で解消可
 - source-level conflict は **必ず fail-fast** (手動 rebase 後に user が
   `/harness-merge-train --order=<残り PR>` で再開)
+- worktree path 抽出は `awk record parser` (porcelain 形式の 3 行 1 レコード対応)、
+  unmerged 判定は `git diff --diff-filter=U` (dash/ash 含む POSIX shell 共通動作)
 
 ### M2 — Pre-merge gate (G4 強制 + G5 強制)
 
@@ -526,6 +547,211 @@ Skill chain summary:
 | `/codex-team` | Codex review / dev / adversarial | M2.1 / M6 で委譲 |
 | `/session-handoff` | handoff init / update / archive / check | M9 / Loop exit で委譲 |
 | `harness:codex-sync` agent | foreground Codex 並列 wrapper | M2.1 で Agent tool 経由 spawn |
+
+---
+
+## Skill 不在 fallback (緊急避難経路)
+
+本 section の手順は、以下のいずれかが session 中に検出された場合にのみ適用する
+**緊急避難経路**。skill が active で user-invocable な状態での使用は **構造規律違反**
+として ledger に追記される。
+
+### 発動条件
+
+1. `/harness-merge-train` skill 自体が plugin install 老朽化で Claude Code typeahead (`/<tab>`) に出現しない
+2. skill 起動時に runtime error で fail する (skill bug / dependency missing 等)
+3. skill 実行中に mid-phase error で停止し、継続が阻止される
+4. 上記いずれかを検出した時点で skill 修復を試みた上で、修復まで時間 cost が高い場合
+
+### Fallback 手順
+
+**前提:** `git status` clean (uncommitted change なし) / target PR 番号確認済。
+
+#### Step 1: Pre-flight (status 確認)
+
+```bash
+git status
+gh pr list --repo <repo> --state open --json number,title,headRefName,baseRefName
+```
+
+#### Step 2: 各 PR について rebase
+
+各 PR worktree で順次 rebase。`dist/` / `package-lock.json` 等の auto-gen
+artifacts は build 再生成で解消、source-level conflict は手動で対応:
+
+```bash
+# REPO_ROOT を保存し、ループ内で `git -C "$REPO_ROOT"` を使うことで CWD 汚染を防ぐ。
+# 各 iteration をサブシェル `( ... )` で隔離し、cd の影響を次のループに伝播させない。
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
+for PR_BRANCH in <branch-a> <branch-b> <branch-c>; do
+  (
+    # `git worktree list --porcelain` は以下のレコード構造で出力される:
+    #   worktree /absolute/path/to/wt-a
+    #   HEAD <sha>
+    #   branch refs/heads/<branch>
+    #   (空行)
+    # `grep "branch ..."` だけ抽出すると path 行を失う。awk で worktree path を
+    # 直前のレコード単位で覚えておき、branch 行が match した時点で path を出す。
+    WORKTREE_DIR=$(
+      git -C "$REPO_ROOT" worktree list --porcelain | awk -v branch="$PR_BRANCH" '
+        /^worktree / { path = $2 }
+        $0 == "branch refs/heads/" branch { print path; exit }
+      '
+    )
+    [ -z "$WORKTREE_DIR" ] && { echo "Worktree for $PR_BRANCH not found"; exit 1; }
+    cd "$WORKTREE_DIR"
+    git fetch origin
+    git rebase origin/main  # or origin/<base-branch>
+    # POSIX-portable な unmerged 検出 (dash / ash / bash 共通動作)。
+    # `git status --short | grep '^(UU|AA)'` は DU/UD/UA/AU/DD を見落とすため、
+    # `git diff --diff-filter=U` で全 unmerged 状態を一括捕捉する。
+    UNMERGED=$(git diff --name-only --diff-filter=U)
+    if [ -n "$UNMERGED" ]; then
+      AUTOGEN_UNMERGED=$(echo "$UNMERGED" | grep -E '^(dist/|package-lock\.json)' || true)
+      if [ -n "$AUTOGEN_UNMERGED" ]; then
+        npm run build 2>&1 | tail -5
+        git add dist/ package-lock.json 2>/dev/null || true
+        git rebase --continue
+      fi
+      # source-level unmerged が残っていれば fail-fast
+      REMAINING=$(git diff --name-only --diff-filter=U)
+      if [ -n "$REMAINING" ]; then
+        echo "Source-level conflict in $PR_BRANCH — fail-fast" >&2
+        echo "Unmerged: $REMAINING" >&2
+        git rebase --abort 2>/dev/null || true
+        exit 1
+      fi
+    fi
+  ) || exit 1
+done
+```
+
+**6 commit 以上 rebase + dist conflict 多発時の squash strategy 切替**: 連鎖的な
+conflict が多発する場合は別 branch で `git reset --soft <merge-base>` → 1 commit に
+集約 → push --force-with-lease → squash merge という代替手順を取る。または PR
+分割。いずれも ledger に「rebase strategy 切替」として記録。
+
+#### Step 3: 手動 pre-merge gate (G4 + G5 を skill 経由で代替)
+
+M2 phase の pre-merge gate を skill 経由で再現:
+
+- `/pseudo-coderabbit-loop --local --profile=chill --worktree=<path>` を各 worktree で実行
+- `/codex-team review --uncommitted` で Codex 内容検証
+- actionable finding が 0 になるまで修正反復
+
+**G7 (Codex 敵対的 second opinion)** は M6 phase 相当で push 直前 (Step 4 直前) に
+`/codex-team adversarial` を必ず実施。skip すると鉄則 7 G7 違反として ledger 自動追記。
+
+#### Step 4: 手動 push (`--force-with-lease=<branch>:<expected-sha>` 必須形式)
+
+`--force-with-lease=<branch>` 単独では `Updates were rejected` で失敗する事象が
+過去に発生した (stale info reject)。**必ず branch 名 + expected SHA を併記** する:
+
+```bash
+cd "$WORKTREE_DIR"
+EXPECTED_SHA=$(git rev-parse origin/$PR_BRANCH 2>/dev/null || echo "")
+if [ -n "$EXPECTED_SHA" ]; then
+  # 正しい記法: branch 名 + expected SHA を明示
+  git push --force-with-lease=$PR_BRANCH:$EXPECTED_SHA origin "$PR_BRANCH"
+else
+  # 初回 push (remote tracking 未設定時) は -u で setup
+  git push -u origin "$PR_BRANCH"
+fi
+```
+
+#### Step 5: 手動 squash merge (各 PR 順次)
+
+```bash
+for PR_NUM in <pr-a> <pr-b> <pr-c>; do
+  TITLE=$(gh pr view "$PR_NUM" --repo <repo> --json title --jq '.title')
+  if ! gh pr merge "$PR_NUM" --repo <repo> --squash --subject "$TITLE"; then
+    echo "PR #$PR_NUM merge failed — ledger 追記 + fail-fast"
+    exit 1
+  fi
+  MERGE_COMMIT=$(gh pr view "$PR_NUM" --repo <repo> --json mergeCommit --jq '.mergeCommit.oid // empty')
+  [ -z "$MERGE_COMMIT" ] && { echo "PR #$PR_NUM merge succeeded but mergeCommit.oid empty — manual verify"; exit 1; }
+  echo "PR #$PR_NUM squash merged: $MERGE_COMMIT"
+done
+```
+
+#### Step 6: Discipline ledger 追記 (Mandatory、Step 7 worktree cleanup より **前** に実施)
+
+ledger 追記は worktree cleanup より前に行う (Step 7 で worktree 削除後は CWD 不在
+となり jq / node 起動時の harness.config.json 解決経路が壊れる risk があるため)。
+REPO_ROOT を保存して project root から無条件で実行する:
+
+```bash
+# REPO_ROOT 基点で固定 (CWD が削除される前に確定させる)
+PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel)}"
+LEDGER_PATH=$(jq -r '.work.qualityGates.disciplineLedgerPath // ""' "$PROJECT_ROOT/harness.config.json")
+[ -n "$LEDGER_PATH" ] && {
+  node "${CC_TRIAD_RELAY_ROOT}/plugins/harness/core/dist/work/ledger-cli.js" append \
+    --project-root "$PROJECT_ROOT" \
+    --session "fallback-merge-train-<short-slug>" \
+    --skill "merge-train-skill-absent" \
+    --impact "/harness-merge-train skill 不在 (plugin reload 待機)、手動 gh pr merge --squash 経路で M0-M9 substitute 実行、quality gate M2 (G4/G5) / M5 (G6) / M6 (G7) / M9 (G8) の skill 連鎖 (consumer-side 鉄則 7 の G3+G4+G5+G6+G7+G8 複合) を手動 skill で代替実施" \
+    --remediation "次 session で claude restart → plugin reload 確認、以後は /harness-merge-train skill 経由を強制"
+}
+```
+
+`--skill` 値は consumer-side 鉄則 7 ledger の skill ID 規約に準拠する。本 fallback は
+`/harness-merge-train` skill 全体 (内部で G3/G4/G5/G6/G7/G8 を強制) の代替経路で、
+特定 phase の単一 G ID では意味論的に正確でない。よって `merge-train-skill-absent`
+という複合 skill を表す semantic identifier を使い、impact 欄で具体的な代替範囲
+(G3+G4+G5+G6+G7+G8) を明示する規約とする。
+
+#### Step 7: Worktree cleanup
+
+```bash
+git worktree remove --force <path> 2>&1
+git branch -D <branch> 2>&1
+git worktree prune
+```
+
+> **Step 6 (ledger) を Step 7 (worktree cleanup) より前に実行する規律**: 各 PR の
+> ledger 追記は worktree 削除前に終わらせる。Step 7 後は worktree path / 関連 CWD
+> 不在となり jq / node 起動時の path resolve に影響が出る risk があるため、ledger
+> 追記の atomicity を保証するには順序が決定的に重要。
+
+`--skill` 値は consumer-side 鉄則 7 ledger の skill ID 規約に準拠する。本 fallback は
+`/harness-merge-train` skill 全体 (内部で G3/G4/G5/G6/G7/G8 を強制) の代替経路で、
+特定 phase の単一 G ID では意味論的に正確でない。よって `merge-train-skill-absent`
+という複合 skill を表す semantic identifier を使い、impact 欄で具体的な代替範囲
+(G3+G4+G5+G6+G7+G8) を明示する規約とする。
+
+**ledger 追記は mandatory**。skip / 隠蔽は鉄則 7 違反 (consumer-side
+implementation-workflow.md AND 判定の規律違反 transparency 規約) として **重大規律違反**
+扱いになる。
+
+#### Step 8: Plugin reload 復旧 (元 Step 8、Step 6/7 順序入替により numbering 維持)
+
+skill 不在の root cause が plugin install 老朽化なら:
+
+1. claude プロセス再起動 (`exit` → 再起動、または terminal 経由で restart)
+2. `/<tab>` で typeahead に `/harness-merge-train` が出るか確認
+3. active 化されたら通常 skill 経路に復帰、以後の merge は skill 経由を強制
+4. ledger entry の remediation field に「next session: skill 経由復帰」を記入
+
+### `--no-skill-fallback` flag との区別
+
+本 section の fallback と既存 `--no-skill-fallback` flag は **目的が逆**:
+
+| 状況 | flag 設定 | fallback 適用 |
+|---|---|---|
+| skill 実装済み + active (通常開発) | (default) | **不可** (構造規律違反) |
+| skill 実装済み + bug あり | `--no-skill-fallback` | **禁止** + skill 強制 fail-fast |
+| skill 実装済み + plugin 老朽化で typeahead 未出現 | (default) | **本 section 適用** |
+
+`--no-skill-fallback` は「skill を強制使用、bug 等で失敗したら即 fail-fast」、本 section の
+fallback は「skill 不在を前提とする緊急避難」。通常運用ではどちらも skill 経由が前提、
+fallback は **skill が利用不可** な session でのみ許容される。
+
+### 制約と注意事項
+
+- ledger 追記は mandatory、skip 不可
+- skill bug 検出時は fallback ASAP より skill 修復 PR を backlog に上げるのが優先
+- 連鎖 rebase で source-level 手動マージが必要になった場合は fail-fast、user 判断委譲
 
 ---
 

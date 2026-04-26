@@ -323,6 +323,71 @@ describe("/harness-merge-train spec (commands/harness-merge-train.md)", () => {
   });
 
   // -----------------------------------------------------------------
+  // 9.5. Skill 不在 fallback section (緊急避難経路)
+  // -----------------------------------------------------------------
+  describe("Skill 不在 fallback section (緊急避難経路)", () => {
+    function getFallbackSection(): string {
+      const idx = content.search(/^##\s*Skill\s*不在\s*fallback/m);
+      expect(idx).toBeGreaterThanOrEqual(0);
+      return extractSection(content, idx);
+    }
+
+    it("「Skill 不在 fallback」section heading が存在する", () => {
+      expect(content).toMatch(/##\s*Skill\s*不在\s*fallback/);
+    });
+
+    it("発動条件が明示される (plugin 老朽化 / typeahead 未出現 / runtime error / mid-phase error)", () => {
+      const section = getFallbackSection();
+      expect(section).toMatch(/(?:発動条件|発動契機)/);
+      expect(section).toMatch(/(?:plugin\s*install\s*老朽化|typeahead.*出現しない|typeahead.*未出現|runtime\s*error)/i);
+    });
+
+    it("--force-with-lease=<branch>:<expected-sha> 記法が literal で記載", () => {
+      // branch + expected SHA 併記の規約 (前 session で stale info reject 失敗事象あり)
+      const section = getFallbackSection();
+      expect(section).toMatch(/--force-with-lease=\S+:\S+/);
+    });
+
+    it("Discipline ledger 自動追記が mandatory であることが明示", () => {
+      const section = getFallbackSection();
+      expect(section).toMatch(/ledger[\s\S]{0,400}?(?:mandatory|必須|skip\s*不可|隠蔽)/i);
+      expect(section).toMatch(/node[\s\S]{0,200}?ledger-cli\.js/);
+    });
+
+    it("plugin reload 復旧手順が含まれる (claude restart → typeahead 確認)", () => {
+      const section = getFallbackSection();
+      expect(section).toMatch(/(?:claude\s*(?:restart|exit|プロセス再起動))/i);
+      expect(section).toMatch(/typeahead/);
+    });
+
+    it("--no-skill-fallback flag との区別が明示される", () => {
+      const section = getFallbackSection();
+      expect(section).toMatch(/--no-skill-fallback/);
+      expect(section).toMatch(/(?:区別|区分|逆|distinct|different)/i);
+    });
+
+    it("fallback section は generic 例示値のみ (R3 generality)", () => {
+      const section = getFallbackSection();
+      expect(section).not.toMatch(/feature\/new-partslist/);
+      expect(section).toMatch(/<branch-[a-z]+>|<pr-[a-z]+>|<repo>/);
+    });
+
+    it("Step 1 — Step 8 の手順が numbered で全揃い", () => {
+      const section = getFallbackSection();
+      for (let i = 1; i <= 8; i++) {
+        expect(section).toMatch(
+          new RegExp(`####\\s+Step\\s+${i}\\b|Step\\s+${i}\\s*[:：]`, "i"),
+        );
+      }
+    });
+
+    it("rebase strategy 切替 (squash strategy 切替) への言及がある", () => {
+      const section = getFallbackSection();
+      expect(section).toMatch(/(?:squash\s*strategy|rebase\s*strategy)\s*切替/i);
+    });
+  });
+
+  // -----------------------------------------------------------------
   // 10. 全体不変条件 (spec discipline)
   // -----------------------------------------------------------------
   describe("spec discipline 不変条件", () => {
