@@ -4176,7 +4176,7 @@ describe("Track B-2: harness:codex-sync invocations include `name` argument", ()
 // contract spans three files (config.ts → harness-review.md → reviewer.md).
 // Without a content-integrity check the next maintainer can flip one
 // without the other and the addendum silently goes dark.
-describe("review.projectChecklistPath addendum chain (Track C-1 / 5b)", () => {
+describe("review.projectChecklistPath addendum chain", () => {
   it("commands/harness-review.md が reviewer agent invocation contract を spec 化している", () => {
     const content = readCommand("harness-review");
     // The command must document the JSON shape that injects the path
@@ -4188,13 +4188,22 @@ describe("review.projectChecklistPath addendum chain (Track C-1 / 5b)", () => {
     expect(content).toMatch(/loadConfig\(\)/);
   });
 
-  it("agents/reviewer.md が projectChecklistPath を入力 schema に含み addendum の Read 手順を記述する", () => {
+  it("agents/reviewer.md が projectChecklistPath を入力 schema に含み addendum の Read 手順を section 限定で記述する", () => {
     const content = readAgent("reviewer");
     // Input schema must mention the field so callers know how to populate it.
     expect(content).toMatch(/projectChecklistPath/);
-    // Read step must be explicit (the reviewer agent only has the Read
-    // tool; without a documented step it will skip the addendum).
-    expect(content).toMatch(/Project addendum \(opt-in\)/i);
-    expect(content).toMatch(/Read/);
+    // CR review round 1 nitpick: Read 検証は section 限定で。
+    // `Project addendum (opt-in)` セクション全体を抽出し、その中で
+    // Read step が記述されていることを assert する (無関係箇所の Read で通る
+    // 弱い regex を回避)。
+    const addendumSection =
+      /Project addendum \(opt-in\)[\s\S]*?(?=\n## |\n### |$)/i.exec(content)?.[0] ?? "";
+    expect(addendumSection.length).toBeGreaterThan(0);
+    expect(addendumSection).toMatch(/\bRead\b/);
+    // Opt-in semantics: projectChecklistPath が未指定の場合 addendum を読まない
+    // 旨を spec で明記している (caller が path を populate する責務、未指定 = no addendum)。
+    expect(content).toMatch(
+      /projectChecklistPath[\s\S]{0,400}?(?:not provided|omitted|absent|not set|未指定|undefined)[\s\S]{0,400}?(?:no addendum|addendum なし|skip|skipped|読み込まない|読まない|fail.?open|fall.?back)/i,
+    );
   });
 });
