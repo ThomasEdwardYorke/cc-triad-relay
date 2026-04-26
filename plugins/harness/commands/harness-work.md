@@ -713,6 +713,23 @@ Skill({skill: "parallel-worktree", args: "--max-parallel=3 --feature-branch=feat
 - Phase 5.5 疑似 CodeRabbit: `/pseudo-coderabbit-loop --local --profile=assertive` で actionable=0 まで反復
 ```
 
+**Phase 4 Codex 並列の Agent tool 直接呼出例** (coordinator が `harness:codex-sync`
+を spawn する場合、`name` 引数を必ず明示する。`SendMessage` resume + truncate
+recovery の退避路を確保するため、codex-sync.md "Handling Mid-Response
+Truncation" の要件に従う):
+
+```text
+Agent({
+  subagent_type: "harness:codex-sync",
+  name: "codex-sync-work-phase4",
+  description: "Phase 4 Codex 並列検証",
+  prompt: "Independent reviewer として task <id> 実装を verify..."
+})
+```
+
+複数 task を Phase 4 で並列に走らせる場合は `<name>` を task / track 単位で
+ユニーク化する (例: `codex-sync-work-phase4-task-3`)。
+
 **注**: `harness:worker` は `disallowedTools: [Agent]` のため worker 内から更に subagent 起動不可 (`Agent` tool が公式 subagent spawn tool、`Task` 単独は公式 catalog 未掲載)。**TDD 強制は worker プロンプト本文で実現**する。
 
 #### 4.2c Breezing (Phase fan-out) モード — wt:avoid 混在、4+ タスク

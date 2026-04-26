@@ -594,27 +594,27 @@ fi
 #### Step 2 補遺: parent subagent context 保護 (output file-redirect)
 
 長文 findings JSON が parent subagent context を埋めて 100% timeout する事故を
-防ぐため、`coderabbit-mimic` が `codex-sync` の Output File Redirect 契約を実装した
-将来形態 (separate work — coderabbit-mimic.md 改修待ち) では、本 skill が agent
-prompt 末尾に出力 redirect マーカーを inject する:
+防ぐため、`coderabbit-mimic` agent は内部で `harness:codex-sync` agent (codex-sync.md
+Output File Redirect contract) を経由し、output file-redirect を **agent 内部で完結** させる
+構成になっている。本 skill 側 (caller) では追加の marker inject は不要 (mimic
+agent が `$WORKDIR/$RESULT` を自動管理する)。
 
 ```bash
-TMP_RESULT="$(mktemp -t pseudo-cr-XXXXXX.json)"
-# Agent prompt body 末尾に必ず以下行を含める (codex-sync の Output File Redirect 契約):
-#   [output-file: ${TMP_RESULT}]
-# agent は Codex stdout を ${TMP_RESULT} に書き、return value は
-#   OUTPUT_PATH=${TMP_RESULT}
-#   OUTPUT_BYTES=<n>
-# のみ。caller (本 skill) は Read tool で ${TMP_RESULT} を ingest し findings JSON を parse。
-# 完了後 ${TMP_RESULT} は明示的に rm する (tmp file は系次第で GC 漏れする可能性)。
+# 本 skill は coderabbit-mimic agent を spawn するだけで OK。
+# context overflow 回避は mimic agent 内部の Step 3 で codex-sync 経由 +
+# [output-file: $RESULT] marker により担保される (agent 内 trap で WORKDIR ごと cleanup)。
+# 本 skill 側で外部 TMP_RESULT を作る必要はない。
 ```
 
-**現状 (本 skill v1.x)**: `coderabbit-mimic` agent は内部で Codex を直接呼ぶため
-`[output-file:` marker は agent 側で interpret されない。よって本マーカー inject
-は将来 work (`coderabbit-mimic` を `codex-sync` 経由に refactor 後) で有効化される
-forward-looking 配線である。本 PR では skill spec で marker inject 方針を明記し、
-複数 PR を並列で本 skill から走らせる場合の coordinator 側上限 (`--max-codex-parallel`)
-だけ先行配線する。
+`--max-codex-parallel` フラグは **本 skill 内では no-op**
+(CodeRabbit review clarification)。
+複数 PR を並列で走らせる際の Codex 並列度上限は **caller (coordinator)
+レイヤーで制御する** 責務であり、本 skill 内部の mimic agent 1 回呼出には
+影響しない。本フラグは coordinator (例: `/parallel-worktree` /
+`/harness-work --parallel`) が自身の dispatch ロジックで参照するための
+情報フラグであって、本 skill が pass-through で受け取って Codex に伝搬する
+ような実装は **意図的に持たない** (mimic agent 内部の context overflow 回避は
+本 skill 内 Step 3 の output-file redirect で別レイヤーとして処理される)。
 
 #### Step 2 補遺: Cache write hook (NEW)
 

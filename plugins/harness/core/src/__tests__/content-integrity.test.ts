@@ -487,14 +487,26 @@ describe("harness-work command の profile 読取り fallback", () => {
   });
 });
 
-describe("coderabbit-mimic agent の STDERR_LOG cleanup / 参照", () => {
+describe("coderabbit-mimic agent の merged stdout+stderr lifecycle (Track B-1 後継)", () => {
+  // Track B-1 (codex-sync 経由 refactor) で codex-sync.md D-49 redirect 契約が
+  // stdout + stderr をマージして $RESULT に書く方式に変わった。よって legacy
+  // `STDERR_LOG` 単独 file は廃止され、新ライフサイクル (mergedしたうえで
+  // [codex] progress 行を grep -v で除外、cleanup は WORKDIR trap に集約) が
+  // 文書化されている必要がある。
   const content = readAgent("coderabbit-mimic");
 
-  it("STDERR_LOG の参照方法または cleanup が明記されている", () => {
-    // 分離した stderr ログが parse 失敗時のデバッグに使われる or 成功時に削除される
-    // ことを示す記述 (rm / tail / 参照方法 / cleanup) が存在すること。
-    const hasLifecycle = /STDERR_LOG[\s\S]{0,600}?(rm\s|tail\s|cleanup|削除|参照)/i;
-    expect(content).toMatch(hasLifecycle);
+  it("merged result file の cleanup が WORKDIR trap で吸収される旨を明記", () => {
+    // legacy: 個別 STDERR_LOG を `rm` で削除。
+    // 新: trap 'rm -rf "$WORKDIR"' EXIT が `$RESULT` / `$RESULT.clean` を含む
+    // tree ごと自動 cleanup する。
+    expect(content).toMatch(/trap[\s\S]{0,300}?WORKDIR/);
+    expect(content).toMatch(/(?:RESULT[\s\S]{0,100}?(?:cleanup|削除|trap))|trap[\s\S]{0,200}?(?:RESULT|cleanup\s+も|tree)/i);
+  });
+
+  it("parse 失敗時の debug 経路 (tail of merged file) が記述", () => {
+    // 旧 STDERR_LOG の tail と同じ目的で、merged file の tail を debug 用に
+    // surface することを文書化。
+    expect(content).toMatch(/tail\s+-n\s+20[\s\S]{0,200}?(?:RESULT|merged|stderr)/i);
   });
 });
 
@@ -881,15 +893,29 @@ describe("shell 互換: bash fail-fast guard (Codex 敵対的レビュー Major:
   );
 });
 
-describe("coderabbit-mimic agent の CODEX_COMPANION fail-fast (CodeRabbit Major: coderabbit-mimic.md:239)", () => {
+describe("coderabbit-mimic agent の codex-sync 経路への refactor 後 invariants (Track B-1 後継)", () => {
+  // Track B-1 (Pseudo CR refactor) で旧 `CODEX_COMPANION` 直接 spawn 経路は除去済。
+  // 旧 fail-fast guard (node "$CODEX_COMPANION" 直前の存在確認 + exit 1) は
+  // 現在 codex-sync agent 側に移管された。本 describe は新責務分担を CI 上で
+  // 固定する: mimic agent は codex-sync 経由で呼ぶこと、legacy 経路を再導入
+  // しないこと。
   const content = readAgent("coderabbit-mimic");
 
-  it("node \"$CODEX_COMPANION\" task 直前で空/不在チェックが入る", () => {
-    // `ls ... | tail -n1` が空でもそのまま node を呼ぶと分かりにくい Node 側 error で落ちる。
-    // セットアップ不足を明示的に判別できるよう事前に guard する。
-    expect(content).toMatch(/-z\s+"\$CODEX_COMPANION"|!\s+-f\s+"\$CODEX_COMPANION"|command\s+-v[\s\S]{0,50}?CODEX_COMPANION/);
-    // exit で止まる (silent continue しない)
-    expect(content).toMatch(/CODEX_COMPANION[\s\S]{0,400}?exit\s+1/);
+  it("codex-sync 経由 spawn (Agent tool) を使い、Bash 直接 node spawn を再導入していない", () => {
+    // 新経路: `Agent({ subagent_type: "harness:codex-sync", ... })` で codex-sync
+    // を spawn し、codex-sync 内部で codex companion を foreground 呼出する。
+    expect(content).toMatch(/subagent_type:\s*"harness:codex-sync"/);
+    // 旧経路の禁止: mimic agent 自体は `node "$CODEX_COMPANION" task` を直接
+    // 呼ばない (codex-sync の責務)。
+    expect(content).not.toMatch(/node\s+"\$CODEX_COMPANION"\s+task\s+--prompt-file\s+"\$WORKDIR\/prompt\.md"/);
+  });
+
+  it("output-file redirect marker を prompt body に inject する手順がある", () => {
+    // codex-sync.md D-49 の Output File Redirect 契約。
+    expect(content).toMatch(/\[output-file:/);
+    // marker は append (末尾) に置くのが推奨形 (codex-sync.md "recommended at the
+    // very top or bottom")、本 agent は末尾に append する。
+    expect(content).toMatch(/(?:append|末尾|追加)[\s\S]{0,300}?\[output-file:|\[output-file:[\s\S]{0,300}?(?:append|末尾)/);
   });
 });
 
@@ -3368,10 +3394,16 @@ describe("harness model registry (v0.4.0 resolver)", () => {
     expect(source).toMatch(/caller[\s\S]{0,80}harness model resolve[\s\S]{0,80}Codex config default/i);
   });
 
-  it("coderabbit-mimic agent injects `--model` via harness resolve", () => {
+  it("coderabbit-mimic agent delegates `--model` resolution to harness:codex-sync (Track B-1 refactor)", () => {
+    // Track B-1 (Pseudo CR refactor) で mimic agent は codex companion を直接
+    // 呼ばなくなり、Agent tool で `harness:codex-sync` を spawn する。Model 解決
+    // は codex-sync 側の `harness model resolve codex-sync` (codex-sync.md
+    // Invocation Rule 4) に一本化された。よって mimic agent 内で
+    // `harness model resolve coderabbit-mimic` / `MODEL_FLAG` の直接記述は
+    // 不要になる。ここでは mimic agent が codex-sync 経由で spawn することだけ
+    // を確認する (model resolution は codex-sync の責務)。
     const source = readAgent("coderabbit-mimic");
-    expect(source).toContain("harness model resolve coderabbit-mimic");
-    expect(source).toContain("MODEL_FLAG");
+    expect(source).toMatch(/subagent_type:\s*"harness:codex-sync"/);
   });
 
   it("codex-team command resolves once and propagates $MODEL_FLAG", () => {
@@ -3987,4 +4019,155 @@ describe("agents/codex-sync.md — output file-redirect の PROMPT_FILE material
   it("PROMPT_FILE を trap で必ず削除 (temp file leak 防止)", () => {
     expect(content).toMatch(/trap\s+'rm\s+-f\s+"\$PROMPT_FILE"'\s+EXIT/);
   });
+});
+
+// ---------------------------------------------------------------------
+// Track B-1 follow-up: pseudo-coderabbit-loop の stale 説明を refactor 後表現
+// に更新 (Codex review minor 指摘)。
+// ---------------------------------------------------------------------
+describe("pseudo-coderabbit-loop.md: coderabbit-mimic 内部 codex 直接呼出 説明が stale ではない", () => {
+  const content = readCommand("pseudo-coderabbit-loop");
+
+  it("`内部で Codex を直接呼ぶ` の旧 narrative が refactor 後表現に更新", () => {
+    // Track B-1 で coderabbit-mimic Step 3 が codex-sync 経由 + output-file
+    // marker に refactor された。pseudo-coderabbit-loop.md 側の「将来 work
+    // (coderabbit-mimic を codex-sync 経由に refactor 後) で有効化される
+    // forward-looking 配線」narrative は実装済になったため、stale。
+    // 強い禁止: 「coderabbit-mimic agent は内部で Codex を直接呼ぶ」が
+    // 残っていないこと。
+    expect(content).not.toMatch(/coderabbit-mimic`?\s*agent\s*は内部で\s*Codex\s*を直接呼ぶ/);
+  });
+
+  it("`coderabbit-mimic を codex-sync 経由に refactor 後` の future-tense 表現が現在形に更新", () => {
+    // 「将来 work / refactor 後で有効化」が現在形 (実装済 / 既に有効) に
+    // 書き換わっていることを assert。
+    expect(content).not.toMatch(/将来\s*work\s*\(`?coderabbit-mimic`?\s*を\s*`?codex-sync`?\s*経由に\s*refactor\s*後\)/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// Track B-2: harness:codex-sync invocation 例に `name` argument を明示
+//
+// 背景:
+//   `harness:codex-sync` Agent を `Agent` tool 経由で呼ぶ際、`name` 引数を明示
+//   すると `SendMessage({ to: <name> })` で resume 可能になる (codex-sync.md
+//   "Handling Mid-Response Truncation" セクション参照)。truncate recovery を
+//   parallel worktree 運用で確実に動かすため、3 commands の invocation 例に
+//   `name` argument を明示する。
+//
+// 対応 commands:
+//   - tdd-implement.md (Phase 4 Codex 並列 / Phase 7 セカンドオピニオン)
+//   - parallel-worktree.md (Phase 4 / Phase 7 / 関連 table)
+//   - harness-work.md (Step 4.x / Gate 表での codex-sync 言及)
+//
+// 期待:
+//   各 command 内で少なくとも 1 件の `harness:codex-sync` Agent 呼出例が
+//   `name:` argument を含む形で示されている。
+// ---------------------------------------------------------------------
+describe("Track B-2: harness:codex-sync invocations include `name` argument", () => {
+  // codex-sync.md は SendMessage resume が "name で spawn された agent" でしか
+  // 機能しない旨を documented requirement として固定している。本契約を消費する
+  // 3 commands も invocation 例に `name:` を明示する。
+  const targets = [
+    "tdd-implement",
+    "parallel-worktree",
+    "harness-work",
+  ] as const;
+
+  /**
+   * Extract all `Agent({...})` blocks that contain `subagent_type: "harness:codex-sync"`.
+   *
+   * 戻り値: 各 block の本文 (Agent 開き括弧 `{` から対応する閉じ括弧 `})` まで)。
+   *
+   * 単純な regex `/Agent\(\{[\s\S]*?\}\)/g` は最初の `})` で打ち切ってしまい、
+   * 入れ子があると壊れる。本実装は brace 深さを数えて最外閉じを特定する
+   * scanner で、document 全体から `Agent({` 開始位置を探し、`}` で閉じた
+   * 直後に `)` が続く場所を block 終端とみなす。文字列リテラル内の `{` `}`
+   * は無視する (codex-sync 呼出例の `name: "..."` 値に含まれ得るため)。
+   */
+  function extractCodexSyncBlocks(content: string): string[] {
+    const blocks: string[] = [];
+    const blockOpenRe = /Agent\(\s*\{/g;
+    let m: RegExpExecArray | null;
+    while ((m = blockOpenRe.exec(content)) !== null) {
+      // brace 深さ scan で対応する `})` を特定。
+      let depth = 1;
+      let i = m.index + m[0].length;
+      let inString: '"' | "'" | "`" | null = null;
+      let escape = false;
+      while (i < content.length && depth > 0) {
+        const ch = content[i]!;
+        if (escape) {
+          escape = false;
+        } else if (inString) {
+          if (ch === "\\") {
+            escape = true;
+          } else if (ch === inString) {
+            inString = null;
+          }
+        } else if (ch === '"' || ch === "'" || ch === "`") {
+          inString = ch as '"' | "'" | "`";
+        } else if (ch === "{") {
+          depth += 1;
+        } else if (ch === "}") {
+          depth -= 1;
+          if (depth === 0) {
+            // `}` を消費した直後の `)` を探す (whitespace を許容)。
+            let j = i + 1;
+            while (j < content.length && /\s/.test(content[j]!)) j += 1;
+            if (content[j] === ")") {
+              const block = content.slice(m.index, j + 1);
+              if (/subagent_type:\s*"harness:codex-sync"/.test(block)) {
+                blocks.push(block);
+              }
+            }
+            break;
+          }
+        }
+        i += 1;
+      }
+    }
+    return blocks;
+  }
+
+  for (const cmd of targets) {
+    it(`${cmd}.md は harness:codex-sync 呼出例に \`name\` argument を含む`, () => {
+      const content = readCommand(cmd);
+      // CodeRabbit review actionable: 旧実装は file 全域に対して
+      // `subagent_type` と `name:` の近接を見ていたため、別 Agent block の
+      // `name` で誤って pass する余地があった。`Agent({...})` block を
+      // brace-balanced scanner で抽出し、subagent_type:"harness:codex-sync"
+      // を含む block 内部にのみ `name:` 存在を要求する。
+      const codexSyncBlocks = extractCodexSyncBlocks(content);
+      expect(codexSyncBlocks.length).toBeGreaterThan(0);
+      for (const block of codexSyncBlocks) {
+        expect(block).toMatch(/\bname:\s*"[^"]+"/);
+      }
+    });
+
+    it(`${cmd}.md の codex-sync 呼出例の \`name\` 値が generic / placeholder 形式`, () => {
+      // generality 規律 R3: 例示値は generic 固定。consumer-specific branch /
+      // repo 名は NG。codex-sync の name 例は `codex-sync-<purpose>` のような
+      // placeholder か `codex-track-x-worker` のような generic を使う。
+      // 個別の project tracker / personal naming が混入していないことを確認。
+      // CodeRabbit review actionable: codex-sync block に限定して inspect
+      // することで、別 Agent block の name 値に generic placeholder が紛れて
+      // いる場合に false negative を起こさないようにする。
+      const content = readCommand(cmd);
+      const codexSyncBlocks = extractCodexSyncBlocks(content);
+      expect(codexSyncBlocks.length).toBeGreaterThan(0);
+      const nameMatches = codexSyncBlocks.flatMap((block) =>
+        [...block.matchAll(/\bname:\s*"([^"]+)"/g)].map((m) => m[1]!),
+      );
+      // R3 leak pattern: project-specific branch / repo / API 名が値に混入
+      // していないか negative assertion。pattern は generality blocklist と
+      // 同型 (再構築して具体名を test source code に直書きしない)。
+      const leakPatternSource = ["new", "partslist"].join("-");
+      const leakRepoSource = ["parts", "management"].join("-");
+      const leakRe = new RegExp(`feature/${leakPatternSource}|${leakPatternSource}|${leakRepoSource}`, "i");
+      for (const n of nameMatches) {
+        expect(n).not.toMatch(leakRe);
+      }
+    });
+  }
 });

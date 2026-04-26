@@ -420,6 +420,22 @@ PR 作成はしない (coordinator 実施)。
 4. **指摘対応**: 当該 worktree の agent に `SendMessage` で返す → 再修正 → 再 push
 5. **Phase 7 Codex セカンドオピニオン** (`/codex-team adversarial` or `harness:codex-sync`)
 
+   parallel worktree で `harness:codex-sync` を直接 spawn する場合、`name` 引数を
+   per-worktree でユニーク化することで `SendMessage` resume + truncate recovery
+   を確保する (codex-sync.md "Handling Mid-Response Truncation" 参照):
+
+   ```text
+   Agent({
+     subagent_type: "harness:codex-sync",
+     name: "codex-sync-track-a-phase7",
+     description: "Track A Phase 7 adversarial review",
+     prompt: "PR #<pr-a> の全差分を adversarial review..."
+   })
+   ```
+
+   `<track>` は worktree slug (例: `track-a` / `track-b`) を反映。同 worktree 内
+   で複数回呼ぶ場合は `<phase>` も付与 (例: `codex-sync-track-a-phase4-cleanup`)。
+
 ---
 
 ## Phase 5: マージ順序 + コンフリクト解消

@@ -254,6 +254,159 @@ describe("coderabbit-mimic agent: .coderabbit.yaml strict pre-parse regression",
       expect(content).toMatch(/^---[\s\S]*?name:\s*coderabbit-mimic/);
     });
   });
+
+  // -----------------------------------------------------------------
+  // 7. Step 3 refactor: harness:codex-sync 経由 + output-file marker
+  //    (Track B-1, 9g 後続)
+  // -----------------------------------------------------------------
+  //
+  // 背景:
+  //   旧 Step 3 は `node "$CODEX_COMPANION" task --prompt-file ...` で Codex を
+  //   直接 Bash spawn し、stdout を $RESULT に redirect していた。この設計だと
+  //   Codex output 全文が subagent context に inline され、6 並列で 100% timeout
+  //   する事故が発生した。
+  //
+  //   D-49 で `harness:codex-sync` agent に Output File Redirect 契約 (`[output-file:
+  //   <abs-path>]` marker を prompt body に inject すれば Codex stdout を file に
+  //   書き出し、return value は OUTPUT_PATH=<>/OUTPUT_BYTES=<n> の ~120 bytes 圧縮)
+  //   が追加された。本 Step 3 はその契約を使って Pseudo CR の context overflow
+  //   リスクを撲滅する。
+  //
+  // 期待:
+  //   1. frontmatter `tools:` に `Agent` が含まれる (Agent tool 呼出可能)
+  //   2. Step 3 内に `harness:codex-sync` への Agent tool 呼出例が示される
+  //   3. Step 3 に `[output-file:` marker 規約への参照がある
+  //   4. Step 3 から `node "$CODEX_COMPANION" task` の直接 Bash spawn が削除
+  //      されている (refactor 完了の negative assertion)
+  //   5. Step 3 prompt body 末尾に marker を inject する手順が書かれる
+  //   6. coordinator (caller) が file を Read してから rm する責務を継承する
+  describe("Step 3 codex-sync 経由 refactor + output-file marker (D-49)", () => {
+    // Step 3 block は `## Inputs` 等の level-2 heading で extractStepBlock が
+    // 打ち切られるため、narrative + code block 全域を確実に拾うには Step 3
+    // 見出しから次の `### Step` 見出しまでを substring で抜き出す方が頑強。
+    function extractStep3Range(src: string): string {
+      const startMatch = src.match(/^#{1,4}\s*Step\s*3\b[^\n]*$/im);
+      if (!startMatch || startMatch.index === undefined) return "";
+      const tail = src.slice(startMatch.index);
+      const next = tail.search(/\n#{1,4}\s*Step\s*\d/i);
+      return next < 0 ? tail : tail.slice(0, next);
+    }
+    const step3Block = extractStep3Range(content);
+
+    it("frontmatter `tools:` に `Agent` が含まれる", () => {
+      // mimic agent から harness:codex-sync を Agent tool で呼ぶには、frontmatter
+      // tools list に Agent を追加する必要がある。subagent → subagent spawn は
+      // 公式仕様で Agent tool が tools list にあれば可能 (本 task の設計判断)。
+      // YAML 表記は inline array (`tools: [Read, Agent]`) と block list
+      // (`tools:\n  - Read\n  - Agent`) の双方を許容する (CodeRabbit review
+      // actionable: regex が inline 限定だと block list 採用時に false positive)。
+      const fm = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+      expect(fm).toMatch(
+        /tools:\s*(?:\[[^\]]*\bAgent\b|(?:\r?\n\s*-\s+[A-Za-z_][\w-]*)*\r?\n\s*-\s+Agent\b)/,
+      );
+    });
+
+    it("Step 3 が `harness:codex-sync` への Agent tool 呼出を示す", () => {
+      // 旧設計: 直接 `node "$CODEX_COMPANION" task --prompt-file ...`
+      // 新設計: `Agent({ subagent_type: "harness:codex-sync", ... })`
+      expect(step3Block).toMatch(/subagent_type:\s*"harness:codex-sync"|"harness:codex-sync"[\s\S]{0,200}?subagent_type/);
+    });
+
+    it("Step 3 が `[output-file:` marker 規約 (D-49 contract) を参照する", () => {
+      // codex-sync.md の Output File Redirect 契約 marker。abs-path を挟む
+      // `[output-file: <abs-path>]` 形式が prompt body に inject される旨を
+      // 明文化する。
+      expect(step3Block).toMatch(/\[output-file:/i);
+    });
+
+    it("Step 3 が context overflow / 100% timeout の根拠を引用する", () => {
+      // refactor の rationale を文書として残す。codex-sync.md と整合する
+      // 「context overflow」「timeout」言及で前提を共有。
+      expect(step3Block).toMatch(/context\s+overflow|context\s+budget|100%\s*timeout|timeout\s*事故|parallel.*timeout/i);
+    });
+
+    it("Step 3 から旧 Bash 直接 spawn (`node \"$CODEX_COMPANION\" task --prompt-file ...`) が除去されている", () => {
+      // 旧コードの直接呼出が残っていると refactor 不完全。RESULT への直接
+      // redirect (> "$RESULT") 経路も削除されている必要がある。
+      expect(step3Block).not.toMatch(/node\s+"\$CODEX_COMPANION"\s+task\s+--prompt-file\s+"\$WORKDIR\/prompt\.md"/);
+    });
+
+    it("Step 3 が caller の Read + rm 責務 (codex-sync 契約と整合) を明示", () => {
+      // codex-sync.md の Output File Redirect 契約: 「Caller responsibility - read
+      // the file via the Read tool to ingest the actual Codex result, then delete
+      // the file when done」。mimic agent (caller of codex-sync) がこの責務を
+      // 継承することを明記。`OUTPUT_PATH` (codex-sync 返値) の文字列が言及
+      // されていれば redirect 経路を消費している証拠になる。
+      expect(step3Block).toMatch(/OUTPUT_PATH|OUTPUT_BYTES/);
+    });
+
+    it("Step 3 が `Read` tool で OUTPUT_PATH を ingest する手順を明示", () => {
+      // CodeRabbit review actionable: presence of `OUTPUT_PATH` 文字列
+      // のみでは「caller が Read で消費する」責務が成立した証拠にならない。
+      // Read tool 呼出 (or 同義の cat / 読み込み) と OUTPUT_PATH (または
+      // `$RESULT` 等の output file 参照) の近接を要求し、ingest 経路を強制する。
+      // 本 mimic agent では trap で WORKDIR ごと cleanup されるため明示 rm は
+      // 不要だが、Read 経由の ingest は契約上必須 (file → context へ転写)。
+      expect(step3Block).toMatch(
+        /(?:`?Read`?\s*tool|Read\s*tool)[\s\S]{0,400}?(?:OUTPUT_PATH|\$RESULT|output[\s-]?file|読み込)|(?:OUTPUT_PATH|\$RESULT|output[\s-]?file)[\s\S]{0,400}?(?:`?Read`?\s*tool|Read\s*tool|読み込)/i,
+      );
+    });
+
+    it("Step 3 / Step 4 が EXIT_CODE non-zero 分岐 (retry / abort 委譲) を明示", () => {
+      // CodeRabbit review actionable: EXIT_CODE 文字列が出ていることだけで
+      // 「失敗時 retry / abort を caller (= /pseudo-coderabbit-loop) に委譲する
+      // 経路」が確立している証拠にはならない。EXIT_CODE 検出 → 当該 branch で
+      // 「exit / 中断 / retry / 委譲 / fail-fast / 呼出元」のいずれかを示す
+      // narrative を要求する。これで「EXIT_CODE 行を検出するだけで何もしない」
+      // 退化を防止できる。
+      expect(content).toMatch(
+        /EXIT_CODE[\s\S]{0,400}?(?:exit\s*1|exit\s*2|retry|abort|中断|fail-fast|呼出元|委ね|委任|委譲|raise|stderr|skip|早期\s*終了|early\s*exit)/i,
+      );
+    });
+
+    it("Step 3 prompt body 末尾に marker を inject する手順を記述", () => {
+      // marker は prompt body anywhere に置けるが (codex-sync 仕様) recommended
+      // は very top または bottom。本 agent では prompt 末尾に append する手順を
+      // 書く。
+      expect(step3Block).toMatch(
+        /(?:append|末尾|bottom|very\s+bottom|最後|追加)[\s\S]{0,300}?\[output-file:|\[output-file:[\s\S]{0,200}?(?:append|末尾|bottom|prompt\s+body)/i,
+      );
+    });
+
+    // ---------------------------------------------------------------
+    // Codex Phase 4 review (Track B-1) で指摘された 3 件の handoff/失敗時
+    // 経路を CI 上で固定する追加 assertion。
+    // ---------------------------------------------------------------
+
+    it("Step 3 が generated prompt body を Agent prompt に渡す具体手順を記述 (handoff gap 防止)", () => {
+      // Codex review (major): mimic agent が `Agent({ prompt: \"<placeholder>\" })`
+      // のように placeholder のまま spawn すると、生成済 prompt.md (marker 含む)
+      // が codex-sync に届かず redirect が起動しない。caller は prompt.md
+      // の内容を verbatim で Agent prompt に投入する旨を明記する必要がある。
+      expect(step3Block).toMatch(
+        /(?:Read\s+tool|Read\s*して|読み取って|読み込んで|verbatim|そのまま|全文|cat|読み取り後)[\s\S]{0,300}?(?:prompt|prompt\.md)|prompt\.md[\s\S]{0,300}?(?:verbatim|そのまま|全文|そのまま渡|verbatim 渡|verbatim で|全文を)/i,
+      );
+    });
+
+    it("Step 3/4 が EXIT_CODE 第三 line への対応を明示 (failure branch)", () => {
+      // codex-sync.md D-49: 「When the underlying Codex run exits non-zero,
+      // the agent appends a third line `EXIT_CODE=<n>`」。mimic agent はこれを
+      // 検出して JSON post-process を skip し、retry / fail-fast 判断に使う
+      // 必要がある。
+      expect(content).toMatch(/EXIT_CODE/);
+    });
+
+    it("Step 4 が stdout+stderr マージ output から strict JSON 抽出する手順を記述", () => {
+      // Codex review (major): codex-sync.md D-49 redirect は `> file 2>&1` で
+      // stdout + stderr を同一 file に書く。Codex companion の progress reporter
+      // が stderr に `[codex] ...` を出すため、その file を直接 strict JSON
+      // validator に渡すと常に fail する。`[codex]` 行 filter / JSON 抽出の
+      // 手順を明記する必要がある。
+      expect(content).toMatch(
+        /\[codex\][\s\S]{0,400}?(?:filter|grep -v|除外|削除|strip|抽出|extract)|(?:filter|grep -v|除外|strip|抽出|extract)[\s\S]{0,400}?\[codex\]/i,
+      );
+    });
+  });
 });
 
 /**

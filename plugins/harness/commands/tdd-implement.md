@@ -109,9 +109,16 @@ python -m pytest <all_test_files> -q --tb=short
 ```text
 Agent({
   subagent_type: "harness:codex-sync",
+  name: "codex-sync-tdd-review",
   prompt: "レビュー観点を明示してコード差分をレビュー..."
 })
 ```
+
+`name` argument を明示すると `SendMessage({ to: agent_name })` で resume 可能になる
+(codex-sync.md "Handling Mid-Response Truncation" 参照)。長文 review が
+`TASK_MAX_OUTPUT_LENGTH` で truncate された場合の recovery 退避路として必須。
+parallel worktree 運用では `name` 値を per-worktree でユニーク化する
+(例: `codex-sync-track-a-review` / `codex-sync-track-b-review`)。
 
 直接 CLI 経由:
 ```bash
@@ -359,9 +366,14 @@ CodeRabbit 通過後に Codex 敵対的レビューを実行:
 ```text
 Agent({
   subagent_type: "harness:codex-sync",
+  name: "codex-sync-tdd-phase7",
   prompt: "PR #<pr> の全差分を adversarial review。CodeRabbit が見逃した critical を探す"
 })
 ```
+
+`name` を明示することで truncate 時の `SendMessage` resume が可能になる。
+worktree 並列開発で複数 PR に対し Phase 7 を回す場合は `<name>` を
+PR / worktree 単位でユニーク化する (例: `codex-sync-track-a-phase7`)。
 
 Codex が新たな critical を発見したら Phase 5 に戻って修正。approve なら Phase 8 へ。
 
