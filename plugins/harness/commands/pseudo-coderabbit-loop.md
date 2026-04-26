@@ -160,17 +160,87 @@ else
   echo "Mode: pr (PR=$PR REPO=$REPO)"
 fi
 
-# .coderabbit.yaml から profile を取得する。3 段フォールバック構成:
-#   1. yq (最も信頼性が高い YAML parser、存在すれば優先)
-#   2. python3 + PyYAML (pip 導入済なら高精度)
-#   3. python3 stdlib 限定の正規表現 (reviews: block 配下の profile: を素朴に抽出)
-# いずれも失敗した場合は **silent に chill に落とさず WARN を stderr に出力** してから
-# 'chill' を採用する (assertive/strict が設定された repo で cooldown/上限が縮退する
-# 事故を検知可能にする)。
+# PROFILE resolver — precedence chain (高優先 → 低優先):
+#   1. CLI_PROFILE  — `--profile=<value>` flag (CLI 経由は strict 含めて allowlist)
+#   2. ENV_PROFILE  — env `HARNESS_CR_PROFILE` (harness-local extension、strict 許容)
+#   3. CFG_PROFILE  — `harness.config.json.tddEnforce.pseudoCoderabbitProfile` (loadConfig validated 済、strict 許容)
+#   4. YAML_PROFILE — `.coderabbit.yaml.reviews.profile` (CodeRabbit 公式 schema、chill/assertive のみ、strict は WARN+fallthrough)
+#   5. default      — `chill`
+#
+# 設計参照: `core/src/work/profile-resolver.ts` (同一 precedence の TS pure function、
+# 単体 test は `core/src/__tests__/profile-resolver.test.ts`)。本 bash 実装は
+# 同 chain を skill 起動 1 回分の per-invocation 解決として再現する。
+#
+# 各 source が invalid 値の場合は WARN を stderr に emit して次 source へ fallthrough
+# (silent に chill に落とさず、assertive/strict が設定された repo で cooldown/上限が
+# 縮退する事故を検知可能にする)。
+
+# 2. ENV_PROFILE — env HARNESS_CR_PROFILE
+ENV_PROFILE_RAW="${HARNESS_CR_PROFILE:-}"
+# trim leading / trailing whitespace (bash parameter expansion)
+ENV_PROFILE_RAW="${ENV_PROFILE_RAW#"${ENV_PROFILE_RAW%%[![:space:]]*}"}"
+ENV_PROFILE_RAW="${ENV_PROFILE_RAW%"${ENV_PROFILE_RAW##*[![:space:]]}"}"
+ENV_PROFILE=""
+if [ -n "$ENV_PROFILE_RAW" ]; then
+  case "$ENV_PROFILE_RAW" in
+    chill|assertive|strict)
+      ENV_PROFILE="$ENV_PROFILE_RAW"
+      ;;
+    *)
+      echo "WARN: env HARNESS_CR_PROFILE='$ENV_PROFILE_RAW' is invalid (must be chill|assertive|strict); falling through" >&2
+      ;;
+  esac
+fi
+
+# 3. CFG_PROFILE — harness.config.json.tddEnforce.pseudoCoderabbitProfile
+# loadConfig が validate 済の前提だが、bash 経路で raw JSON を直接読むため
+# defensive check + 失敗経路の透明化を併設する。
+#
+# 過去の silent fallthrough bug への対応 (Codex G7 Major):
+#   - jq 不在時 → これまで silent で chill に倒れていた → harness.config.json で
+#     strict/assertive を強制したつもりが効かない事故が発生 → WARN を必ず出す
+#   - jq exit != 0 (malformed JSON 等) → 同様に silent fallthrough → 明示 WARN
+#   - jq stderr 出力 → /dev/null に捨てず一旦 capture して内容で fallthrough or 警告
+CFG_PROFILE=""
+if [ -f harness.config.json ]; then
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "WARN: harness.config.json exists but jq is not installed; CFG_PROFILE source will be skipped (use env HARNESS_CR_PROFILE or --profile flag instead)" >&2
+  else
+    JQ_STDERR=$(mktemp)
+    CFG_PROFILE_RAW=$(jq -r '.tddEnforce.pseudoCoderabbitProfile // ""' harness.config.json 2>"$JQ_STDERR")
+    JQ_EXIT=$?
+    if [ "$JQ_EXIT" -ne 0 ]; then
+      JQ_ERR_MSG=$(tr '\n' ' ' < "$JQ_STDERR" | head -c 300)
+      echo "WARN: jq failed to parse harness.config.json (exit=$JQ_EXIT, stderr='$JQ_ERR_MSG'); CFG_PROFILE source skipped (config 修復推奨)" >&2
+      CFG_PROFILE_RAW=""
+    fi
+    rm -f "$JQ_STDERR"
+    case "$CFG_PROFILE_RAW" in
+      chill|assertive|strict)
+        CFG_PROFILE="$CFG_PROFILE_RAW"
+        ;;
+      "")
+        ;;
+      *)
+        echo "WARN: harness.config.json tddEnforce.pseudoCoderabbitProfile='$CFG_PROFILE_RAW' is invalid; falling through" >&2
+        ;;
+    esac
+  fi
+fi
+
+# 4. YAML_PROFILE — .coderabbit.yaml から profile を取得 (3 段フォールバック)
+#   a. yq (最も信頼性が高い YAML parser、存在すれば優先)
+#   b. python3 + PyYAML (pip 導入済なら高精度)
+#   c. python3 stdlib 限定の正規表現 (reviews: block 配下の profile: を素朴に抽出)
 PROFILE=""
 if [ -f .coderabbit.yaml ]; then
   if command -v yq >/dev/null 2>&1; then
-    PROFILE=$(yq '.reviews.profile // ""' .coderabbit.yaml 2>/dev/null || true)
+    # `yq -r` を強制 (raw output) + xargs で whitespace 正規化。
+    # mike-farah/yq (Go 製) は default raw、kislyuk/yq (Python wrapper) は quote-wrap
+    # する場合がある。`-r` flag を両 implementations 共通で raw 化、xargs で trim。
+    # 過去 silent fallthrough bug (Codex G7 Major): kislyuk yq から `'assertive'`
+    # (quote 付き) が返ると後続の case match が外れて default に倒れていた。
+    PROFILE=$(yq -r '.reviews.profile // ""' .coderabbit.yaml 2>/dev/null | xargs || true)
   fi
   if [ -z "$PROFILE" ] && command -v python3 >/dev/null 2>&1; then
     PROFILE=$(python3 -c "
@@ -212,17 +282,43 @@ else
 fi
 
 # YAML 由来 profile は CodeRabbit 公式 allowlist (chill / assertive) のみ許可。
-# strict は harness-local extension のため YAML 経路では採用せず、WARN + chill に倒す。
+# strict は harness-local extension のため YAML 経路では採用せず、WARN + 次 source へ fallthrough。
 # (公式 schema: https://docs.coderabbit.ai/reference/configuration は 2026-04 時点で
 # reviews.profile = chill | assertive のみ)
-if [ "$PROFILE" != "chill" ] && [ "$PROFILE" != "assertive" ]; then
-  echo "WARN: .coderabbit.yaml profile='$PROFILE' is outside CodeRabbit official allowlist (chill / assertive); fallback to 'chill' (use --profile=strict on the command line for the harness-local extension)" >&2
-  PROFILE="chill"
+YAML_PROFILE=""
+if [ -n "$PROFILE" ]; then
+  case "$PROFILE" in
+    chill|assertive)
+      YAML_PROFILE="$PROFILE"
+      ;;
+    *)
+      echo "WARN: .coderabbit.yaml profile='$PROFILE' is outside CodeRabbit official allowlist (chill / assertive); falling through (use --profile=strict on the command line, env HARNESS_CR_PROFILE=strict, or harness.config.json tddEnforce.pseudoCoderabbitProfile=strict for the harness-local extension)" >&2
+      ;;
+  esac
 fi
 
-# CLI 経由は strict 含めて許可 (harness-local 拡張)。CLI > yaml の precedence を適用。
-PROFILE="${CLI_PROFILE:-$PROFILE}"
-echo "Resolved profile (CLI > yaml > chill): $PROFILE"
+# 5. Final resolution — precedence chain CLI > ENV > CFG > YAML > default
+#
+# 設計参照: `core/src/work/profile-resolver.ts` (同一 precedence の TS pure function、
+# 単体 test は `core/src/__tests__/profile-resolver.test.ts`)。
+PROFILE_SOURCE=""
+if [ -n "$CLI_PROFILE" ]; then
+  PROFILE="$CLI_PROFILE"
+  PROFILE_SOURCE="cli"
+elif [ -n "$ENV_PROFILE" ]; then
+  PROFILE="$ENV_PROFILE"
+  PROFILE_SOURCE="env"
+elif [ -n "$CFG_PROFILE" ]; then
+  PROFILE="$CFG_PROFILE"
+  PROFILE_SOURCE="harness-config"
+elif [ -n "$YAML_PROFILE" ]; then
+  PROFILE="$YAML_PROFILE"
+  PROFILE_SOURCE="coderabbit-yaml"
+else
+  PROFILE="chill"
+  PROFILE_SOURCE="default"
+fi
+echo "Resolved profile: $PROFILE (source=$PROFILE_SOURCE; precedence: CLI > env > harness.config.json > .coderabbit.yaml > default)"
 ```
 
 ### Step 1. CodeRabbit 状態確認（PR mode のみ）
