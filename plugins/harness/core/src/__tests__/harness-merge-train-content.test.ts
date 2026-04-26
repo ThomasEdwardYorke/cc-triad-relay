@@ -224,15 +224,28 @@ describe("/harness-merge-train spec (commands/harness-merge-train.md)", () => {
       expect(content).toMatch(/(?:複数|multiple|positional|<pr-[a-z]+>\s+<pr-[a-z]+>|<pr-?(?:number|id)?>)/i);
     });
 
-    it("spec body に生 PR 番号 literal が含まれていない (R3 generality)", () => {
-      // 連続する数字 token (例: `<a> <b>`, `<a> <b> <c>`, `<a>,<b>,<c>` の bare-digit 形)
-      // を spec doc から完全排除する。time/duration / sleep / `30 分` /
-      // `60-90 min` 等の数字は single token なので regex から除外。連続
-      // PR-number-like literal のみ禁止。検出 pattern: 数字を 2-5 個、
-      // 空白 or カンマで区切ったもの。dash 区切り (range 表記) は match しない。
-      const violations = content.match(/(?<![<>\w])\d{1,4}(?:[\s,]+\d{1,4}){1,4}(?![\w/-])/g);
-      const filtered = violations ?? [];
-      expect(filtered, `Raw PR-number literals found in spec: ${JSON.stringify(filtered)}`).toEqual([]);
+    it("spec body に生 PR 番号 literal が含まれていない (R3 generality、複合 pattern)", () => {
+      // R3 generality: spec body に生 PR 番号 literal を一切含めない。
+      // 検出パターンは複合: 連続数字 / `#N` / `PR #N` / コマンド例 `/harness-merge-train N`。
+      // time/duration の単独数字 (例 `30 分`, `60-90 min`) は意図的に対象外
+      // (range 表記の hyphen 区切り / 単位接尾) — その場合 PR 番号文脈ではないため安全。
+      const violationPatterns: Array<{ id: string; re: RegExp }> = [
+        // (a) 連続する 2-5 個の数字 token (空白 / カンマ区切り、dash 区切りは除外)
+        { id: "consecutive-digits", re: /(?<![<>\w-])\d{1,4}(?:[\s,]+\d{1,4}){1,4}(?![\w/.-])/g },
+        // (b) markdown table cell 形式: `| #N |` (PR 番号として表現)
+        { id: "table-pr-cell", re: /\|\s*#\d{1,5}\s*\|/g },
+        // (c) `PR #N` のような prose 中言及
+        { id: "pr-prose-ref", re: /\bPR\s*#\d{1,5}\b/g },
+        // (d) 命令文中の `/harness-merge-train N` `/harness-merge-train #N`
+        { id: "command-pr-arg", re: /\/harness-merge-train(?:\s+#?\d{1,5})+/g },
+        // (e) commit SHA-like literal (7-40 hex chars in merge result table 等)
+        { id: "commit-sha", re: /merged:\s*[0-9a-f]{7,40}\b/gi },
+      ];
+      const violations = violationPatterns.flatMap(({ id, re }) => {
+        const hits = content.match(re) ?? [];
+        return hits.map((hit) => `[${id}] ${hit}`);
+      });
+      expect(violations, `Raw PR-number/SHA literals in spec: ${JSON.stringify(violations)}`).toEqual([]);
     });
 
     it("--filter で gh pr list 経由フィルタ可能", () => {

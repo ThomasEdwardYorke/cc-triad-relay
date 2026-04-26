@@ -530,8 +530,8 @@ OSS plan 申請は CodeRabbit dashboard (https://app.coderabbit.ai/) で手動�
 
 | PR | M0 | M1 | M2 (G4/G5) | M3 | M4 | M5 (G6) | M6 (G7) | M7 | M8 | M9 (G8) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| #30 | ✅ | skip | ✅/✅ | ✅ | ✅ | APPROVED | clean | merged: abc1234 | ✅ | ✅ |
-| #31 | ✅ | rebase ✅ | ✅/✅ | ✅ | ✅ | unresolved=0 | clean | merged: def5678 | ✅ | ✅ |
+| #<pr-a> | ✅ | skip | ✅/✅ | ✅ | ✅ | APPROVED | clean | merged: <sha-a> | ✅ | ✅ |
+| #<pr-b> | ✅ | rebase ✅ | ✅/✅ | ✅ | ✅ | unresolved=0 | clean | merged: <sha-b> | ✅ | ✅ |
 
 - Total PRs: N
 - Merged: M
