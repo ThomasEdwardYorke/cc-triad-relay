@@ -50,7 +50,7 @@ CodeRabbit は rate limit に当たると以下の HTML marker をコメント�
 
 ```bash
 RATE_LIMITED=$(gh pr view "$PR" --repo "$REPO" --json comments \
-  --jq "[.comments[] | select(.author.login == \"coderabbitai\")
+  --jq "[.comments[] | select(.author.login == \"coderabbitai\" or .author.login == \"coderabbitai[bot]\")
          | select(.body | contains(\"rate limited by coderabbit.ai\"))] | last | .createdAt // empty")
 
 if [ -n "$RATE_LIMITED" ]; then
@@ -150,7 +150,7 @@ done
 
 # Step C: rate-limit marker 検出
 RATE_LIMITED=$(gh pr view "$TEST_PR" --repo "$REPO" --json comments \
-  --jq "[.comments[] | select(.author.login == \"coderabbitai\")
+  --jq "[.comments[] | select(.author.login == \"coderabbitai\" or .author.login == \"coderabbitai[bot]\")
          | select(.body | contains(\"rate limited by coderabbit.ai\"))] | length")
 
 # Step D: 結果記録 — 後述の empirical 検証ログ section に追記
@@ -547,7 +547,7 @@ done
 
 ```bash
 RECENT_BLOCKER=$(gh pr view "$PR" --repo "$REPO" --json comments \
-  --jq "[.comments[] | select(.author.login == \"coderabbitai\")
+  --jq "[.comments[] | select(.author.login == \"coderabbitai\" or .author.login == \"coderabbitai[bot]\")
     | select(.body | contains(\"rate limited\") or contains(\"Reviews paused\"))] | last | .createdAt // empty")
 BLOCKER=false
 if [ -n "$RECENT_BLOCKER" ]; then
