@@ -306,10 +306,19 @@ export interface SecurityConfig {
  * pointing at a project-local runbook (e.g. a SKILL.md reference).
  *
  * Validation matches the family rule (see `validateReview` /
- * `validatePipelineCheckPath`): project-relative paths only — empty
+ * `validateWorkPipelineCheckPath`): project-relative paths only — empty
  * strings, absolute paths, `..` segments, and control-character
  * payloads are rejected with a stderr warning, after which the field
  * falls back to `undefined` so consumers cannot read a corrupted value.
+ *
+ * Containment caveat (lexical-only validation):
+ *   The validator performs **lexical** path checks only and does NOT
+ *   resolve symlinks. A relative path that passes validation but points
+ *   to a symlink escaping the project root will still be accepted here.
+ *   Caller agents (`/harness-review` / `harness:reviewer`) are
+ *   responsible for runtime containment checks (e.g., `realpath` against
+ *   project root) before invoking `Read`. This split keeps `loadConfig()`
+ *   side-effect free and lets per-call agents apply policy as needed.
  */
 export interface ReviewConfig {
   /**
