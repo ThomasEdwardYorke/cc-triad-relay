@@ -2937,13 +2937,18 @@ describe(".coderabbit.yaml — repository-level CodeRabbit config", () => {
     const checks = reviews["pre_merge_checks"] as Record<string, unknown>;
     expect(checks).toBeTypeOf("object");
     expect(checks).not.toBeNull();
-    // CodeRabbit schema v2 公式キー: custom_checks / description / docstrings
-    expect(checks["custom_checks"]).toBeTypeOf("object");
+    // CodeRabbit schema v2 公式キー: custom_checks (array) / description (object) / docstrings (object)
+    // custom_checks は **array of {name, instructions, mode?}** schema
+    // (object として書くと CR は default 設定で読み yaml 全体が無視される、
+    // PR #36 で導入されていた既知バグを Track C で修正済)
+    expect(Array.isArray(checks["custom_checks"])).toBe(true);
     expect(checks["description"]).toBeTypeOf("object");
     expect(checks["docstrings"]).toBeTypeOf("object");
-    // mode は意味論的に意図された値で個別固定 (drift guard、allowed-set だと
-    // custom_checks=error / docstrings=warning 等の昇格が test を通り抜ける)
-    expect((checks["custom_checks"] as Record<string, unknown>)["mode"]).toBe("warning");
+    // custom_checks: 現状 plugin core は project 固有 custom rule を持たないため
+    // 空配列 (将来 rule 追加時の template として明示)。description / docstrings は
+    // mode を意味論的に意図された値で個別固定 (drift guard、allowed-set 緩和は
+    // description=error / docstrings=warning 等の昇格が test を通り抜けるため避ける)
+    expect((checks["custom_checks"] as unknown[]).length).toBe(0);
     expect((checks["description"] as Record<string, unknown>)["mode"]).toBe("warning");
     expect((checks["docstrings"] as Record<string, unknown>)["mode"]).toBe("off");
   });
