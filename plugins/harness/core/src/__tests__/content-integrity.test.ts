@@ -2937,13 +2937,18 @@ describe(".coderabbit.yaml — repository-level CodeRabbit config", () => {
     const checks = reviews["pre_merge_checks"] as Record<string, unknown>;
     expect(checks).toBeTypeOf("object");
     expect(checks).not.toBeNull();
-    // CodeRabbit schema v2 公式キー: custom_checks / description / docstrings
-    expect(checks["custom_checks"]).toBeTypeOf("object");
+    // CodeRabbit schema v2 公式キー: custom_checks (array) / description (object) / docstrings (object)
+    // custom_checks は **array of {name, instructions, mode?}** schema
+    // (object として書くと CR は default 設定で読み yaml 全体が無視される、
+    // PR #36 で導入されていた既知バグを Track C で修正済)
+    expect(Array.isArray(checks["custom_checks"])).toBe(true);
     expect(checks["description"]).toBeTypeOf("object");
     expect(checks["docstrings"]).toBeTypeOf("object");
-    // mode は意味論的に意図された値で個別固定 (drift guard、allowed-set だと
-    // custom_checks=error / docstrings=warning 等の昇格が test を通り抜ける)
-    expect((checks["custom_checks"] as Record<string, unknown>)["mode"]).toBe("warning");
+    // custom_checks: 現状 plugin core は project 固有 custom rule を持たないため
+    // 空配列 (将来 rule 追加時の template として明示)。description / docstrings は
+    // mode を意味論的に意図された値で個別固定 (drift guard、allowed-set 緩和は
+    // description=error / docstrings=warning 等の昇格が test を通り抜けるため避ける)
+    expect((checks["custom_checks"] as unknown[]).length).toBe(0);
     expect((checks["description"] as Record<string, unknown>)["mode"]).toBe("warning");
     expect((checks["docstrings"] as Record<string, unknown>)["mode"]).toBe("off");
   });
@@ -4170,4 +4175,65 @@ describe("Track B-2: harness:codex-sync invocations include `name` argument", ()
       }
     });
   }
+});
+
+// Reviewer addendum chain content-integrity: the reviewer addendum
+// contract spans three files (config.ts → harness-review.md → reviewer.md).
+// Without a content-integrity check the next maintainer can flip one
+// without the other and the addendum silently goes dark.
+describe("review.projectChecklistPath addendum chain", () => {
+  it("commands/harness-review.md が reviewer agent invocation contract を spec 化している", () => {
+    const content = readCommand("harness-review");
+    // CR review round 2 nitpick: section 限定で false-positive 排除。
+    // `Reviewer agent invocation contract` セクション内で contract が記述
+    // されていることを assert (無関係 section の文言一致で通る弱さを排除)。
+    const contractSection =
+      /Reviewer agent invocation contract[\s\S]*?(?=\n## |\n### |$)/i.exec(content)?.[0] ?? "";
+    expect(contractSection.length).toBeGreaterThan(0);
+    expect(contractSection).toMatch(/projectChecklistPath/);
+    // loadConfig を path source として明記 (validation bypass 防止)
+    expect(contractSection).toMatch(/loadConfig\(\)/);
+  });
+
+  it("agents/reviewer.md が projectChecklistPath を入力 schema に含み addendum の Read 手順を section 限定で記述する", () => {
+    const content = readAgent("reviewer");
+    // Input schema must mention the field so callers know how to populate it.
+    expect(content).toMatch(/projectChecklistPath/);
+    // CR review round 1 nitpick: Read 検証は section 限定で。
+    // `Project addendum (opt-in)` セクション全体を抽出し、その中で
+    // Read step が記述されていることを assert する (無関係箇所の Read で通る
+    // 弱い regex を回避)。
+    const addendumSection =
+      /Project addendum \(opt-in\)[\s\S]*?(?=\n## |\n### |$)/i.exec(content)?.[0] ?? "";
+    expect(addendumSection.length).toBeGreaterThan(0);
+    expect(addendumSection).toMatch(/\bRead\b/);
+    // Opt-in semantics: projectChecklistPath が未指定の場合 addendum を読まない
+    // 旨を spec で明記している (caller が path を populate する責務、未指定 = no addendum)。
+    // CR review round 2 nitpick: opt-in semantics 検証も addendumSection 限定で
+    expect(addendumSection).toMatch(
+      /projectChecklistPath[\s\S]{0,400}?(?:not provided|omitted|absent|not set|未指定|undefined)[\s\S]{0,400}?(?:no addendum|addendum なし|skip|skipped|読み込まない|読まない|fail.?open|fall.?back)/i,
+    );
+  });
+
+  it("addendum chain は symlink containment が caller-agent 責務である旨を両ファイルで spec 化している", () => {
+    // Codex Phase 7 Minor: config.ts の docstring (L314-321) は symlink 解決を
+    // caller agent (`/harness-review` / `harness:reviewer`) の責務と明記している。
+    // しかし agent / command の markdown 側に realpath 言及が無いと、保守者が
+    // 該当 contract に気付かず lexical-only 検証だけで安全と誤認するリスクが
+    // ある。本 test は両ファイルに realpath / symlink 言及が現存することを
+    // 検証し、silent な doc drift を防ぐ (D-88 spirit)。
+    const reviewer = readAgent("reviewer");
+    const command = readCommand("harness-review");
+    // reviewer.md: addendum section 内で symlink contract を述べていること
+    const reviewerAddendum =
+      /Project addendum \(opt-in\)[\s\S]*?(?=\n## |\n### |$)/i.exec(reviewer)?.[0] ?? "";
+    expect(reviewerAddendum.length).toBeGreaterThan(0);
+    expect(reviewerAddendum).toMatch(/symlink/i);
+    expect(reviewerAddendum).toMatch(/\brealpath\b/i);
+    // commands/harness-review.md: 検証 list か invocation contract section の
+    // どちらかで symlink + realpath を述べていること (file 全体で OR、両 keyword
+    // 必須)
+    expect(command).toMatch(/symlink/i);
+    expect(command).toMatch(/\brealpath\b/i);
+  });
 });

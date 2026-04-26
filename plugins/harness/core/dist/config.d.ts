@@ -232,6 +232,20 @@ export interface WorkConfig {
      * `vitest --bail 1`-style semantics.
      */
     failFast: boolean;
+    /**
+     * Optional relative path to a project-local pipeline-verification runbook
+     * (e.g. a `pipeline-check.md` reference under `.claude/skills/<project>-
+     * local-rules/references/`). Consumed by `/harness-work` to surface the
+     * project's pipeline-check guide as addendum when present; otherwise
+     * `/harness-work` falls back to its stack-neutral built-in checks.
+     *
+     * Validation: project-relative paths only — absolute paths, `..`
+     * segments, empty strings, and control-character payloads are rejected
+     * by the loader (`validateWorkPipelineCheckPath`) so the path cannot
+     * escape the project root or carry log-injection vectors. Rejected
+     * values fall back to `undefined` after a stderr warning.
+     */
+    pipelineCheckPath?: string;
 }
 export interface SecurityConfig {
     /**
@@ -242,6 +256,38 @@ export interface SecurityConfig {
     projectChecklistPath?: string;
     /** Enabled security check categories. */
     enabledChecks: string[];
+}
+/**
+ * Reviewer-side opt-in addendum surface. Mirrors `SecurityConfig`'s
+ * `projectChecklistPath` but is consumed by `/harness-review` and the
+ * generic `harness:reviewer` agent so the security and review surfaces
+ * stay independently configurable. The plugin ships stack-neutral —
+ * `projectChecklistPath` is undefined by default; consumers opt in by
+ * pointing at a project-local runbook (e.g. a SKILL.md reference).
+ *
+ * Validation matches the family rule (see `validateReview` /
+ * `validateWorkPipelineCheckPath`): project-relative paths only — empty
+ * strings, absolute paths, `..` segments, and control-character
+ * payloads are rejected with a stderr warning, after which the field
+ * falls back to `undefined` so consumers cannot read a corrupted value.
+ *
+ * Containment caveat (lexical-only validation):
+ *   The validator performs **lexical** path checks only and does NOT
+ *   resolve symlinks. A relative path that passes validation but points
+ *   to a symlink escaping the project root will still be accepted here.
+ *   Caller agents (`/harness-review` / `harness:reviewer`) are
+ *   responsible for runtime containment checks (e.g., `realpath` against
+ *   project root) before invoking `Read`. This split keeps `loadConfig()`
+ *   side-effect free and lets per-call agents apply policy as needed.
+ */
+export interface ReviewConfig {
+    /**
+     * Relative path to a project-local review runbook / addendum.
+     * `/harness-review` and `harness:reviewer` agent load this file as
+     * addendum when present; otherwise run the stack-neutral generic
+     * runbook only.
+     */
+    projectChecklistPath?: string;
 }
 /**
  * Worktree orchestration mode. `true` / `false` force on/off; `"auto"`
@@ -599,6 +645,7 @@ export interface HarnessConfig {
     tampering: TamperingConfig;
     work: WorkConfig;
     security: SecurityConfig;
+    review: ReviewConfig;
     worktree: WorktreeConfig;
     tddEnforce: TddEnforceConfig;
     codeRabbit: CodeRabbitConfig;

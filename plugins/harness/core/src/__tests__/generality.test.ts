@@ -409,17 +409,43 @@ interface ExemptionDeclaration {
 // expiry は semver / ISO date / quarter の 3 書式を許容。
 // Issue key: uppercase PREFIX, then hyphen, then alphanumeric / underscore / hyphen body.
 // Slug forms (e.g. HARNESS-generality-self) are allowed for self-reference cases.
-const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]*-[A-Za-z0-9_][A-Za-z0-9_-]*$/;
+//
+// exemption-grammar hardening hardening: cap BOTH prefix and suffix at 64 characters total
+// each (Codex review major-1 follow-up). Capping only the suffix lets an
+// attacker move a long credential-shaped payload before the hyphen — the
+// prefix `[A-Z][A-Z0-9_]*` would otherwise still accept arbitrary length.
+// 64 was chosen because realistic issue-key lengths sit well below it
+// (HARNESS-generality-self = 17 chars, PARTS-12 = 8 chars), giving ample
+// headroom while making credential-style obfuscation visible on either
+// side of the hyphen.
+const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]{0,63}-[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/;
 const EXPIRY_SEMVER_RE = /^v\d+\.\d+\.\d+$/;
-const EXPIRY_ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+// exemption-grammar hardening hardening: tighten ISO date numeric-domain so impossible
+// dates like 2026-13-32 (month 13, day 32) and 2026-04-00 (day zero) are
+// rejected at parse time. We deliberately stop at numeric-domain checks
+// (month 01-12 / day 01-31) rather than full Gregorian validation —
+// adopting `Date.parse` here would invite locale / timezone footguns
+// without protecting against the adversarial inputs the audit flagged.
+// Edge cases that pass this regex but are not strict Gregorian (e.g.
+// 2026-02-30, 2026-04-31) are handled by callers when / if they need
+// month-day adjudication; the regex's job is to reject obvious junk.
+const EXPIRY_ISO_DATE_RE =
+  /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/;
 const EXPIRY_QUARTER_RE = /^\d{4}-Q[1-4]$/;
 // `\d+` allows future expansion to 2+ digit pattern IDs (e.g. B-10, B-99a, B-123).
 const PATTERN_ID_EXTRACT_RE = /\bB-\d+[a-z]?\b/g;
 // Full-string CSV match for short-form idsPart: rejects any trailing/non-ID text
 // so legacy fragments like "B-1, legacy reason" cannot bypass 4-field requirement.
 const PATTERN_ID_CSV_RE = /^B-\d+[a-z]?(?:,B-\d+[a-z]?)*$/;
-// Subword-safe: requires non-word boundary around `all` so `wall` / `fallback` do not match.
-const ALL_KEYWORD_RE = /(?:^|\W)['"`]?all['"`]?(?:$|\W)/i;
+// exemption-grammar hardening hardening: scope the all-keyword guard to pattern-ids field
+// grammar (CSV of B-\d+[a-z]? tokens). Previous shape `(?:^|\W)['"`]?all['"`]?
+// (?:$|\W)` would also have flagged a legitimate issue-key like `ALL-42` if
+// the regex were ever applied to the issue-key field. Anchoring the
+// boundaries on `,` / `^` / `$` (the only legal token separators in a
+// pattern-ids CSV) makes the regex unambiguously a pattern-ids field rule.
+// Optional surrounding whitespace + optional ASCII quote chars stay because
+// attackers historically wrap forbidden tokens to bypass naive matchers.
+const ALL_KEYWORD_RE = /(?:^|,)\s*['"`]?all['"`]?\s*(?:$|,)/i;
 
 /**
  * Parse an exemption body (everything after `generality-exemption:` up to closing marker).
@@ -757,6 +783,348 @@ function findHits(
 }
 
 // ---------------------------------------------------------------------------
+// test-file zone scan: test-file zone extraction
+// ---------------------------------------------------------------------------
+//
+// Extract `comment-block` (`/* ... */`), `comment-line` (`// ...`), and
+// `describe-title` (first string arg of `describe(...)` / `it(...)`)
+// zones from a test file so the blocklist scan can focus on the surfaces
+// most likely to leak internal tracker IDs (multi-line block comments
+// span newlines and a per-line scan misses violations that wrap).
+//
+// Non-goals:
+//   - Full TypeScript / JavaScript parsing. We deliberately stay at a
+//     regex-based extractor; a full AST would couple this CI guard to
+//     the project's bundler config.
+//   - Comment detection inside string literals (e.g. a string that
+//     contains `// foo`). False positives here are tolerable because
+//     fixture string literals are already covered by file-head
+//     `generality-exemption` declarations.
+
+interface TestZone {
+  kind: "comment-block" | "comment-line" | "describe-title";
+  startLine: number;
+  endLine: number;
+  text: string;
+  /** Absolute character offset of zone start in the original content. */
+  startOffset: number;
+}
+
+/**
+ * Compute the 1-based line number for a character offset by counting
+ * newline characters up to but not including the offset.
+ */
+function offsetToLine(content: string, offset: number): number {
+  let line = 1;
+  for (let i = 0; i < offset && i < content.length; i += 1) {
+    if (content[i] === "\n") line += 1;
+  }
+  return line;
+}
+
+/**
+ * Extract zones from `content`. Implementation walks the string with a
+ * tiny state machine so it can:
+ *   - Skip over JS string literals (so `// inside string` is not flagged
+ *     as a comment).
+ *   - Recognise template literals (backticks) for describe / it titles.
+ *   - Spot describe / it call boundaries before entering string state so
+ *     the title's quote character is captured.
+ *
+ * The state machine is deliberately conservative: anything that looks
+ * ambiguous defaults to "outside" so the extractor never mis-identifies
+ * code as a comment / title (false-positives in the audit are far worse
+ * than misses, since the audit also has the per-line BLOCKLIST_TARGETS
+ * scan as a redundant net).
+ */
+export function extractTestZones(content: string): TestZone[] {
+  const zones: TestZone[] = [];
+  const len = content.length;
+  let i = 0;
+  while (i < len) {
+    const ch = content[i];
+    const next = content[i + 1];
+
+    // ----- block comment -----
+    if (ch === "/" && next === "*") {
+      const start = i;
+      i += 2;
+      while (i < len) {
+        if (content[i] === "*" && content[i + 1] === "/") {
+          i += 2;
+          break;
+        }
+        i += 1;
+      }
+      const end = i;
+      const startLine = offsetToLine(content, start);
+      const endLine = offsetToLine(content, end - 1);
+      zones.push({
+        kind: "comment-block",
+        startLine,
+        endLine,
+        startOffset: start,
+        // Strip the comment markers so the regex sees only the body
+        // text — the markers themselves never carry a tracker ID and
+        // would otherwise leak into hit text reporting.
+        text: content.slice(start + 2, end - 2),
+      });
+      continue;
+    }
+
+    // ----- line comment -----
+    if (ch === "/" && next === "/") {
+      const start = i;
+      i += 2;
+      while (i < len && content[i] !== "\n") i += 1;
+      const end = i; // newline excluded
+      const line = offsetToLine(content, start);
+      zones.push({
+        kind: "comment-line",
+        startLine: line,
+        endLine: line,
+        startOffset: start,
+        text: content.slice(start + 2, end),
+      });
+      continue;
+    }
+
+    // ----- string literal (skip body) -----
+    if (ch === '"' || ch === "'" || ch === "`") {
+      const quote = ch;
+      i += 1;
+      while (i < len) {
+        if (content[i] === "\\") {
+          // Escape sequence — skip the next character verbatim.
+          i += 2;
+          continue;
+        }
+        if (content[i] === quote) {
+          i += 1;
+          break;
+        }
+        i += 1;
+      }
+      continue;
+    }
+
+    // ----- describe / it title -----
+    // Match the call form `describe("...")` / `it("...")` — first
+    // string-literal argument only. We deliberately consume any
+    // surrounding whitespace so multi-arg formatting (`describe (\n
+    // "title", ...)`) still works.
+    //
+    // Codex Track-C review (major-2) follow-up: also support Vitest
+    // modifier chains (`it.only(...)`, `describe.skip(...)`,
+    // `it.each(...)`, `it.concurrent(...)`, `it.todo(...)`). After
+    // matching the keyword, consume an allowlisted modifier path
+    // before requiring `(`. The allowlist intentionally covers the
+    // common test-runner forms so we do not silently extend coverage
+    // to arbitrary chained property access.
+    //
+    // Codex Track-C confirm review follow-up: support `.each(cases)(
+    // "title", ...)` curried form. When the consumed modifier chain
+    // ended with `each`, the first `(...)` is the cases tuple — skip
+    // it and look for a SECOND `(` whose first arg is the title.
+    if (
+      (ch === "d" || ch === "i") &&
+      isDescribeOrItKeyword(content, i)
+    ) {
+      // Advance past the keyword.
+      const kwLen = content.startsWith("describe", i) ? 8 : 2;
+      let j = i + kwLen;
+      const TEST_MODIFIERS = ["only", "skip", "concurrent", "each", "todo"];
+      let lastModifier: string | undefined;
+      while (content[j] === "." && j + 1 < len) {
+        const remaining = content.slice(j + 1);
+        const matchedModifier = TEST_MODIFIERS.find((mod) =>
+          remaining.startsWith(mod) &&
+          // Ensure the modifier ends at a non-word char (avoids
+          // partial-match like `.skipper`).
+          !/\w/.test(remaining[mod.length] ?? ""),
+        );
+        if (!matchedModifier) break;
+        lastModifier = matchedModifier;
+        j += 1 + matchedModifier.length;
+      }
+      // Skip whitespace + open paren.
+      while (j < len && /\s/.test(content[j])) j += 1;
+      if (content[j] !== "(") {
+        // Not a call shape — keep walking from after the keyword to
+        // avoid re-scanning the same span repeatedly.
+        i = j;
+        continue;
+      }
+      j += 1;
+
+      // For `.each(cases)(<title>, ...)` we need to skip the cases
+      // argument list and re-anchor on the second `(`. We do a depth-
+      // tracking paren walk that respects nested string literals so a
+      // cases array containing `[")"]` does not confuse the matcher.
+      if (lastModifier === "each") {
+        let depth = 1;
+        while (j < len && depth > 0) {
+          const c = content[j];
+          if (c === "\\") {
+            j += 2;
+            continue;
+          }
+          if (c === '"' || c === "'" || c === "`") {
+            const innerQuote = c;
+            j += 1;
+            while (j < len) {
+              if (content[j] === "\\") {
+                j += 2;
+                continue;
+              }
+              if (content[j] === innerQuote) {
+                j += 1;
+                break;
+              }
+              j += 1;
+            }
+            continue;
+          }
+          if (c === "(") depth += 1;
+          else if (c === ")") depth -= 1;
+          j += 1;
+        }
+        // After exiting the outer `)`, advance to the second `(`.
+        while (j < len && /\s/.test(content[j])) j += 1;
+        if (content[j] !== "(") {
+          // `.each(cases)` not followed by curried call — skip extraction.
+          i = j;
+          continue;
+        }
+        j += 1;
+      }
+
+      while (j < len && /\s/.test(content[j])) j += 1;
+      const titleQuote = content[j];
+      if (titleQuote !== '"' && titleQuote !== "'" && titleQuote !== "`") {
+        // First arg is not a string literal — skip.
+        i = j;
+        continue;
+      }
+      const titleStart = j + 1;
+      let k = titleStart;
+      while (k < len) {
+        if (content[k] === "\\") {
+          k += 2;
+          continue;
+        }
+        if (content[k] === titleQuote) break;
+        k += 1;
+      }
+      const titleEnd = k; // exclusive of closing quote
+      const startLine = offsetToLine(content, titleStart);
+      const endLine = offsetToLine(content, titleEnd);
+      zones.push({
+        kind: "describe-title",
+        startLine,
+        endLine,
+        startOffset: titleStart,
+        text: content.slice(titleStart, titleEnd),
+      });
+      // Resume after the closing quote.
+      i = titleEnd + 1;
+      continue;
+    }
+
+    i += 1;
+  }
+  return zones;
+}
+
+/**
+ * `describe`/`it` keyword detector with word-boundary check (avoids
+ * matching identifiers like `description` / `itinerary`).
+ */
+function isDescribeOrItKeyword(content: string, i: number): boolean {
+  const isDescribe = content.startsWith("describe", i);
+  const isIt = content.startsWith("it", i);
+  if (!isDescribe && !isIt) return false;
+  // Left boundary: previous char must NOT be a word char (so `xdescribe`
+  // is not picked up).
+  if (i > 0 && /\w/.test(content[i - 1])) return false;
+  // Right boundary: char after the keyword must NOT be a word char
+  // (so `description` is rejected; `describe(` / `describe (` survive).
+  const after = content[i + (isDescribe ? 8 : 2)];
+  if (after !== undefined && /[\w$]/.test(after)) return false;
+  return true;
+}
+
+/**
+ * Test-zone hit. `kind` carries the originating zone's classification
+ * so audit messages can quote the precise surface.
+ */
+interface ZoneHit {
+  kind: TestZone["kind"];
+  startLine: number;
+  endLine: number;
+  text: string;
+}
+
+/**
+ * Run a `BlockPattern`'s regex against each extracted zone in `content`,
+ * honouring file-head `generality-exemption` declarations the same way
+ * `findHits` does (so a fixture file that opts out of `B-3b` does not
+ * produce zone hits).
+ *
+ * Multi-line zones (block comments) are searched with the regex's `s`
+ * (dotAll) semantics emulated via `\s\S` in the original patterns —
+ * since `\s` matches newline, the block-comment text can be tested
+ * verbatim.
+ *
+ * Codex Track-C review (minor-1) follow-up: also honour line-level
+ * `// generality-exemption: B-N | …` declarations on comment-line
+ * zones. The original line carrying the comment (reconstructed by
+ * prepending `//` since the zone strips comment markers) is fed to
+ * `hasLineExemption(line, patternId, content)` so both full-form and
+ * short-form (file-head inheritance) exemptions are recognised.
+ *
+ * Block-comment zones intentionally do NOT support line-level exemption
+ * comments inside the body — block-local exemption semantics would
+ * require per-line tokenisation that contradicts the multi-line catch
+ * goal. Use file-head exemption for block-comment intentional fixtures.
+ */
+export function findHitsInTestZones(
+  content: string,
+  pattern: BlockPattern,
+): ZoneHit[] {
+  // File-head exemption applies to the entire file.
+  if (hasFileExemption(content, pattern.id)) return [];
+  const zones = extractTestZones(content);
+  const lines = content.split(/\r?\n/);
+  const hits: ZoneHit[] = [];
+  for (const zone of zones) {
+    // Re-instantiate the regex per zone so `lastIndex` from previous
+    // zones / tests does not affect this match.
+    const re = new RegExp(pattern.pattern.source, pattern.pattern.flags);
+    if (!re.test(zone.text)) continue;
+
+    // For comment-line zones we can map the zone back to its original
+    // line and consult `hasLineExemption`. describe-title and
+    // comment-block zones may span multiple physical lines and do not
+    // support line-level exemption (use file-head exemption instead).
+    if (zone.kind === "comment-line" && zone.startLine - 1 < lines.length) {
+      const originalLine = lines[zone.startLine - 1] ?? "";
+      if (hasLineExemption(originalLine, pattern.id, content)) {
+        continue;
+      }
+    }
+
+    hits.push({
+      kind: zone.kind,
+      startLine: zone.startLine,
+      endLine: zone.endLine,
+      text: zone.text,
+    });
+  }
+  return hits;
+}
+
+// ---------------------------------------------------------------------------
 // テスト生成
 // ---------------------------------------------------------------------------
 
@@ -811,6 +1179,46 @@ describeFileBlocklistTests(
   WARN_TARGETS,
   (p) => p.appliesToTests,
 );
+
+// test-file zone scan: test-file zone scan
+//
+// The line-based WARN_TARGETS scan above misses multi-line `/* ... */`
+// block-comment violations whose tracker fragment wraps across newlines
+// (e.g. `/* internal\n申送 M-12 */`). This dedicated scan extracts
+// comment + describe / it title zones first and runs the regex against
+// each zone's full text so multi-line violations are caught. File-head
+// `generality-exemption` declarations apply identically (the existing
+// audit-tagged fixtures stay green).
+describe("generality blocklist: test-file zones (zone scan multi-line catch)", () => {
+  const allFiles = WARN_TARGETS.flatMap((t) => listFiles(t));
+
+  for (const pattern of BLOCK_PATTERNS) {
+    if (!pattern.appliesToTests) continue;
+    describe(`[${pattern.id}] ${pattern.category}`, () => {
+      for (const file of allFiles) {
+        const rel = relative(REPO_ROOT, file).replace(/\\/g, "/");
+        it(`${rel} の comment / describe-title に ${pattern.id} が含まれない`, () => {
+          if (pattern.skipFiles && pattern.skipFiles.test(rel)) return;
+          const content = readFileSync(file, "utf-8");
+          const hits = findHitsInTestZones(content, pattern);
+          if (hits.length > 0) {
+            const details = hits
+              .map(
+                (h) =>
+                  `  ${h.kind} L${h.startLine}-${h.endLine}: ${h.text
+                    .slice(0, 200)
+                    .replace(/\s+/g, " ")
+                    .trim()}`,
+              )
+              .join("\n");
+            const fullMessage = `\n${pattern.message}\n\nLeak 検出箇所 (${rel}):\n${details}\n`;
+            expect.fail(fullMessage);
+          }
+        });
+      }
+    });
+  }
+});
 
 // Codex [C-1] 指摘対応: REPO_ROOT_TARGETS (README.md / docs/en / docs/ja) を実際に走査
 describe("generality blocklist: repo-level public docs (Codex [C-1] coverage)", () => {
@@ -1267,6 +1675,418 @@ describe("exemption grammar (unified, pipe-separated)", () => {
       expect(() => hasFileExemption(content, "B-1")).toThrow(
         /single line|newline|line break|4|field/i,
       );
+    });
+  });
+
+  // ----------------------------------------------------------------------
+  // exemption-grammar hardening: exemption-grammar regex 強化
+  // ----------------------------------------------------------------------
+  // Background: legacy security follow-up (security). The three regex below were
+  // accepting inputs that violated their semantic intent:
+  //
+  //   1. ISSUE_KEY_RE — no upper bound on suffix length, so a malicious or
+  //      malformed declaration could embed a credential-shaped 200+ char
+  //      string as the "issue-key" and slip past the parser. Cap suffix at
+  //      64 characters (i.e. 1 leading char + up to 63 more).
+  //   2. EXPIRY_ISO_DATE_RE — pure digit-shape matcher, so `2026-13-32`
+  //      (month 13, day 32) and other impossible dates were accepted. Tighten
+  //      to month 01-12 / day 01-31 (numeric-domain check; not strict
+  //      Gregorian — Feb 30 / Apr 31 are still admissible).
+  //   3. ALL_KEYWORD_RE — boundary scoping let a legitimate issue-key like
+  //      `ALL-42` look like an `all`-keyword hit if the regex were ever
+  //      tested against the issue-key field directly. Tighten to a CSV-
+  //      bounded match so the regex is only meaningful in the pattern-ids
+  //      field grammar (comma-separated tokens).
+  //
+  // These changes must NOT increase false-positives in the existing test
+  // suite (running the whole generality.test.ts must stay green), so the
+  // adversarial cases below are paired with positive cases that lock in
+  // the previously accepted shapes.
+  describe("exemption grammar regex hardening (exemption regex hardening)", () => {
+    describe("ISSUE_KEY_RE suffix 64-char cap", () => {
+      it("accepts a 64-character suffix (boundary)", () => {
+        // Total suffix length = 64: 1 leading [A-Za-z0-9_] + 63 more.
+        const suffix = "a".repeat(64);
+        const md = `<!-- generality-exemption: B-1 | HARNESS-${suffix} | v0.5.0 | within cap -->`;
+        expect(hasFileExemption(md, "B-1")).toBe(true);
+      });
+
+      it("rejects a 65-character suffix (just over the cap)", () => {
+        const suffix = "a".repeat(65);
+        const md = `<!-- generality-exemption: B-1 | HARNESS-${suffix} | v0.5.0 | over cap -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/issue[- ]?key/i);
+      });
+
+      it("rejects a 200-character credential-shaped suffix (worst-case obfuscation)", () => {
+        // Simulates an attacker stuffing a token / hash into the issue-key field.
+        const credentialish = "X".repeat(200);
+        const md = `<!-- generality-exemption: B-1 | HARNESS-${credentialish} | v0.5.0 | credential abuse -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/issue[- ]?key/i);
+      });
+
+      // Codex Track-C review (major-1) follow-up: the prefix `[A-Z][A-Z0-9_]*`
+      // had no upper bound, so an attacker could move a long uppercase /
+      // token-shaped payload BEFORE the hyphen and slip past the suffix
+      // cap. Lock down the prefix at the same 64-character ceiling.
+      it("rejects a 65-character prefix (just over the prefix cap)", () => {
+        const prefix = "X".repeat(65); // only ASCII uppercase / digits / underscore allowed
+        const md = `<!-- generality-exemption: B-1 | ${prefix}-42 | v0.5.0 | over prefix cap -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/issue[- ]?key/i);
+      });
+
+      it("rejects a 200-character credential-shaped prefix (worst-case obfuscation)", () => {
+        const credentialish = "Z".repeat(200);
+        const md = `<!-- generality-exemption: B-1 | ${credentialish}-9 | v0.5.0 | prefix abuse -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/issue[- ]?key/i);
+      });
+
+      it("accepts a 64-character prefix (boundary, prefix max)", () => {
+        // 1 leading [A-Z] + 63 more = 64 total
+        const prefix = "X".repeat(64);
+        const md = `<!-- generality-exemption: B-1 | ${prefix}-42 | v0.5.0 | within prefix cap -->`;
+        expect(hasFileExemption(md, "B-1")).toBe(true);
+      });
+
+      it("still accepts pre-existing semantic-slug forms (HARNESS-generality-self)", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-generality-self | 2099-12-31 | preserved -->`;
+        expect(hasFileExemption(md, "B-1")).toBe(true);
+      });
+
+      it("still accepts cross-project tracker prefix (PARTS-12)", () => {
+        const md = `<!-- generality-exemption: B-1 | PARTS-12 | v1.0.0 | preserved -->`;
+        expect(hasFileExemption(md, "B-1")).toBe(true);
+      });
+    });
+
+    describe("EXPIRY_ISO_DATE_RE numeric-domain check", () => {
+      it("rejects a malformed date with month 13", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-42 | 2026-13-01 | invalid month -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/expir/i);
+      });
+
+      it("rejects a malformed date with month 00", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-42 | 2026-00-15 | invalid month -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/expir/i);
+      });
+
+      it("rejects a malformed date with day 32", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-42 | 2026-04-32 | invalid day -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/expir/i);
+      });
+
+      it("rejects a malformed date with day 00", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-42 | 2026-04-00 | invalid day -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/expir/i);
+      });
+
+      it("rejects the canonical adversarial input 2026-13-32", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-42 | 2026-13-32 | task fixture -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/expir/i);
+      });
+
+      it("accepts the boundary date 2026-12-31", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-42 | 2026-12-31 | year-end -->`;
+        expect(hasFileExemption(md, "B-1")).toBe(true);
+      });
+
+      it("accepts the boundary date 2026-01-01", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-42 | 2026-01-01 | year-start -->`;
+        expect(hasFileExemption(md, "B-1")).toBe(true);
+      });
+
+      it("accepts the existing fixture date 2099-12-31 (HARNESS-generality-self)", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-generality-self | 2099-12-31 | self -->`;
+        expect(hasFileExemption(md, "B-1")).toBe(true);
+      });
+    });
+
+    describe("ALL_KEYWORD_RE pattern-id field scope", () => {
+      it("rejects pattern-ids field equal to standalone 'all' (existing guard preserved)", () => {
+        const md = `<!-- generality-exemption: all | HARNESS-42 | v0.5.0 | scoped all -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/all/i);
+      });
+
+      it("rejects pattern-ids CSV containing 'all' as a comma-bounded token", () => {
+        const md = `<!-- generality-exemption: B-1,all,B-2a | HARNESS-42 | v0.5.0 | mixed -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/all|exact CSV|pattern ID/i);
+      });
+
+      it("rejects pattern-ids 'all,B-1' (leading all)", () => {
+        const md = `<!-- generality-exemption: all,B-1 | HARNESS-42 | v0.5.0 | leading -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/all|exact CSV|pattern ID/i);
+      });
+
+      it("rejects pattern-ids 'B-1,all' (trailing all)", () => {
+        const md = `<!-- generality-exemption: B-1,all | HARNESS-42 | v0.5.0 | trailing -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/all|exact CSV|pattern ID/i);
+      });
+
+      it("rejects quoted 'all' in pattern-ids field (`'all'`)", () => {
+        const md = `<!-- generality-exemption: 'all' | HARNESS-42 | v0.5.0 | quoted -->`;
+        expect(() => hasFileExemption(md, "B-1")).toThrow(/all|exact CSV|pattern ID/i);
+      });
+
+      it("does NOT false-positive when reason field mentions the word 'all' (preserved)", () => {
+        const md = `<!-- generality-exemption: B-1 | HARNESS-42 | v0.5.0 | rationale for 'all' exemptions -->`;
+        const parsed = parseExemption(md);
+        expect(parsed).not.toBeNull();
+        expect(parsed!.reason).toMatch(/all/);
+      });
+
+      it("does NOT false-positive when issue-key starts with 'ALL-' (e.g. ALL-42)", () => {
+        // ALL_KEYWORD_RE must not flag legitimate issue-key shapes that happen
+        // to begin with the letters A-L-L. Issue-key validation runs in its
+        // own field; the all-keyword check must stay scoped to the pattern-ids
+        // field so it cannot leak into issue-key adjudication.
+        const md = `<!-- generality-exemption: B-1 | ALL-42 | v0.5.0 | tracker prefix -->`;
+        // ALL-42 satisfies the issue-key regex and must NOT be rejected by
+        // the all-keyword guard.
+        expect(hasFileExemption(md, "B-1")).toBe(true);
+      });
+    });
+  });
+
+  // ----------------------------------------------------------------------
+  // test-file zone scan: test-file comment / describe-title 走査拡張
+  // ----------------------------------------------------------------------
+  // Background: existing WARN_TARGETS line-based scan already catches a
+  // tracker-ID violation when it sits on a single line of a test file
+  // (the regex itself matches without comment-awareness). The audit
+  // surfaced two gaps:
+  //
+  //   1. Multi-line `/* ... */` block-comment violations split across
+  //      newlines (e.g. `/* internal\n申送 M-12 */`) are missed because
+  //      the scan is per-line.
+  //   2. The intent of WARN_TARGETS is "violations inside test files"
+  //      but the scan currently looks at every line equally. Making the
+  //      "comments + describe / it titles" surfaces explicit gives a
+  //      precise hit message ("violation in comment block at L123-L130")
+  //      and keeps fixture string literals separately handled (those
+  //      are typically declared with file-head exemption).
+  //
+  // Implementation contract for the helpers under test:
+  //   - `extractTestZones(content)` → ordered list of `{kind, startLine,
+  //     endLine, text}` records covering:
+  //       * `comment-block` — `/* ... */` body (multi-line allowed)
+  //       * `comment-line` — `// ...` body (one per line)
+  //       * `describe-title` — first string argument of `describe(...)` /
+  //         `it(...)` calls (single-line literal, double / single /
+  //         backtick quotes)
+  //   - `findHitsInTestZones(content, pattern)` → array of hits (line
+  //     ranges + matched text), exempt-aware (skips zones covered by
+  //     file-head or in-zone `generality-exemption` markers).
+  describe("test-file zone extraction (zone scan extension)", () => {
+    it("extractTestZones returns block comments, line comments, and describe / it titles", () => {
+      const src =
+        '/* block start\n internal note */\n' +
+        '// single line comment\n' +
+        'describe("first describe title", () => {\n' +
+        '  it("first it title", () => {});\n' +
+        '});\n';
+      const zones = extractTestZones(src);
+      const kinds = zones.map((z) => z.kind);
+      expect(kinds).toContain("comment-block");
+      expect(kinds).toContain("comment-line");
+      expect(kinds).toContain("describe-title");
+      // describe-title and it-title are reported separately so callers
+      // can quote the exact location.
+      const titles = zones
+        .filter((z) => z.kind === "describe-title")
+        .map((z) => z.text);
+      expect(titles).toEqual(
+        expect.arrayContaining([
+          "first describe title",
+          "first it title",
+        ]),
+      );
+    });
+
+    it("extractTestZones spans block comment text across newlines", () => {
+      const src = '/*\n  Round 4 of internal review\n  申送 M-12\n*/\nconst x = 1;\n';
+      const zones = extractTestZones(src);
+      const block = zones.find((z) => z.kind === "comment-block");
+      expect(block).toBeDefined();
+      expect(block!.text).toContain("Round 4");
+      expect(block!.text).toContain("申送 M-12");
+      // Line range covers the multi-line block.
+      expect(block!.startLine).toBeLessThanOrEqual(block!.endLine);
+      expect(block!.endLine).toBeGreaterThanOrEqual(2);
+    });
+
+    it("extractTestZones skips backslash-escaped quote inside describe title", () => {
+      // Robustness: a `describe` title may legitimately contain an escaped
+      // quote (e.g. `describe("foo \"bar\" baz", ...)`). Extraction must
+      // not stop at the inner quote.
+      const src = 'describe("foo \\"bar\\" baz", () => {});\n';
+      const zones = extractTestZones(src);
+      const titles = zones.filter((z) => z.kind === "describe-title");
+      expect(titles).toHaveLength(1);
+      expect(titles[0].text).toContain("bar");
+    });
+
+    it("extractTestZones recognises template-literal (backtick) describe titles", () => {
+      const src = 'it(`backtick title with ${interp} stuff`, () => {});\n';
+      const zones = extractTestZones(src);
+      const titles = zones.filter((z) => z.kind === "describe-title");
+      expect(titles).toHaveLength(1);
+      expect(titles[0].text).toContain("backtick title");
+    });
+
+    // Codex Track-C review (major-2) follow-up: Vitest modifier chains
+    // (`it.only(...)`, `describe.skip(...)`, `it.each(...)`) are real
+    // surfaces that may carry test titles. Without explicit support the
+    // C-3 zone scan would silently skip those titles even though they
+    // are visible to the test runner. Cover the canonical modifiers
+    // (`only`, `skip`, `concurrent`, `each`, `todo`).
+    it("extractTestZones captures it.only / it.skip / describe.only modifier chains", () => {
+      const src =
+        'it.only("only title", () => {});\n' +
+        'it.skip("skip title", () => {});\n' +
+        'describe.only("describe-only title", () => {});\n' +
+        'describe.skip("describe-skip title", () => {});\n';
+      const zones = extractTestZones(src);
+      const titles = zones
+        .filter((z) => z.kind === "describe-title")
+        .map((z) => z.text);
+      expect(titles).toEqual(
+        expect.arrayContaining([
+          "only title",
+          "skip title",
+          "describe-only title",
+          "describe-skip title",
+        ]),
+      );
+    });
+
+    it("extractTestZones captures it.concurrent / it.todo modifiers", () => {
+      const src =
+        'it.concurrent("concurrent title", () => {});\n' +
+        'it.todo("todo title");\n';
+      const zones = extractTestZones(src);
+      const titles = zones
+        .filter((z) => z.kind === "describe-title")
+        .map((z) => z.text);
+      expect(titles).toEqual(
+        expect.arrayContaining(["concurrent title", "todo title"]),
+      );
+    });
+
+    // Codex Track-C confirm review follow-up: `it.each(cases)("title", ...)`
+    // is a curried Vitest / Jest call shape — `.each` returns a function
+    // whose first arg is the title. The previous modifier handling only
+    // entered the title-extraction path when the first call had a string
+    // first arg, so parameterized test titles were silently skipped.
+    it("extractTestZones captures it.each(cases)(<title>, ...) curried call shape", () => {
+      const src =
+        'it.each([[1]])("each Round 4 case", (n) => {});\n' +
+        'describe.each(["a", "b"])("each describe variant %s", () => {});\n';
+      const zones = extractTestZones(src);
+      const titles = zones
+        .filter((z) => z.kind === "describe-title")
+        .map((z) => z.text);
+      expect(titles).toEqual(
+        expect.arrayContaining([
+          "each Round 4 case",
+          "each describe variant %s",
+        ]),
+      );
+    });
+
+    it("findHitsInTestZones flags a tracker-ID inside an it.each parameterised title (B-3b)", () => {
+      const src = 'it.each([[1, 2], [3, 4]])("Round 4 case %i", (a, b) => {});\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3b");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
+      expect(hits.length).toBeGreaterThan(0);
+    });
+
+    it("findHitsInTestZones detects a multi-line block-comment Round-N violation (B-3b)", () => {
+      // Pre-extension: a per-line scan would still catch `Round 4` on its
+      // own line, but the extension hardens this for cases like multi-line
+      // `Round\n4` (regex `\s` does match `\n` but per-line tokenisation
+      // of `findHits` cannot see across the boundary).
+      const src = '/* internal note\n   Round\n   4\n   note */\nconst x = 1;\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3b");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
+      expect(hits.length).toBeGreaterThan(0);
+    });
+
+    it("findHitsInTestZones detects a tracker-ID inside a describe title (B-3e)", () => {
+      const src = 'describe("(C-1) some scenario", () => {});\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3e");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
+      expect(hits.length).toBeGreaterThan(0);
+    });
+
+    it("findHitsInTestZones detects a tracker-ID inside an it() title", () => {
+      const src = 'it("Round 4 regression check", () => {});\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3b");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
+      expect(hits.length).toBeGreaterThan(0);
+    });
+
+    it("findHitsInTestZones honours file-head exemption (R3 generality-exemption)", () => {
+      const src =
+        '/* generality-exemption: B-3b | HARNESS-42 | v0.5.0 | fixture covers tracker pattern */\n' +
+        '/* internal note: Round 4 */\n' +
+        'describe("Round 4 review", () => {});\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3b");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
+      // Exempt by file-head declaration → no hits.
+      expect(hits).toHaveLength(0);
+    });
+
+    // Codex Track-C review (minor-1) follow-up: per the helper's contract
+    // ("exemption-aware like findHits"), line-level `// generality-
+    // exemption: B-N | …` declarations on a comment-line zone must be
+    // honoured too. Otherwise, a legitimate fixture comment that opted
+    // out via the line-level form would still surface as a hit.
+    it("findHitsInTestZones honours line-level full-form exemption on comment-line zones", () => {
+      const src =
+        '// Round 4 review // generality-exemption: B-3b | HARNESS-42 | v0.5.0 | fixture exempt\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3b");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
+      expect(hits).toHaveLength(0);
+    });
+
+    it("findHitsInTestZones honours short-form line-level exemption when file-head covers patternId", () => {
+      const src =
+        '/* generality-exemption: B-3b | HARNESS-42 | v0.5.0 | head exempts B-3b */\n' +
+        '// Round 4 // generality-exemption: B-3b\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3b");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
+      expect(hits).toHaveLength(0);
+    });
+
+    it("findHitsInTestZones does NOT report when the tracker-ID lives outside any zone (e.g. raw code line)", () => {
+      // Code-line literal (no comment / no describe) is intentionally NOT
+      // scanned by the test-zone extension. Such literals are policed by
+      // the per-line BLOCKLIST_TARGETS path (or accepted with an inline
+      // line-level exemption); the test-zone helper focuses on
+      // comments + describe / it titles.
+      const src = 'const tracker = "Round 4";\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3b");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
+      expect(hits).toHaveLength(0);
+    });
+
+    it("findHitsInTestZones produces zone-aware hit metadata (kind + line range)", () => {
+      const src = '// Round 4 line comment\n';
+      const pattern = BLOCK_PATTERNS.find((p) => p.id === "B-3b");
+      expect(pattern).toBeDefined();
+      const hits = findHitsInTestZones(src, pattern!);
+      expect(hits.length).toBeGreaterThan(0);
+      // Hit reports its zone kind + a non-empty line range.
+      expect(hits[0].kind).toBe("comment-line");
+      expect(hits[0].startLine).toBeGreaterThanOrEqual(1);
+      expect(hits[0].endLine).toBeGreaterThanOrEqual(hits[0].startLine);
     });
   });
 });

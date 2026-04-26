@@ -190,7 +190,12 @@
             }
           }
         },
-        "failFast": { "type": "boolean", "default": true }
+        "failFast": { "type": "boolean", "default": true },
+        "pipelineCheckPath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional project-relative path to a pipeline-verification runbook (e.g. `.claude/skills/<project>-local-rules/references/pipeline-check.md`). Consumed by /harness-work to surface a project-specific addendum on top of the stack-neutral built-in checks. Absolute paths, `..` segments, empty strings, and control-character payloads are rejected at load time and fall back to undefined with a stderr warning."
+        }
       },
       "allOf": [
         {
@@ -228,6 +233,18 @@
           },
           "default": ["api-key-leak", "injection", "file-permissions", "dependencies"],
           "description": "Enabled security check categories. `project-specific` is effective only when `projectChecklistPath` is set."
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings consumed by /harness-review and the generic harness:reviewer agent. Mirrors security.projectChecklistPath but is reviewer-side; lets projects supply their own review runbook without modifying plugin core.",
+      "properties": {
+        "projectChecklistPath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional project-relative path to a review runbook / addendum (e.g. `.claude/skills/<project>-local-rules/references/review-runbook.md`). /harness-review and harness:reviewer load this file as addendum when present; otherwise run the stack-neutral generic runbook only. Absolute paths, `..` segments, empty strings, and control-character payloads are rejected at load time and fall back to undefined with a stderr warning."
         }
       }
     },

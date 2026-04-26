@@ -26,9 +26,33 @@ maxTurns: 20
   "type": "code | plan | scope",
   "target": "レビュー対象の説明",
   "files": ["レビュー対象ファイル一覧"],
-  "context": "実装背景・要件"
+  "context": "実装背景・要件",
+  "projectChecklistPath": "review.projectChecklistPath が設定されている場合のみ含まれる project-relative path"
 }
 ```
+
+### Project addendum (opt-in)
+
+`projectChecklistPath` フィールドが入力に含まれている場合、reviewer は
+**最初のステップ** として `Read` でその markdown を読み込み、stack-neutral
+な 4 観点 (Security / Performance / Quality / AI-slop) に project-local
+addendum (例: project-local skill が提供する review-runbook.md) を上乗せ
+する。
+
+呼び出し元 (`/harness-review`) は `harness.config.json` の
+`review.projectChecklistPath` を `loadConfig()` 経由で読み、validation
+通過後の path だけをこのフィールドに渡す責務を負う:
+- 絶対パス・`..`・空文字・制御文字は load 時に reject されて undefined に
+  fallback されるため、reviewer agent はこのフィールドが string で来たら
+  それを安全に Read してよい
+- フィールド未指定 (undefined) の場合は addendum なしで generic runbook
+  のみで動く (fail-open)
+- **path の symlink 含有 contract**: 渡される `projectChecklistPath` は
+  呼出元 (`/harness-review` 等) が `realpath` でプロジェクトルート配下への
+  containment を確認済の値である契約。reviewer agent は Read tool しか
+  持たないため symlink を独自解決できず、呼出元の runtime containment 検証
+  に依存する。本 contract 外から呼ばれる場合 (将来の別 caller) は呼出元
+  が同等の symlink containment 保証を行うこと
 
 ---
 
@@ -45,12 +69,12 @@ maxTurns: 20
 | **Security** | ハードコードされたシークレット、入力バリデーション、インジェクション対策 |
 | **Performance** | N+1 クエリ、メモリリーク、不要な API 呼出 |
 | **Quality** | 命名規約、単一責任、テストカバレッジ、後方互換性 |
-| **AI-slap 除去** | 自明なコメント、過剰な防御チェック、不要な try/except |
+| **AI-slop 除去** | 自明なコメント、過剰な防御チェック、不要な try/except |
 
-#### AI-slap の例 (フラグして除去)
+#### AI-slop の例 (フラグして除去)
 
 ```python
-# Bad (AI-slap)
+# Bad (AI-slop)
 def process(self, content: str) -> list:
     # Check if content is not None
     if content is None:

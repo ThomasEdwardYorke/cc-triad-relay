@@ -100,6 +100,31 @@ argument-hint: "[all|task-number|N-M|PR-number|fix|feature|parallel|breezing|seq
 
 `harness-work-essence` 不変条件 #3 (引継資料から最優先タスクを確認、構造化チームを編成) と #11 (諦めない / 妥協しない) を含む 13 項目の workflow contract は `docs/harness-work-essence.md` 参照。`harness.config.json` の `work.qualityGates.enforceHarnessWorkEssence: true` を設定すると、stop hook が turn 境界で同 contract の bird's-eye reminder を additionalContext として注入する (default-off、明示的 opt-in)。
 
+#### Project pipeline addendum (opt-in)
+
+`harness.config.json` の `work.pipelineCheckPath` がプロジェクト相対パスとして
+宣言されている場合、その markdown を **pipeline 検証 addendum** として読み込み、
+stack-neutral な built-in checks に上乗せする (例: project-local skill が提供する
+pipeline-check.md / SKILL.md reference)。未設定なら addendum なしで built-in
+checks のみ動く。
+
+宣言例:
+
+```jsonc
+{
+  "work": {
+    "pipelineCheckPath": ".claude/skills/<project>-local-rules/references/pipeline-check.md"
+  }
+}
+```
+
+検証 (`validateWorkPipelineCheckPath`):
+- 絶対パス・`..` セグメント・空文字・制御文字は **load 時に reject** され
+  `undefined` にフォールバックされる (stderr に warning)
+- 不正値時は addendum なしで built-in checks のみ動く (fail-open)
+- skill / agent はこの field を直接読まず、必ず `loadConfig()` 経由で読む
+  (path validation が一段で済む)
+
 ### Step 0b — タスクソースの判定 (4 層 handoff 対応、v4.2 追加)
 
 依存グラフ判定の前に、まず**どこからタスクを取り出すか**を決定する。`harness.config.json`

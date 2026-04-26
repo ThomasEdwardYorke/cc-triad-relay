@@ -1258,4 +1258,241 @@ describe("loadConfig / loadConfigSafe", () => {
       expect(cfg.work.criticalLabels).toEqual([]);
     });
   });
+
+  // ----------------------------------------------------------------------
+  // review.projectChecklistPath + work.pipelineCheckPath (opt-in addendum
+  // paths for /harness-review and /harness-work)
+  // ----------------------------------------------------------------------
+  // Background: `security.projectChecklistPath` is already a first-class
+  // field consumed by `security-auditor`. Reviewer (`/harness-review`) and
+  // `/harness-work` need their own opt-in path slots so consumers can
+  // declare project-local addendums (e.g. review-runbook.md / pipeline
+  // verification guide) without forking the agent markdown.
+  //
+  // Validation rules mirror the existing `disciplineLedgerPath` /
+  // `userPromptSubmit.contextFiles` family: project-relative paths only —
+  // absolute paths and `..` segments cause the field to fall back to
+  // `undefined` with a stderr warning so consumers never see an escape
+  // route. Empty strings are treated the same way (an opt-in path that
+  // points nowhere is a config bug, not a feature).
+  describe("review.projectChecklistPath + work.pipelineCheckPath (opt-in addendum paths)", () => {
+    it("review section default is undefined (opt-in only — plugin ships stack-neutral)", () => {
+      // The plugin must not assume any reviewer addendum file exists.
+      expect(DEFAULT_CONFIG.review.projectChecklistPath).toBeUndefined();
+    });
+
+    it("work.pipelineCheckPath default is undefined (opt-in only)", () => {
+      expect(DEFAULT_CONFIG.work.pipelineCheckPath).toBeUndefined();
+    });
+
+    it("loadConfig accepts review.projectChecklistPath as a relative path", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          review: {
+            projectChecklistPath:
+              ".claude/skills/example-local-rules/references/review-runbook.md",
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.review.projectChecklistPath).toBe(
+        ".claude/skills/example-local-rules/references/review-runbook.md",
+      );
+    });
+
+    it("loadConfig accepts work.pipelineCheckPath as a relative path", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          work: {
+            pipelineCheckPath:
+              ".claude/skills/example-local-rules/references/pipeline-check.md",
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.work.pipelineCheckPath).toBe(
+        ".claude/skills/example-local-rules/references/pipeline-check.md",
+      );
+    });
+
+    it("review.projectChecklistPath rejects empty string (with stderr warning) and falls back to undefined", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          review: { projectChecklistPath: "" },
+        }),
+      );
+      withCapturedStderr((writes) => {
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.review.projectChecklistPath).toBeUndefined();
+        expect(writes.join("")).toMatch(/review\.projectChecklistPath/);
+      });
+    });
+
+    it("review.projectChecklistPath rejects whitespace-only string (CR round 3: trim().length===0)", () => {
+      // CR review pointed out that the original `value.length === 0` check
+      // accepted "   " (three spaces) as a non-empty path, which is just
+      // another config bug shape (opt-in path that points nowhere).
+      // The classifier now uses `value.trim().length === 0` so all
+      // whitespace-only strings collapse into the same `"empty"` reason.
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          review: { projectChecklistPath: "   " },
+        }),
+      );
+      withCapturedStderr((writes) => {
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.review.projectChecklistPath).toBeUndefined();
+        expect(writes.join("")).toMatch(
+          /review\.projectChecklistPath.*empty/i,
+        );
+      });
+    });
+
+    it("review.projectChecklistPath rejects absolute path", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          review: {
+            projectChecklistPath: "/etc/passwd",
+          },
+        }),
+      );
+      withCapturedStderr((writes) => {
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.review.projectChecklistPath).toBeUndefined();
+        expect(writes.join("")).toMatch(
+          /review\.projectChecklistPath.*absolute/i,
+        );
+      });
+    });
+
+    it("review.projectChecklistPath rejects path traversal (`..` segment)", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          review: {
+            projectChecklistPath: "../sensitive/elsewhere.md",
+          },
+        }),
+      );
+      withCapturedStderr((writes) => {
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.review.projectChecklistPath).toBeUndefined();
+        expect(writes.join("")).toMatch(
+          /review\.projectChecklistPath.*(?:traversal|\.\.)/i,
+        );
+      });
+    });
+
+    it("review.projectChecklistPath rejects control characters", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          review: {
+            projectChecklistPath: "ok /path.md",
+          },
+        }),
+      );
+      withCapturedStderr((writes) => {
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.review.projectChecklistPath).toBeUndefined();
+        expect(writes.join("")).toMatch(/review\.projectChecklistPath/);
+      });
+    });
+
+    it("work.pipelineCheckPath rejects empty string", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          work: { pipelineCheckPath: "" },
+        }),
+      );
+      withCapturedStderr((writes) => {
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.work.pipelineCheckPath).toBeUndefined();
+        expect(writes.join("")).toMatch(/work\.pipelineCheckPath/);
+      });
+    });
+
+    it("work.pipelineCheckPath rejects absolute path", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          work: { pipelineCheckPath: "/usr/local/etc/bad.md" },
+        }),
+      );
+      withCapturedStderr((writes) => {
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.work.pipelineCheckPath).toBeUndefined();
+        expect(writes.join("")).toMatch(
+          /work\.pipelineCheckPath.*absolute/i,
+        );
+      });
+    });
+
+    it("work.pipelineCheckPath rejects path traversal (`..` segment)", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          work: { pipelineCheckPath: "../escape.md" },
+        }),
+      );
+      withCapturedStderr((writes) => {
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.work.pipelineCheckPath).toBeUndefined();
+        expect(writes.join("")).toMatch(
+          /work\.pipelineCheckPath.*(?:traversal|\.\.)/i,
+        );
+      });
+    });
+
+    it("work.pipelineCheckPath rejects non-string types (e.g. number / array)", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          work: { pipelineCheckPath: 42 },
+        }),
+      );
+      withCapturedStderr((writes) => {
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.work.pipelineCheckPath).toBeUndefined();
+        expect(writes.join("")).toMatch(/work\.pipelineCheckPath/);
+      });
+    });
+
+    it("review.projectChecklistPath does not collide with security.projectChecklistPath (independent fields)", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          security: { projectChecklistPath: "docs/security.md" },
+          review: { projectChecklistPath: "docs/review.md" },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.security.projectChecklistPath).toBe("docs/security.md");
+      expect(cfg.review.projectChecklistPath).toBe("docs/review.md");
+    });
+
+    it("loadConfig deep-merges work alongside pipelineCheckPath without losing other defaults", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          work: {
+            pipelineCheckPath: "docs/pipeline.md",
+            maxParallel: 2,
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.work.pipelineCheckPath).toBe("docs/pipeline.md");
+      expect(cfg.work.maxParallel).toBe(2);
+      // Defaults still preserved.
+      expect(cfg.work.plansFile).toBe("Plans.md");
+      expect(cfg.work.qualityGates.enforceTddImplement).toBe(true);
+    });
+  });
 });

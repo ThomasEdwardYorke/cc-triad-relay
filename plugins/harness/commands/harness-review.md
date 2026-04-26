@@ -61,6 +61,57 @@ git diff HEAD~1 -- <changed_files>
 | **Quality** | 命名、単一責任、エラーハンドリング、スタブ禁止 |
 | **Compatibility** | 既存 public API / function signatures の後方互換性 (プロジェクト固有の互換性要件は CLAUDE.md / AGENTS.md を参照) |
 
+#### Project addendum (opt-in)
+
+`harness.config.json` の `review.projectChecklistPath` がプロジェクト相対パス
+として宣言されている場合、その markdown を **review runbook addendum** として
+読み込み、stack-neutral な 4 観点に上乗せする (例: project-local skill が
+提供する review-runbook.md / SKILL.md reference)。未設定なら addendum なしで
+generic runbook のみ動く。
+
+宣言例:
+
+```jsonc
+{
+  "review": {
+    "projectChecklistPath": ".claude/skills/<project>-local-rules/references/review-runbook.md"
+  }
+}
+```
+
+検証:
+- 絶対パス・`..` セグメント・空文字・制御文字は **load 時に reject** され
+  `undefined` にフォールバックされる (stderr に warning)
+- 不正値時は addendum なしで generic runbook のみ動く (fail-open)
+- **Symlink 含有 (caller 責務)**: lexical 検証は `..` / 絶対パス / 制御文字
+  を弾くが、プロジェクトルート内に存在するシンボリックリンクが root 外を
+  指すケースは検出しない。`/harness-review` 経路は reviewer agent 呼出前に
+  `realpath` で実体 path を解決し、プロジェクトルート配下に収まることを
+  prefix 比較で確認する責務を負う。逸脱検出時は addendum なし (fail-open)
+  + stderr warning。`harness.config.json` 由来のユーザー操作可能な path に
+  対する **runtime containment** であり、config 側 validator は lexical-only
+  (実装は `core/src/config.ts` の `classifyProjectRelativePath` 参照)
+
+#### Reviewer agent invocation contract
+
+`harness:reviewer` agent を呼ぶ際の input JSON は `loadConfig()` 経由で
+取得した validation 通過済みの path を `projectChecklistPath` フィールドに
+**そのまま** 渡す:
+
+```jsonc
+{
+  "type": "code",
+  "target": "...",
+  "files": [...],
+  "context": "...",
+  "projectChecklistPath": ".claude/skills/<project>-local-rules/references/review-runbook.md"
+  // ↑ undefined のときはフィールドを省略 (含めない)
+}
+```
+
+reviewer agent 側は `agents/reviewer.md` の "Project addendum (opt-in)"
+セクションに従ってこのフィールドを最初のステップで Read する。
+
 ### Step 3: レビュー結果出力
 
 ```markdown

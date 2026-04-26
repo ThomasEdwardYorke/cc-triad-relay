@@ -270,6 +270,20 @@ export interface WorkConfig {
    * `vitest --bail 1`-style semantics.
    */
   failFast: boolean;
+  /**
+   * Optional relative path to a project-local pipeline-verification runbook
+   * (e.g. a `pipeline-check.md` reference under `.claude/skills/<project>-
+   * local-rules/references/`). Consumed by `/harness-work` to surface the
+   * project's pipeline-check guide as addendum when present; otherwise
+   * `/harness-work` falls back to its stack-neutral built-in checks.
+   *
+   * Validation: project-relative paths only — absolute paths, `..`
+   * segments, empty strings, and control-character payloads are rejected
+   * by the loader (`validateWorkPipelineCheckPath`) so the path cannot
+   * escape the project root or carry log-injection vectors. Rejected
+   * values fall back to `undefined` after a stderr warning.
+   */
+  pipelineCheckPath?: string;
 }
 
 export interface SecurityConfig {
@@ -281,6 +295,39 @@ export interface SecurityConfig {
   projectChecklistPath?: string;
   /** Enabled security check categories. */
   enabledChecks: string[];
+}
+
+/**
+ * Reviewer-side opt-in addendum surface. Mirrors `SecurityConfig`'s
+ * `projectChecklistPath` but is consumed by `/harness-review` and the
+ * generic `harness:reviewer` agent so the security and review surfaces
+ * stay independently configurable. The plugin ships stack-neutral —
+ * `projectChecklistPath` is undefined by default; consumers opt in by
+ * pointing at a project-local runbook (e.g. a SKILL.md reference).
+ *
+ * Validation matches the family rule (see `validateReview` /
+ * `validateWorkPipelineCheckPath`): project-relative paths only — empty
+ * strings, absolute paths, `..` segments, and control-character
+ * payloads are rejected with a stderr warning, after which the field
+ * falls back to `undefined` so consumers cannot read a corrupted value.
+ *
+ * Containment caveat (lexical-only validation):
+ *   The validator performs **lexical** path checks only and does NOT
+ *   resolve symlinks. A relative path that passes validation but points
+ *   to a symlink escaping the project root will still be accepted here.
+ *   Caller agents (`/harness-review` / `harness:reviewer`) are
+ *   responsible for runtime containment checks (e.g., `realpath` against
+ *   project root) before invoking `Read`. This split keeps `loadConfig()`
+ *   side-effect free and lets per-call agents apply policy as needed.
+ */
+export interface ReviewConfig {
+  /**
+   * Relative path to a project-local review runbook / addendum.
+   * `/harness-review` and `harness:reviewer` agent load this file as
+   * addendum when present; otherwise run the stack-neutral generic
+   * runbook only.
+   */
+  projectChecklistPath?: string;
 }
 
 /**
@@ -671,6 +718,7 @@ export interface HarnessConfig {
   tampering: TamperingConfig;
   work: WorkConfig;
   security: SecurityConfig;
+  review: ReviewConfig;
   worktree: WorktreeConfig;
   tddEnforce: TddEnforceConfig;
   codeRabbit: CodeRabbitConfig;
@@ -758,6 +806,10 @@ export const DEFAULT_CONFIG: HarnessConfig = {
       "dependencies",
     ],
   },
+  // Reviewer-side opt-in surface. Defaults to an empty section (no
+  // `projectChecklistPath`) so plugin ships stack-neutral; consumers
+  // opt in via harness.config.json.
+  review: {},
   worktree: {
     enabled: "auto",
     maxParallel: 4,
@@ -890,7 +942,9 @@ function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
       baseWork.handoffPaths = partialWork.handoffPaths;
     }
   }
-  const mergedWork: WorkConfig = validateWorkTaskTracker(baseWork);
+  const mergedWork: WorkConfig = validateWorkPipelineCheckPath(
+    validateWorkTaskTracker(baseWork),
+  );
 
   return {
     ...DEFAULT_CONFIG,
@@ -910,6 +964,10 @@ function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
     tampering: { ...DEFAULT_CONFIG.tampering, ...(partial.tampering ?? {}) },
     work: mergedWork,
     security: { ...DEFAULT_CONFIG.security, ...(partial.security ?? {}) },
+    review: validateReview({
+      ...DEFAULT_CONFIG.review,
+      ...(partial.review ?? {}),
+    }),
     worktree: { ...DEFAULT_CONFIG.worktree, ...(partial.worktree ?? {}) },
     tddEnforce: validateTddEnforce({
       ...DEFAULT_CONFIG.tddEnforce,
@@ -1413,6 +1471,100 @@ function validateWorkTaskTracker(cfg: WorkConfig): WorkConfig {
       delete (next as { handoffPaths?: HandoffPathsConfig }).handoffPaths;
     }
   }
+  return next;
+}
+
+/**
+ * Shared project-relative-path validator used by `validateReview` and
+ * `validateWorkPipelineCheckPath`. Returns `{ ok: true }` when the value
+ * is a non-empty project-relative path string, otherwise `{ ok: false,
+ * reason }` describing the rejection.
+ *
+ * Rejection rules (mirror `userPromptSubmit.contextFiles` /
+ * `disciplineLedgerPath` / handoffPaths family):
+ *   1. Non-string types or empty strings — opt-in path that points
+ *      nowhere is a config bug.
+ *   2. Absolute paths (`isAbsolute`) — escapes the project root.
+ *   3. `..` segments — path traversal vector.
+ *   4. Control characters / NUL byte / DEL / C1 range — log-injection
+ *      vector and confuses downstream path comparison.
+ *
+ * Helper is module-private so each call site can format the stderr
+ * message with its own field name (consumers grep for the field name
+ * in audit logs).
+ */
+function classifyProjectRelativePath(value: unknown):
+  | { ok: true }
+  | { ok: false; reason: "non-string" | "empty" | "absolute" | "traversal" | "control-char" } {
+  if (typeof value !== "string") return { ok: false, reason: "non-string" };
+  // Reject empty *and* whitespace-only strings — both signal an opt-in
+  // path that points nowhere, which is a config bug not a feature.
+  if (value.trim().length === 0) return { ok: false, reason: "empty" };
+  if (isAbsolute(value)) return { ok: false, reason: "absolute" };
+  if (value.split(/[\\/]/).some((segment) => segment === "..")) {
+    return { ok: false, reason: "traversal" };
+  }
+  if (/[\x00-\x1f\x7f-\x9f]/.test(value)) {
+    return { ok: false, reason: "control-char" };
+  }
+  return { ok: true };
+}
+
+/**
+ * Validate `review.projectChecklistPath`. When the field is malformed,
+ * fall back to `undefined` (i.e. drop the field) and emit a single
+ * stderr warning — consumers (`/harness-review`, `harness:reviewer`
+ * agent) treat undefined as "no addendum, run the stack-neutral
+ * generic runbook only", which matches the schema's opt-in semantics.
+ *
+ * Why fall back instead of throw: `validateReview` is invoked from
+ * `mergeConfig`, which feeds the rest of the harness hooks. Throwing
+ * here would propagate to `loadConfig` and force every consumer of
+ * `loadConfigSafe` (the guardrail hook path) to break only because
+ * the user typed a bad reviewer path. Falling back keeps the guardrail
+ * stack online and surfaces the issue in stderr where audit log
+ * scrapers will pick it up.
+ */
+function validateReview(cfg: ReviewConfig): ReviewConfig {
+  // Fast-path: when the field is absent, no validation required.
+  if (cfg.projectChecklistPath === undefined) return cfg;
+  const classification = classifyProjectRelativePath(cfg.projectChecklistPath);
+  if (classification.ok) return cfg;
+  process.stderr.write(
+    `[harness config] review.projectChecklistPath=${sanitiseConfigValueForStderr(
+      cfg.projectChecklistPath,
+    )} rejected (${classification.reason}); falling back to undefined. ` +
+      `The field must be a non-empty project-relative path without ".." segments, ` +
+      `absolute paths, or control characters.\n`,
+  );
+  const next: ReviewConfig = { ...cfg };
+  delete next.projectChecklistPath;
+  return next;
+}
+
+/**
+ * Validate `work.pipelineCheckPath` with the same rules as
+ * `validateReview`. Kept as a separate helper (rather than reusing
+ * `validateReview` directly) so the stderr message references the
+ * correct field name, which is what audit log scrapers grep for.
+ *
+ * Falls back to `undefined` on any validation failure — `/harness-work`
+ * treats undefined as "no project pipeline runbook, skip the addendum"
+ * which matches the opt-in schema semantics.
+ */
+function validateWorkPipelineCheckPath(cfg: WorkConfig): WorkConfig {
+  if (cfg.pipelineCheckPath === undefined) return cfg;
+  const classification = classifyProjectRelativePath(cfg.pipelineCheckPath);
+  if (classification.ok) return cfg;
+  process.stderr.write(
+    `[harness config] work.pipelineCheckPath=${sanitiseConfigValueForStderr(
+      cfg.pipelineCheckPath,
+    )} rejected (${classification.reason}); falling back to undefined. ` +
+      `The field must be a non-empty project-relative path without ".." segments, ` +
+      `absolute paths, or control characters.\n`,
+  );
+  const next: WorkConfig = { ...cfg };
+  delete next.pipelineCheckPath;
   return next;
 }
 
