@@ -2167,5 +2167,31 @@ describe("exemption grammar (unified, pipe-separated)", () => {
     it("negative: `regen-13` (word prefix `re`) は match しない (lookbehind blocks)", () => {
       expect(matches("regen-13")).toBe(false);
     });
+
+    // ─── case variant defensive regression (sub-describe で分離、将来の `/gi` 化を CI で blocking) ───
+    // 内部 session ID は lowercase ASCII で確立 (`gen-N`)。`Gen-N` / `GEN-N` /
+    // mixed case は generic English (`Generation` / `Generic` / `Generator` /
+    // `GEN-LOCK` 等の acronym) と衝突する false-positive リスク高のため、case
+    // variant は **意図的に detect しない** 設計。誰かが pattern flag に `i` を
+    // 追加した場合に本 sub-describe が fail し、PR を blocking する guardrail として
+    // 機能する。lookbehind 由来の negative case (上の it 群) とは独立した別軸の
+    // defensive guard なので nested describe で明示分離する。
+    describe("case-sensitive variant guards (lookbehind とは独立、`/gi` 化 regression 検知用)", () => {
+      it("negative: `Gen-13` (uppercase initial、generic English term collision risk e.g. Generation) は match しない", () => {
+        expect(matches("Gen-13")).toBe(false);
+      });
+
+      it("negative: `GEN-13` (全大文字、acronym collision risk e.g. GEN-LOCK) は match しない", () => {
+        expect(matches("GEN-13")).toBe(false);
+      });
+
+      it("negative: `gEn-13` (mixed case lower-upper-lower、case-sensitive guard) は match しない", () => {
+        expect(matches("gEn-13")).toBe(false);
+      });
+
+      it("negative: `gEN-13` (mixed case lower-upper-upper、case-sensitive guard 完全性) は match しない", () => {
+        expect(matches("gEN-13")).toBe(false);
+      });
+    });
   });
 });

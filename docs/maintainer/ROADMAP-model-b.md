@@ -190,17 +190,24 @@ git checkout main  # v4.1 動作確認済 main に戻る
 
 ## 関連 resources
 
-- Claude Code 公式 docs: `https://code.claude.com/docs/en/`
+- Claude Code 公式 docs: `https://code.claude.com/docs/en`
+  - SKILL.md focused 原則 + supporting files: `https://code.claude.com/docs/en/skills`
+  - **MEMORY.md 200 行 / 25KB hard budget** (auto memory): `https://code.claude.com/docs/en/memory` — consumer-side で SessionStart hook 経由 `current.md` を auto-load する設計を採用する場合、本 budget が hard ceiling になる
+  - SessionStart / SessionEnd / PreCompact hook + source 区別 (`startup` / `resume` / `clear` / `compact`): `https://code.claude.com/docs/en/hooks-guide`
 - Open issues:
   - `anthropics/claude-code#28041`: `.claude/` 非継承 in `--worktree`
   - `anthropics/claude-code#19077`: nested subagent OOM
 - OSS 実装例:
   - [workmux](https://github.com/raine/workmux)
   - [Codeman](https://github.com/Ark0N/Codeman)
-- parts-management project docs:
-  - `docs/harness-model-b-plan.md` (committed、プロジェクト側プラン)
-  - `.docs/harness-analysis-2026-04-20.md` (local、現状診断)
-  - `.docs/harness-model-b-session-prompt.md` (local、セッション起動手順)
+
+### Test-bed references (parts-management、maintainer only)
+
+下記 doc は test-bed (`parts-management`) で発生した実装メモ。public plugin surface 外。
+
+- `docs/harness-model-b-plan.md` (committed、プロジェクト側プラン)
+- `.docs/harness-analysis-2026-04-20.md` (local、現状診断)
+- `.docs/harness-model-b-session-prompt.md` (local、セッション起動手順)
 
 ---
 
