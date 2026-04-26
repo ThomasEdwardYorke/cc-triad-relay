@@ -2114,4 +2114,58 @@ describe("exemption grammar (unified, pipe-separated)", () => {
       expect(hits[0].endLine).toBeGreaterThanOrEqual(hits[0].startLine);
     });
   });
+
+  // ─────────────── B-3f boundary regression (CR review nitpick で固定) ───────────────
+  // Real CodeRabbit (chill profile) review #45 で B-3f の境界 case を専用 regression test
+  // で固定するよう推奨された (2 要件組合せで false-positive 回避の coding guideline)。
+  // pattern `(?<![\w-])gen-\d+\b` の Node.js empirical 検証 (positive 1 + negative 5) を
+  // CI に固定し、将来の regex 調整時の false-positive 回帰を防ぐ。
+  describe("B-3f boundary regression (positive / negative match cases)", () => {
+    const b3f = BLOCK_PATTERNS.find((p) => p.id === "B-3f");
+    if (!b3f) {
+      throw new Error("B-3f pattern is missing from BLOCK_PATTERNS");
+    }
+    const pat = b3f.pattern;
+
+    // Helper: regex を `lastIndex` リセット付きで test (global flag 影響回避)
+    const matches = (src: string): boolean => {
+      pat.lastIndex = 0;
+      return pat.test(src);
+    };
+
+    it("positive: `gen-13` 単独 (canonical session 世代 ID) は match する", () => {
+      expect(matches("gen-13")).toBe(true);
+    });
+
+    it("positive: `(gen-13)` 括弧内 / ` gen-13 ` 前後 whitespace も match する", () => {
+      expect(matches("(gen-13)")).toBe(true);
+      expect(matches(" gen-13 ")).toBe(true);
+    });
+
+    it("negative: `next-gen-13` (compound prefix `next-`) は match しない (lookbehind blocks)", () => {
+      expect(matches("next-gen-13")).toBe(false);
+    });
+
+    it("negative: `9th-gen-13` (compound prefix `9th-`) は match しない", () => {
+      expect(matches("9th-gen-13")).toBe(false);
+    });
+
+    it("negative: `gen-13a` (suffix word char) は match しない (`\\b` 末尾)", () => {
+      expect(matches("gen-13a")).toBe(false);
+    });
+
+    it("negative: `general-13` (gen prefix のみ、ハイフン不在) は match しない", () => {
+      expect(matches("general-13")).toBe(false);
+    });
+
+    it("negative: `gen-1.3` (digits の後の `.`) は `gen-1` のみ match する (overflow しない)", () => {
+      // global flag 付きなので全件抽出
+      const m = "gen-1.3".match(new RegExp(pat.source, pat.flags));
+      expect(m).toEqual(["gen-1"]);
+    });
+
+    it("negative: `regen-13` (word prefix `re`) は match しない (lookbehind blocks)", () => {
+      expect(matches("regen-13")).toBe(false);
+    });
+  });
 });
