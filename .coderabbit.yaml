@@ -35,12 +35,13 @@ reviews:
   # Pre-merge checks: PR が merge 可能か explicit に gate する
   # (https://docs.coderabbit.ai/pr-reviews/pre-merge-checks)。
   # 初期は warning で導入 noise を抑え、安定後に error への昇格を検討する
-  # (custom_review / description_check のみ。docstrings は plugin core が
-  # 既に docstring 完備のため off で過剰 noise 回避)。
+  # (custom_checks / description のみ。docstrings は plugin core が
+  # 既に docstring 完備のため off で過剰 noise 回避)。公式 key 名は
+  # custom_checks / description / docstrings (CodeRabbit schema v2)。
   pre_merge_checks:
-    custom_review:
+    custom_checks:
       mode: "warning"
-    description_check:
+    description:
       mode: "warning"
     docstrings:
       mode: "off"

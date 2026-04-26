@@ -202,9 +202,9 @@ PREV_STATE=""
 for i in $(seq 1 20); do
   # Primary: commit_status state watch (pending → success "Review completed")
   STATE=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/status" \
-    --jq '[.statuses[] | select(.context | test("CodeRabbit"; "i"))] | last | .state // empty' 2>/dev/null)
+    --jq '[.statuses[] | select(.context | test("CodeRabbit"; "i"))] | first | .state // empty' 2>/dev/null)
   DESC=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/status" \
-    --jq '[.statuses[] | select(.context | test("CodeRabbit"; "i"))] | last | .description // empty' 2>/dev/null)
+    --jq '[.statuses[] | select(.context | test("CodeRabbit"; "i"))] | first | .description // empty' 2>/dev/null)
 
   if [ "$STATE" != "$PREV_STATE" ]; then
     echo "STATE_CHANGED prev=\"$PREV_STATE\" new=\"$STATE\" desc=\"$DESC\""
@@ -300,28 +300,40 @@ if [ -z "$CR_CHAT_BIN" ]; then
   CR_CHAT_BIN="${HARNESS_PLUGIN_ROOT}/bin/cr-chat"
 fi
 
-# unresolved 数を取得 (Step 7.B.3 の query を再利用)
-UNRESOLVED=$(gh api graphql -f query='
-  query($owner: String!, $name: String!, $pr: Int!) {
-    repository(owner: $owner, name: $name) {
-      pullRequest(number: $pr) {
-        reviewThreads(first: 100) {
-          nodes {
-            isResolved
-            comments(first: 1) { nodes { author { login } } }
+# unresolved 数を取得 (Step 7.B.3 の query を再利用)。
+# pagination loop で全 page 走査 (>100 thread の PR で false 0 になる事故防止)。
+UNRESOLVED=0
+PAGE_CURSOR=""
+while :; do
+  CURSOR_ARG=""
+  [ -n "$PAGE_CURSOR" ] && CURSOR_ARG="-f cursor=$PAGE_CURSOR"
+  PAGE=$(gh api graphql -f query='
+    query($owner: String!, $name: String!, $pr: Int!, $cursor: String) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $pr) {
+          reviewThreads(first: 100, after: $cursor) {
+            nodes {
+              isResolved
+              comments(first: 1) { nodes { author { login } } }
+            }
+            pageInfo { hasNextPage endCursor }
           }
         }
       }
-    }
-  }' -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F pr="$PR" \
-  --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+    }' -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F pr="$PR" $CURSOR_ARG)
+  PAGE_COUNT=$(echo "$PAGE" | jq '[.data.repository.pullRequest.reviewThreads.nodes[]
     | select(.comments.nodes[0].author.login == "coderabbitai")
     | select(.isResolved == false)] | length')
+  UNRESOLVED=$((UNRESOLVED + PAGE_COUNT))
+  HAS_NEXT=$(echo "$PAGE" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
+  [ "$HAS_NEXT" != "true" ] && break
+  PAGE_CURSOR=$(echo "$PAGE" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')
+done
 
 # 最新 review body から actionable count
 # CR body 形式 drift 対策: grep が空を返した場合は "0" にフォールバックせず
 # "unknown" として扱い、後続の strict equality 判定 ([ ... = "0" ]) を false にする
-# (false-clear / false auto-resolve injection の予防、A4)
+# (false-clear / false auto-resolve injection の予防)
 LATEST_BODY=$(gh api "repos/${REPO}/pulls/${PR}/reviews" \
   --jq "[.[] | select(.user.login==\"coderabbitai[bot]\")] | last | .body")
 ACTIONABLE_LATEST=$(echo "$LATEST_BODY" | grep -oE 'Actionable comments posted:\s*[0-9]+' \
@@ -331,7 +343,7 @@ if [ -z "$ACTIONABLE_LATEST" ]; then
   echo "WARN: ACTIONABLE_LATEST grep returned empty (CR body format drift?); treating as 'unknown' (NOT 0)" >&2
 fi
 
-# RESOLVE_INJECT_COUNT counter (per-PR、最大 RESOLVE_INJECT_MAX 回まで、A3)
+# RESOLVE_INJECT_COUNT counter (per-PR、最大 RESOLVE_INJECT_MAX 回まで)
 # 同 PR で Step 7 → Step 6.5 の back jump が繰り返される場合、CR bot の thread
 # processing 障害 / network drift で永久 loop に陥らないよう上限を設ける。
 # counter は file-based で push 跨ぎ persist する (新 push 時は session で reset
@@ -361,22 +373,34 @@ if [ -x "$CR_CHAT_BIN" ] && [ "$ACTIONABLE_LATEST" = "0" ] && [ "$UNRESOLVED" -g
   # UNRESOLVED が 0 にならなければ次 round で再 inject される)。
   for i in 1 2 3 4 5; do
     sleep 30
-    UNRESOLVED_NOW=$(gh api graphql -f query='
-      query($owner: String!, $name: String!, $pr: Int!) {
-        repository(owner: $owner, name: $name) {
-          pullRequest(number: $pr) {
-            reviewThreads(first: 100) {
-              nodes {
-                isResolved
-                comments(first: 1) { nodes { author { login } } }
+    # pagination loop で全 page 走査 (>100 thread の PR で false 0 防止)
+    UNRESOLVED_NOW=0
+    PAGE_CURSOR=""
+    while :; do
+      CURSOR_ARG=""
+      [ -n "$PAGE_CURSOR" ] && CURSOR_ARG="-f cursor=$PAGE_CURSOR"
+      PAGE=$(gh api graphql -f query='
+        query($owner: String!, $name: String!, $pr: Int!, $cursor: String) {
+          repository(owner: $owner, name: $name) {
+            pullRequest(number: $pr) {
+              reviewThreads(first: 100, after: $cursor) {
+                nodes {
+                  isResolved
+                  comments(first: 1) { nodes { author { login } } }
+                }
+                pageInfo { hasNextPage endCursor }
               }
             }
           }
-        }
-      }' -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F pr="$PR" \
-      --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+        }' -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F pr="$PR" $CURSOR_ARG)
+      PAGE_COUNT=$(echo "$PAGE" | jq '[.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.comments.nodes[0].author.login == "coderabbitai")
         | select(.isResolved == false)] | length')
+      UNRESOLVED_NOW=$((UNRESOLVED_NOW + PAGE_COUNT))
+      HAS_NEXT=$(echo "$PAGE" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
+      [ "$HAS_NEXT" != "true" ] && break
+      PAGE_CURSOR=$(echo "$PAGE" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')
+    done
     if [ "$UNRESOLVED_NOW" -lt "$UNRESOLVED_BEFORE" ]; then
       echo "Resolve confirmed (UNRESOLVED: $UNRESOLVED_BEFORE → $UNRESOLVED_NOW)"
       break
@@ -471,7 +495,7 @@ LATEST_BODY=$(gh api "repos/${REPO}/pulls/${PR}/reviews" \
 ACTIONABLE=$(echo "$LATEST_BODY" | grep -oE 'Actionable comments posted:\s*[0-9]+' \
   | grep -oE '[0-9]+' | head -1)
 # CR body 形式 drift 対策: grep が空を返した場合は "0" にフォールバックせず
-# "unknown" として扱い、CLEAR_STRONG / CLEAR_SOFT を成立させない (false-clear 予防、A4)
+# "unknown" として扱い、CLEAR_STRONG / CLEAR_SOFT を成立させない (false-clear 予防)
 if [ -z "$ACTIONABLE" ]; then
   ACTIONABLE="unknown"
   echo "WARN: ACTIONABLE grep returned empty (CR body format drift?); treating as 'unknown' (NOT 0)" >&2
@@ -480,23 +504,37 @@ fi
 
 ##### 7.B.3 unresolved CR threads = 0
 
+`reviewThreads` は GraphQL 側で 1 page 100 thread 上限のため、pagination loop
+で全 page 走査する (>100 thread の PR で false 0 になる事故を防止)。
+
 ```bash
-UNRESOLVED=$(gh api graphql -f query='
-  query($owner: String!, $name: String!, $pr: Int!) {
-    repository(owner: $owner, name: $name) {
-      pullRequest(number: $pr) {
-        reviewThreads(first: 100) {
-          nodes {
-            isResolved
-            comments(first: 1) { nodes { author { login } } }
+UNRESOLVED=0
+PAGE_CURSOR=""
+while :; do
+  CURSOR_ARG=""
+  [ -n "$PAGE_CURSOR" ] && CURSOR_ARG="-f cursor=$PAGE_CURSOR"
+  PAGE=$(gh api graphql -f query='
+    query($owner: String!, $name: String!, $pr: Int!, $cursor: String) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $pr) {
+          reviewThreads(first: 100, after: $cursor) {
+            nodes {
+              isResolved
+              comments(first: 1) { nodes { author { login } } }
+            }
+            pageInfo { hasNextPage endCursor }
           }
         }
       }
-    }
-  }' -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F pr="$PR" \
-  --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+    }' -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F pr="$PR" $CURSOR_ARG)
+  PAGE_COUNT=$(echo "$PAGE" | jq '[.data.repository.pullRequest.reviewThreads.nodes[]
     | select(.comments.nodes[0].author.login == "coderabbitai")
     | select(.isResolved == false)] | length')
+  UNRESOLVED=$((UNRESOLVED + PAGE_COUNT))
+  HAS_NEXT=$(echo "$PAGE" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
+  [ "$HAS_NEXT" != "true" ] && break
+  PAGE_CURSOR=$(echo "$PAGE" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')
+done
 ```
 
 ##### 7.B.4 blocker (rate-limit / paused) 不在
@@ -534,7 +572,7 @@ if [ "$STOP_POLLING" = "true" ] \
    && [ "$BLOCKER" = "false" ]; then
   CLEAR_STRONG=true
 fi
-# CLEAR_SOFT は CLEAR_STRONG 不成立時のみ評価 (排他化、A2)
+# CLEAR_SOFT は CLEAR_STRONG 不成立時のみ評価 (排他化)
 # CLEAR_STRONG=true は CLEAR_SOFT 条件を包含する (APPROVED 自動発火の前提が
 # unresolved=0 + pre_merge_checks pass であるため、CLEAR_STRONG が true なら
 # CLEAR_SOFT も論理上 true になる。両 flag を立てると下流の Step 8 routing が

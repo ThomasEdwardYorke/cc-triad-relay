@@ -2840,21 +2840,20 @@ describe(".coderabbit.yaml — repository-level CodeRabbit config", () => {
     expect(reviews["request_changes_workflow"]).toBe(true);
   });
 
-  it("reviews.pre_merge_checks: explicit pre-merge gate (warning mode で初期導入)", () => {
+  it("reviews.pre_merge_checks: explicit pre-merge gate (公式キー + 個別 mode 固定)", () => {
     const reviews = coderabbitConfig["reviews"] as Record<string, unknown>;
     const checks = reviews["pre_merge_checks"] as Record<string, unknown>;
     expect(checks).toBeTypeOf("object");
     expect(checks).not.toBeNull();
-    // custom_review / description_check / docstrings の 3 check が宣言される
-    expect(checks["custom_review"]).toBeTypeOf("object");
-    expect(checks["description_check"]).toBeTypeOf("object");
+    // CodeRabbit schema v2 公式キー: custom_checks / description / docstrings
+    expect(checks["custom_checks"]).toBeTypeOf("object");
+    expect(checks["description"]).toBeTypeOf("object");
     expect(checks["docstrings"]).toBeTypeOf("object");
-    // mode は warning|error|off のいずれか
-    const allowedModes = ["warning", "error", "off"];
-    for (const key of ["custom_review", "description_check", "docstrings"]) {
-      const check = checks[key] as Record<string, unknown>;
-      expect(allowedModes).toContain(check["mode"]);
-    }
+    // mode は意味論的に意図された値で個別固定 (drift guard、allowed-set だと
+    // custom_checks=error / docstrings=warning 等の昇格が test を通り抜ける)
+    expect((checks["custom_checks"] as Record<string, unknown>)["mode"]).toBe("warning");
+    expect((checks["description"] as Record<string, unknown>)["mode"]).toBe("warning");
+    expect((checks["docstrings"] as Record<string, unknown>)["mode"]).toBe("off");
   });
 
   it("reviews.auto_review: enabled + drafts=false + base_branches に ^main$ (regex 形式)", () => {

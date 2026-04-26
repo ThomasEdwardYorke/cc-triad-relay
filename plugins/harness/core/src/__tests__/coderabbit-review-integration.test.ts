@@ -77,8 +77,9 @@ describe("/coderabbit-review skill internals (Stop polling / Merge ready 分離 
     expect(sec).toMatch(/UNRESOLVED|unresolved/);
   });
 
-  it("Step 6.5 適用条件 3 件 AND (ACTIONABLE_LATEST=0 / UNRESOLVED>0 / cr-chat available) + injection 上限が spec 明文化 (A3/A6)", () => {
+  it("Step 6.5 適用条件 3 件 AND (ACTIONABLE_LATEST=0 / UNRESOLVED>0 / cr-chat available) + injection 上限が spec 明文化", () => {
     const idx = content.search(/^#{2,4}\s*Step\s*6\.5\b/m);
+    expect(idx).toBeGreaterThanOrEqual(0);
     const sec = extractSection(content, idx);
     // ACTIONABLE と UNRESOLVED の strict 判定条件が明示
     expect(sec).toMatch(/ACTIONABLE_LATEST.*=.*"?0"?|ACTIONABLE_LATEST\s*=\s*"0"/);
