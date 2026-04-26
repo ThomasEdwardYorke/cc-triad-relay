@@ -44,7 +44,15 @@ try {
   process.exit(2);
 }
 
-const { detectCrCli } = cliModule;
+const { detectCrCli, CR_BINARY } = cliModule;
+// CR_BINARY は core/src/cr-cli.ts の export を 1 source-of-truth として使用
+// (binary 名を bin/ に直書きせず、core 側の const と確実に同期させる).
+if (typeof CR_BINARY !== "string" || CR_BINARY.length === 0) {
+  console.error(
+    "cr-cli: core/dist/cr-cli.js does not export CR_BINARY (run `npm run build` in core/).",
+  );
+  process.exit(2);
+}
 
 function realSpawn(argv) {
   const [cmd, ...args] = argv;
@@ -153,7 +161,7 @@ if (subcommand === "detect") {
     process.exit(1);
   }
   // Passthrough invocation: `coderabbit --agent <flags>` (rest は validateReviewArgs で済)。
-  // binary 名は `coderabbit` (homebrew install 名と一致、旧 `cr` は誤り)。
+  // binary 名は core/src/cr-cli.ts の `CR_BINARY` export から取得 (1 source-of-truth)。
   // stdio を ["inherit", "inherit", "inherit"] にすると親 shell の redirect で
   // stdout 取得は機能するが、`pseudo-coderabbit-loop.md` Step 2.0.1 で stdout
   // を NDJSON tmp file に redirect する workflow との意図整合のため、stdout を
@@ -163,7 +171,7 @@ if (subcommand === "detect") {
   // `node ... > out.ndjson` で out.ndjson に直接書ける。"pipe" にすると
   // r.stdout に取得後 caller が write する 2 段経路になるが、本 CLI の
   // passthrough 用途では不要 (parent shell redirect で十分)。
-  const r = spawnSync("coderabbit", ["--agent", ...rest], {
+  const r = spawnSync(CR_BINARY, ["--agent", ...rest], {
     encoding: "utf-8",
     stdio: ["inherit", "inherit", "inherit"],
   });

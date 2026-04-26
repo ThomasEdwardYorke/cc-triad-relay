@@ -548,12 +548,27 @@ describe("bin/cr-cli — binary name regression guard (coderabbit, not cr)", () 
   const binPath = resolve(PLUGIN_ROOT, "bin", "cr-cli");
   const binCrCli = readFileSync(binPath, "utf-8");
 
-  it("invokes spawnSync('coderabbit', ...) for review passthrough", () => {
-    expect(binCrCli).toMatch(/spawnSync\(\s*"coderabbit"/);
+  it("invokes spawnSync with the canonical binary name (literal or CR_BINARY const)", () => {
+    // Codex Phase 7 Major fix: binary 名 split source 防止のため、bin/cr-cli は
+    // core/src/cr-cli.ts の `CR_BINARY` export から binary 名を取得する。
+    // よって本 assertion は literal "coderabbit" / 'coderabbit' / CR_BINARY 識別子
+    // のいずれかを許容する (1 source-of-truth pattern との両立)。
+    expect(binCrCli).toMatch(/spawnSync\(\s*(?:["']coderabbit["']|CR_BINARY)/);
   });
 
-  it("does NOT invoke legacy spawnSync('cr', ...) (regression guard)", () => {
-    expect(binCrCli).not.toMatch(/spawnSync\(\s*"cr"\s*,/);
+  it("does NOT invoke legacy spawnSync('cr', ...) (regression guard, quote-variant aware)", () => {
+    // Codex Phase 7 Major fix: regex は double quote / single quote / multi-line
+    // 全変形を catch する必要がある。`spawnSync(\n  "cr"`, `spawnSync('cr')`,
+    // `spawnSync( "cr" ,` 等の variant も rollback として detect。
+    expect(binCrCli).not.toMatch(/spawnSync\(\s*["']cr["']\s*[,)]/);
+  });
+
+  it("imports CR_BINARY from core to avoid binary name split source (1 SoT)", () => {
+    // core/src/cr-cli.ts の `export const CR_BINARY` を bin/cr-cli が import
+    // していること。bin と core で binary 名が drift しないための structural guard。
+    expect(binCrCli).toMatch(/(?:CR_BINARY)\s*[,}]/);
+    // 起動時 sanity check: CR_BINARY が string で非空であることを bin が検証
+    expect(binCrCli).toMatch(/typeof\s+CR_BINARY\s*!==\s*["']string["']/);
   });
 
   it("documents the canonical binary name in the header docstring", () => {

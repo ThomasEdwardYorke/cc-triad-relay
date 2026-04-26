@@ -67,6 +67,14 @@ export declare function parseAuthStatusJson(raw: string): {
     user?: string;
 } | null;
 /**
+ * `coderabbit` CLI binary name. Homebrew install (`brew install --cask coderabbit`)
+ * の出力 binary 名と一致させる必要がある (旧実装の `cr` は誤り)。
+ *
+ * 公開 export: `bin/cr-cli` の review passthrough も同 const から binary 名を取得し、
+ * 1 source-of-truth を維持する (binary 名 split source 防止)。
+ */
+export declare const CR_BINARY = "coderabbit";
+/**
  * Detect `coderabbit` CLI presence and auth state.
  *
  * Returns `{ available: true, ... }` only when:

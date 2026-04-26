@@ -110,8 +110,11 @@ function safeRun(spawn: CrSpawnFn, argv: string[]): CrSpawnResult {
 /**
  * `coderabbit` CLI binary name. Homebrew install (`brew install --cask coderabbit`)
  * の出力 binary 名と一致させる必要がある (旧実装の `cr` は誤り)。
+ *
+ * 公開 export: `bin/cr-cli` の review passthrough も同 const から binary 名を取得し、
+ * 1 source-of-truth を維持する (binary 名 split source 防止)。
  */
-const CR_BINARY = "coderabbit";
+export const CR_BINARY = "coderabbit";
 
 /**
  * Detect `coderabbit` CLI presence and auth state.
