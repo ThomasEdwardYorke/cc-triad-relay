@@ -4399,3 +4399,190 @@ describe("review.projectChecklistPath addendum chain", () => {
     expect(command).toMatch(/\brealpath\b/i);
   });
 });
+
+// ============================================================
+// session-handoff skill — Layer 3: archive subcommand 最終報告 emit step
+// + references/ 分離 (D-93 carry-over) + Stop hook generic sample
+// ============================================================
+// 2026-04-27 Layer 3 (Required Sections × anti-pattern #4 両立指針 を持つ前世代
+// session の follow-up): Layer 1 (Stop hook) + Layer 2 (memory) は consumer-side で
+// 配線済 (`<consumer>/.claude/hooks/handoff-stop-reminder.sh` + memory
+// `feedback_handoff_skill_enforcement.md` /
+// `reference_session_final_report_template.md`)。Layer 3 として skill spec 自体に
+//   1. archive subcommand に "最終報告 emit step (8 section 標準 format)" 追加
+//   2. references/final-report-format.md (8 section template の generic 版) 新設
+//   3. references/post-check-verification.md (Test 1-5 切出し、D-93 carry-over) 新設
+//   4. plugin docs/handoff-stop-reminder-sample.md (generic shell hook) 新設
+// を統合し、architecture-level enforcement を完成させる。spec 行数は 550 上限を
+// 維持しつつ 500 復帰へ漸近する (D-93 threshold evolution)。
+// ============================================================
+describe("session-handoff skill — Layer 3 (archive 最終報告 emit step + references/ 分離 + Stop hook sample)", () => {
+  const skillPath = resolve(PLUGIN_ROOT, "commands/session-handoff.md");
+  const finalReportPath = resolve(
+    PLUGIN_ROOT,
+    "commands/references/final-report-format.md",
+  );
+  const postCheckPath = resolve(
+    PLUGIN_ROOT,
+    "commands/references/post-check-verification.md",
+  );
+  const hookSamplePath = resolve(
+    PLUGIN_ROOT,
+    "docs/handoff-stop-reminder-sample.md",
+  );
+
+  const readSkill = (): string => readFileSync(skillPath, "utf-8");
+
+  const archiveSubsection = (): string => {
+    const body = readSkill();
+    // ### `archive` から次の同階層 ### または上位 ## まで
+    const m = body.match(
+      /###\s+`archive`[\s\S]*?(?=\n###\s+[^#\s]|\n##\s+[^#]|$)/,
+    );
+    return m?.[0] ?? "";
+  };
+
+  it("references/final-report-format.md が存在する (archive subcommand 参照先、D-93 切出し)", () => {
+    expect(() => readFileSync(finalReportPath, "utf-8")).not.toThrow();
+  });
+
+  it("references/final-report-format.md が 8 section 全てを記述する (Section 1-8 の主旨が揃う)", () => {
+    const content = readFileSync(finalReportPath, "utf-8");
+    // 各 section の見出し文字列を強制 (memory `reference_session_final_report_template.md`
+    // と整合)。日本語 / 英語 表現を緩く許容するが、各 section の subject keyword は必須。
+    expect(content).toMatch(/##\s*1[\.\s)]+.{0,40}(?:このセッションで行|主要成果|本セッション|今回の開発|開発内容)/);
+    expect(content).toMatch(/##\s*2[\.\s)]+.{0,40}(?:開発状況|サマリ|進捗|status)/i);
+    expect(content).toMatch(/##\s*3[\.\s)]+.{0,40}(?:次セッション|スコープ|next\s*session)/i);
+    expect(content).toMatch(/##\s*4[\.\s)]+.{0,40}(?:残タスク|未完|backlog|carry[-\s]?over)/i);
+    expect(content).toMatch(/##\s*5[\.\s)]+.{0,40}(?:振り返り|retrospective|学び|learnings)/i);
+    expect(content).toMatch(
+      /##\s*6[\.\s)]+.{0,80}(?:チェックリスト|Post[-\s]?Check\s+Verification)/i,
+    );
+    expect(content).toMatch(/##\s*7[\.\s)]+.{0,40}(?:規律|G1[-\s]?G8|gate)/i);
+    expect(content).toMatch(/##\s*8[\.\s)]+.{0,40}(?:引継|handoff\s*(?:health|state|docs))/i);
+  });
+
+  it("references/final-report-format.md が generic で R2/R3 違反 (consumer 固有値) を含まない", () => {
+    const content = readFileSync(finalReportPath, "utf-8");
+    expect(content).not.toMatch(/feature\/new-partslist/);
+    expect(content).not.toMatch(/\bparts-management\b/);
+    expect(content).not.toMatch(/\bD-\d{2,}\b/);
+    expect(content).not.toMatch(/(?<![\w-])gen-\d+\b/);
+    expect(content).not.toMatch(/\bRound\s+\d+\b/);
+    expect(content).not.toMatch(/Phase\s+[εζηθ]/);
+    expect(content).not.toMatch(/Track\s+[ABC]\b/);
+  });
+
+  it("references/post-check-verification.md が存在し Test 1-5 + Red flag を切出す (D-93 carry-over)", () => {
+    expect(() => readFileSync(postCheckPath, "utf-8")).not.toThrow();
+    const content = readFileSync(postCheckPath, "utf-8");
+    expect(content).toMatch(/Test\s*1[\s\S]{0,100}Latest\s*state/i);
+    expect(content).toMatch(/Test\s*2[\s\S]{0,100}(?:Top\s+Priority|即着手)/i);
+    expect(content).toMatch(/Test\s*3[\s\S]{0,100}(?:invariant|1\s*行)/i);
+    expect(content).toMatch(/Test\s*4[\s\S]{0,100}Quick[-\s]?start/i);
+    expect(content).toMatch(/Test\s*5[\s\S]{0,100}Pointer/i);
+    expect(content).toMatch(/(?:red\s*flag|圧縮しすぎ|過剰圧縮)/i);
+    // checkbox 形式 (人間 / Claude が手で確認する)
+    expect(content).toMatch(/-\s*\[\s*\]/);
+  });
+
+  it("references/post-check-verification.md が generic で consumer 固有値を含まない", () => {
+    const content = readFileSync(postCheckPath, "utf-8");
+    expect(content).not.toMatch(/feature\/new-partslist/);
+    expect(content).not.toMatch(/\bparts-management\b/);
+    expect(content).not.toMatch(/\bD-\d{2,}\b/);
+    expect(content).not.toMatch(/(?<![\w-])gen-\d+\b/);
+    expect(content).not.toMatch(/\bRound\s+\d+\b/);
+  });
+
+  it("commands/session-handoff.md archive subcommand に最終報告 emit step が追加される", () => {
+    const arch = archiveSubsection();
+    expect(arch.length).toBeGreaterThan(200);
+    // 最終報告 emit step (主旨 keyword で固定)
+    expect(arch).toMatch(/(?:最終報告|final\s*report)/i);
+    // 8 section format への言及
+    expect(arch).toMatch(/8\s*(?:section|セクション)/i);
+    // references/final-report-format.md への link
+    expect(arch).toMatch(/references\/final-report-format\.md/);
+  });
+
+  it("commands/session-handoff.md が references/post-check-verification.md を link 参照する (D-93 切出し配線)", () => {
+    const body = readSkill();
+    expect(body).toMatch(/references\/post-check-verification\.md/);
+  });
+
+  it("commands/session-handoff.md spec 行数が 550 未満 (regression guard、500 復帰目標)", () => {
+    const body = readSkill();
+    const lineCount = body.split("\n").length;
+    expect(lineCount).toBeLessThan(550);
+  });
+
+  it("Self-Validation Checklist の `archive` (mutating subcommand) 群に最終報告 emit step 走行確認 item が含まれる", () => {
+    const body = readSkill();
+    // ## Self-Validation Checklist 全体を抽出
+    const selfValidationMatch = body.match(
+      /##\s*Self-Validation Checklist[\s\S]*?(?=\n##\s+[^#]|$)/,
+    );
+    const selfValidation = selfValidationMatch?.[0] ?? "";
+    expect(selfValidation.length).toBeGreaterThan(50);
+    // mutating subcommand 群 (`init` / `update` / `archive`) で最終報告 emit step 走行 item を強制
+    // checkbox 形式 + 最終報告 / final report keyword 必須
+    expect(selfValidation).toMatch(
+      /-\s*\[\s*\][\s\S]{0,400}?(?:最終報告|final\s*report)[\s\S]{0,400}?(?:emit|走行|format|出力|standard)/i,
+    );
+  });
+
+  it("docs/handoff-stop-reminder-sample.md が存在し generic shell hook script + 設置手順を含む", () => {
+    expect(() => readFileSync(hookSamplePath, "utf-8")).not.toThrow();
+    const content = readFileSync(hookSamplePath, "utf-8");
+    // shebang + bash code block
+    expect(content).toMatch(/```(?:bash|sh|shell)/i);
+    expect(content).toMatch(/#!\/usr\/bin\/env\s+bash|#!\/bin\/bash/);
+    // 設置手順 (`.claude/hooks/` 配置 + Stop hook 配線)
+    expect(content).toMatch(/\.claude\/hooks/);
+    expect(content).toMatch(/(?:Stop\s+hook|stop\s+hook)/i);
+    // memory template への正式 reference (consumer-side persistence 配線)
+    expect(content).toMatch(
+      /reference_session_final_report_template\.md|references\/final-report-format/,
+    );
+  });
+
+  it("docs/handoff-stop-reminder-sample.md が generic で consumer 固有値を含まない", () => {
+    const content = readFileSync(hookSamplePath, "utf-8");
+    expect(content).not.toMatch(/feature\/new-partslist/);
+    expect(content).not.toMatch(/\bparts-management\b/);
+    expect(content).not.toMatch(/\bD-\d{2,}\b/);
+    expect(content).not.toMatch(/(?<![\w-])gen-\d+\b/);
+    expect(content).not.toMatch(/\bRound\s+\d+\b/);
+    expect(content).not.toMatch(/Phase\s+[εζηθ]/);
+    expect(content).not.toMatch(/Track\s+[ABC]\b/);
+  });
+
+  it("commands/session-handoff.md が docs/handoff-stop-reminder-sample.md を Related Skills / Hooks 節で参照する", () => {
+    const body = readSkill();
+    // 該当 sample へのファイル名参照 (link or 文中言及)
+    expect(body).toMatch(/handoff-stop-reminder-sample/);
+  });
+
+  it("commands/session-handoff.md が memory `reference_session_final_report_template.md` への参照を持つ (consumer-side 拡張節)", () => {
+    const body = readSkill();
+    expect(body).toMatch(/reference_session_final_report_template\.md/);
+  });
+
+  it("Layer 3 拡張後も R2/R3 違反 (project 固有値) を spec 本体に持ち込まない (gen-N blocklist B-3f 準拠)", () => {
+    // 本 describe で扱う 4 ファイル全てに対して plugin core 持ち込み禁止語句を否定
+    const files = [skillPath, finalReportPath, postCheckPath, hookSamplePath];
+    for (const f of files) {
+      const content = readFileSync(f, "utf-8");
+      expect(content, `${f} must not contain consumer-specific gen-N IDs`).not.toMatch(
+        /(?<![\w-])gen-\d+\b/,
+      );
+      expect(content, `${f} must not contain consumer-specific D-NN IDs`).not.toMatch(
+        /\bD-\d{2,}\b/,
+      );
+      expect(content, `${f} must not contain consumer project name`).not.toMatch(
+        /\bparts-management\b/,
+      );
+    }
+  });
+});

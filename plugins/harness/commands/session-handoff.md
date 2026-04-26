@@ -258,6 +258,7 @@ touch .docs/handoff/<project>-{current,backlog,design-decisions,roadmap}.md
    成果を反映した最新状態で `current.md` を更新する (archive 内容の流し込みでは
    なく、current.md は「今の状態」の新しい snapshot に書き換える)
 4. **Design decision ask** (non-blocking, archive 限定、`init` / `update` では発火させない) — archive を書き出した後 (after the archive is written) に operator に問う: 「本セッションで確定した **permanent design decision (恒久方針)** で `design-decisions.md` に追記すべきものは?」YES → 各項目を append (append-only) し archive の `Design decisions` から相互参照 / NO・skip → archive 末尾の **Archive footer** に skip 理由を 1 行記録。skip 可 (non-blocking) だが skip 理由の記録は必須 (audit 用)
+5. **最終報告 emit step (8 section 標準 format、archive 限定、必須)** — 上記 step 1-4 完了後、operator (≒ ユーザー) に向けて **最終報告** を発出する。フォーマットは [`references/final-report-format.md`](./references/final-report-format.md) の **8 section 固定 layout** (1.このセッションで行なった開発 / 2.開発状況サマリ / 3.次セッションのスコープ / 4.残タスク / 5.振り返り / 6.チェックリスト + Post-Check Verification / 7.G1-G8 規律 ledger / 8.handoff health) に従う。section を skip しない (情報なし時は「該当なし」と明示)。consumer 側で project-specific 拡張がある場合は同名 memory `reference_session_final_report_template.md` (consumer-side) と merge して emit する。Skill 起動 + 標準 format の 2 点で「毎回同じ結果」を担保する設計のため、ユーザーが「完璧ですか?」と聞かなくても自動的に Section 6 で Post-Check Verification (Test 1-5) を self-verify する。
 
 ### `check`
 
@@ -393,28 +394,11 @@ orthogonal、Structural/Content/Synthesis 実行前に判定、`init` 案内を�
 
 #### Post-Check Verification (Test 1-5、check 後の human verification)
 
-`check` PASS でも **Required 4 sections strict 適用は anti-pattern #4 (archive
-必読化) を犯すリスク**あり。verdict 確定後、Claude / 人間が以下 5 項目を手で確認
-(Self-Validation Checklist `check` 群と対応):
+`check` PASS でも **Required 4 sections strict 適用は anti-pattern #4 (archive 必読化)** を犯すリスクあり。verdict 確定後、`current.md` を Claude / 人間が確認:
 
-- [ ] **Test 1 — Latest state 具体性**: branch + commit hash (`git cat-file -e
-      <hash>`) + merge status (PR-based なら commit hash + tests pass + merge SHA)。
-      `✅` 略記のみ不可、verification metadata 必須。
-- [ ] **Test 2 — Top Priority 即着手性**: 5 行以内で具体 command + 対象 file + 行
-      範囲。曖昧 verb (「対応」「進める」「整える」) のみは不可。
-- [ ] **Test 3 — 確立 invariant 1 行 takeaway** (恒久 `<decision-id>` 体系のみ、
-      Required Sections 5th 対応): ID + 1 行 takeaway 列挙、ID + takeaway は
-      current.md 必須 (詳細 rationale は archive 移送可)。
-- [ ] **Test 4 — Quick-start copy-paste 可**: bash block 完結 (cwd → 実行 → cleanup)、
-      placeholder は `<...>` で明示。
-- [ ] **Test 5 — Pointers 4 件以下 + reachable** (anti-pattern #7、S-10): max 4 link、
-      `Glob` で実在確認、命名 spec 準拠。
+- [ ] **Test 1** Latest state 具体性 / **Test 2** Top Priority 即着手性 / **Test 3** 確立 invariant 1 行 takeaway (`<decision-id>` 体系のみ) / **Test 4** Quick-start copy-paste 可 / **Test 5** Pointers ≤4 + reachable
 
-**Red flag (過剰圧縮、いずれか該当)**: `<decision-id>` 列挙のみで 1 行説明なし
-(anti-pattern #4) / `✅ merged` のみで verification metadata なし (Test 1) /
-current.md Read のみで「即把握」 verify 不可 (Required 4 strict 適用の失敗例)。
-**Gate 1 PASS だけで「完璧」と即答しない**、strict 適用と anti-pattern #4 両立が
-完成条件。Test 1-5 ❌ なら `update` で補強 → 再 `check`。
+判定基準・**Red flag** (過剰圧縮で archive 必読化を犯すパターン)・検証フロー・slim 化判断の優先順位は [`references/post-check-verification.md`](./references/post-check-verification.md) に分離 (Layer 3 完了、本 spec を 500 行台に復帰)。**Gate 1 PASS だけで「完璧」と即答しない** — Required 4 sections strict 適用と anti-pattern #4 両立が完成条件。Test 1-5 ❌ なら `update` で補強 → 再 `check`。
 
 #### Forbidden (check の禁止事項)
 
@@ -470,6 +454,7 @@ current.md Read のみで「即把握」 verify 不可 (Required 4 strict 適用
 - [ ] `design-decisions.md` は append 以外の操作を拒否
 - [ ] archive 書き出し時に元 session record を `grep -c "Session"` 等で検証し、情報欠損がないこと
 - [ ] **archive 限定**: design decision ask 実行 (恒久方針を `design-decisions.md` に追記 or skip 理由を archive footer に記録)
+- [ ] **archive 限定**: 最終報告 emit step (8 section 標準 format) を [`references/final-report-format.md`](./references/final-report-format.md) に従って走行。consumer 側 memory `reference_session_final_report_template.md` の project-specific 拡張があれば merge。section skip 禁止 (情報なしなら「該当なし」明示)
 
 ### `check` (read-only 3-gate / 4-gate subcommand)
 
@@ -502,8 +487,10 @@ current.md Read のみで「即把握」 verify 不可 (Required 4 strict 適用
 
 - **[MEMORY.md pattern][anthropic-memory]**: concise index + topic files
 - **[SKILL.md pattern][anthropic-skills]**: overview + supporting files
-  (本 skill 自体は 550 行未満で記述、v2 拡張対応。`references/<helper>.md` への
-  detail 分離完了後は 500 行へ復帰予定)
+  (本 skill 自体は 500 行台を目標とし、v2 拡張で一時 550 まで許容。`references/`
+  detail 分離は **Layer 3 (2026-04-27) で完了** — Post-Check Verification 詳細は
+  [`references/post-check-verification.md`](./references/post-check-verification.md)、
+  最終報告 8 section format は [`references/final-report-format.md`](./references/final-report-format.md))
 - **[context window 推奨][anthropic-context]**: 変動する情報と always-on を分離
 
 本 skill が追加する invariant:
@@ -526,6 +513,11 @@ current.md Read のみで「即把握」 verify 不可 (Required 4 strict 適用
 - `SessionStart` / `SessionEnd` hook — 自動 trigger に乗せる場合は plugin
   hooks.json で wire する (詳細は [anthropic-hooks][] 参照)
 - `PreCompact` hook — compaction 直前に current.md を保護する用途に使える
+- `Stop` hook — turn 終了ごとに `current.md` の stale 検出 → skill 経由
+  `update` + 8 section 最終報告 emit を促す reminder。generic sample は
+  [`docs/handoff-stop-reminder-sample.md`](../docs/handoff-stop-reminder-sample.md)
+  に同梱、consumer 側で `.claude/hooks/handoff-stop-reminder.sh` に install +
+  `Stop` hook に wire する (詳細は同 sample doc 内 "Install (consumer-side, 3 step)")
 
 ---
 
@@ -534,10 +526,20 @@ current.md Read のみで「即把握」 verify 不可 (Required 4 strict 適用
 - 本 skill は **汎用テンプレート** である。特定プロジェクトの branch 名 /
   ファイル layout 前提はない。project-specific な拡張は consumer 側
   `.claude/skills/<project>-handoff/` で override する。
+- consumer 側で **8 section 最終報告 format に project-specific フィールド**
+  (compliance attestation / release vehicle / on-call rotation 等) を追加
+  したい場合は memory `reference_session_final_report_template.md`
+  (consumer-side) を保持する。`archive` の最終報告 emit step は plugin の
+  generic template ([`references/final-report-format.md`](./references/final-report-format.md))
+  と consumer memory を **merge** して emit する設計。base 8 section の順序は
+  変更しない (downstream reader が固定順序を前提とする)。
 - 本 skill は破壊的操作を行わない。archive 書き出しは常に追加、
   既存 file の削除はユーザー明示承認を要求する。
 - `update` / `archive` が自動 trigger される場合、
-  Anthropic 公式では `SessionEnd` hook に wire することを推奨。
+  Anthropic 公式では `SessionEnd` hook に wire することを推奨。手軽な
+  freshness reminder のみ欲しい場合は `Stop` hook に
+  [`docs/handoff-stop-reminder-sample.md`](../docs/handoff-stop-reminder-sample.md)
+  を install する代替経路もある (Layer 3 で同梱)。
 
 ---
 
