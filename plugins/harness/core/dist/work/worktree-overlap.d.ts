@@ -15,13 +15,17 @@
  *   3. Static comparison stays cheap (O(n²) over sub_tasks × patterns), with
  *      no fs / glob library dependencies.
  *
- * Severity heuristic:
- *   - `high`   — exact-literal overlap, OR ≥50% of one task's ownedFiles match.
- *   - `medium` — 1+ partial overlap (single common pattern, or parent/child
- *     glob relationship like `backend/**` ⊃ `backend/api/*`).
- *   - `low`    — only forbidden cross-violations (A.owned listed in B.forbidden
- *     declares "B intends to avoid the area A owns" — useful warning but not
- *     a structural conflict).
+ * Severity heuristic (実装と完全一致):
+ *   - `high`   — owned overlap が exact-literal を含み、かつ A 側または B 側
+ *     coverage の **どちらかが strictly > 50%** (50% 丁度は medium 扱い)。
+ *   - `medium` — owned overlap あり、かつ `high` 条件を満たさない全ケース。
+ *     具体的には:
+ *       (a) exact-literal overlap だが coverage ≤ 50% (例: 1 pattern in 2-element array)
+ *       (b) 親子 glob 関係のみ (`backend/**` ⊃ `backend/api/*` 等)
+ *       (c) その他 owned overlap が存在する全ケース (high 条件外の余事象)
+ *   - `low`    — owned overlap なし、forbidden cross-violation のみ
+ *     (A.owned listed in B.forbidden declares "B intends to avoid the area
+ *     A owns" — useful warning but not a structural conflict)。
  *
  * Recommendation:
  *   - any `high` → `consolidate-into-single-pr` (merge conflict near-guaranteed)

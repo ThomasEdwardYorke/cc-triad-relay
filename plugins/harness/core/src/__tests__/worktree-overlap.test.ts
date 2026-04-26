@@ -248,3 +248,57 @@ describe("detectOverlap — summary fields", () => {
     expect(r.summary.lowCount).toBe(0);
   });
 });
+
+describe("detectOverlap — 非対称ケース (asymmetric coverage、CR Major 対応)", () => {
+  it("A=2 patterns / B=3 patterns で B 側全 owned が A の glob で覆われる場合: B 側 coverage は 100% で high", () => {
+    // A: ["shared/**", "x.ts"] (2 patterns)
+    // B: ["shared/a.ts", "shared/b.ts", "x.ts"] (3 patterns)
+    // intersectPatterns(A, B): A の shared/** が shared/a.ts / shared/b.ts を覆う + x.ts が exact match
+    //                         → A 側 overlap = ["shared/**", "x.ts"] = 2 / 2 = 100%
+    // intersectPatterns(B, A): B の shared/a.ts / shared/b.ts が A の shared/** に覆われる + x.ts exact
+    //                         → B 側 overlap = ["shared/a.ts", "shared/b.ts", "x.ts"] = 3 / 3 = 100%
+    // hasExact=true (x.ts) + 両側 100% > 50% → high
+    const r = detectOverlap([
+      { slug: "task-a", ownedFiles: ["shared/**", "x.ts"] },
+      {
+        slug: "task-b",
+        ownedFiles: ["shared/a.ts", "shared/b.ts", "x.ts"],
+      },
+    ]);
+    expect(r.pairs.length).toBe(1);
+    expect(r.pairs[0]!.severity).toBe("high");
+    expect(r.summary.recommendation).toBe("consolidate-into-single-pr");
+    // overlappingPatterns は union で 4 patterns
+    expect(r.pairs[0]!.overlappingPatterns).toEqual(
+      expect.arrayContaining(["shared/**", "x.ts", "shared/a.ts", "shared/b.ts"]),
+    );
+  });
+
+  it("A=4 patterns / B=2 patterns で A 側 coverage 25% / B 側 coverage 100%: B 側 100% で high", () => {
+    // A: ["a1.ts", "a2.ts", "a3.ts", "shared.ts"] (4 patterns、shared.ts のみ overlap)
+    // B: ["shared.ts", "b1.ts"] (2 patterns、shared.ts は A と exact、b1.ts は独立)
+    // intersectPatterns(A, B): A の shared.ts が B にある → A 側 overlap = ["shared.ts"] = 1 / 4 = 25%
+    // intersectPatterns(B, A): B の shared.ts が A にある → B 側 overlap = ["shared.ts"] = 1 / 2 = 50%
+    // hasExact=true (shared.ts)、A 側 25% / B 側 50% → 両方 strict > 50% を満たさない → medium
+    const r = detectOverlap([
+      {
+        slug: "task-a",
+        ownedFiles: ["a1.ts", "a2.ts", "a3.ts", "shared.ts"],
+      },
+      { slug: "task-b", ownedFiles: ["shared.ts", "b1.ts"] },
+    ]);
+    expect(r.pairs.length).toBe(1);
+    // 両側とも > 50% を満たさない → medium
+    expect(r.pairs[0]!.severity).toBe("medium");
+  });
+
+  it("A=2 / B=3 で 1 pattern の exact match のみ、B 側 coverage 33%、A 側 50% → medium (どちらも > 50% 厳密に超えず)", () => {
+    const r = detectOverlap([
+      { slug: "task-a", ownedFiles: ["shared.ts", "a1.ts"] },
+      { slug: "task-b", ownedFiles: ["shared.ts", "b1.ts", "b2.ts"] },
+    ]);
+    expect(r.pairs.length).toBe(1);
+    // A 側 50% / B 側 33%、hasExact だが strict > 50% 不成立 → medium
+    expect(r.pairs[0]!.severity).toBe("medium");
+  });
+});

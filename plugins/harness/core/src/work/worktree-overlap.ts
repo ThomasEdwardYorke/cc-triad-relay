@@ -15,13 +15,17 @@
  *   3. Static comparison stays cheap (O(n²) over sub_tasks × patterns), with
  *      no fs / glob library dependencies.
  *
- * Severity heuristic:
- *   - `high`   — exact-literal overlap, OR ≥50% of one task's ownedFiles match.
- *   - `medium` — 1+ partial overlap (single common pattern, or parent/child
- *     glob relationship like `backend/**` ⊃ `backend/api/*`).
- *   - `low`    — only forbidden cross-violations (A.owned listed in B.forbidden
- *     declares "B intends to avoid the area A owns" — useful warning but not
- *     a structural conflict).
+ * Severity heuristic (実装と完全一致):
+ *   - `high`   — owned overlap が exact-literal を含み、かつ A 側または B 側
+ *     coverage の **どちらかが strictly > 50%** (50% 丁度は medium 扱い)。
+ *   - `medium` — owned overlap あり、かつ `high` 条件を満たさない全ケース。
+ *     具体的には:
+ *       (a) exact-literal overlap だが coverage ≤ 50% (例: 1 pattern in 2-element array)
+ *       (b) 親子 glob 関係のみ (`backend/**` ⊃ `backend/api/*` 等)
+ *       (c) その他 owned overlap が存在する全ケース (high 条件外の余事象)
+ *   - `low`    — owned overlap なし、forbidden cross-violation のみ
+ *     (A.owned listed in B.forbidden declares "B intends to avoid the area
+ *     A owns" — useful warning but not a structural conflict)。
  *
  * Recommendation:
  *   - any `high` → `consolidate-into-single-pr` (merge conflict near-guaranteed)
@@ -173,30 +177,39 @@ function detectForbiddenViolations(
  *   - low    — only forbidden violations (no owned overlap)
  */
 function classifySeverity(
-  overlappingPatterns: string[],
+  overlappingPatternsFromA: string[],
+  overlappingPatternsFromB: string[],
   a: SubTaskOverlapInput,
   b: SubTaskOverlapInput,
   forbiddenViolations: ForbiddenViolation[],
 ): "high" | "medium" | "low" {
-  if (overlappingPatterns.length > 0) {
+  // Either side reporting overlapping patterns means the pair has owned overlap.
+  if (
+    overlappingPatternsFromA.length > 0 ||
+    overlappingPatternsFromB.length > 0
+  ) {
     // Exact-literal overlap (両側に同一の pattern が直接 declare されている)
-    const hasExact = overlappingPatterns.some(
+    const hasExact = overlappingPatternsFromA.some(
       (p) => a.ownedFiles.includes(p) && b.ownedFiles.includes(p),
     );
-    // Coverage on either side, strictly > 50% (50% 丁度は medium 扱い)
+    // Coverage on each side independently. A-side counts how many of A's
+    // declared patterns overlap something in B; B-side does the symmetric
+    // check (B's patterns vs A). Using A-side count for B-side coverage
+    // would under-report asymmetric cases like `A=["shared/**","x.ts"]` vs
+    // `B=["shared/a.ts","shared/b.ts","x.ts"]` where every B pattern is
+    // covered by A but A only contributes 2 patterns to the intersection.
     const aCoverage =
       a.ownedFiles.length > 0
-        ? overlappingPatterns.length / a.ownedFiles.length
+        ? overlappingPatternsFromA.length / a.ownedFiles.length
         : 0;
     const bCoverage =
       b.ownedFiles.length > 0
-        ? overlappingPatterns.length / b.ownedFiles.length
+        ? overlappingPatternsFromB.length / b.ownedFiles.length
         : 0;
-    // high: 直接 literal match があり、かつ片側 coverage が 50% 超え
-    //       (exact match のみで coverage が低い場合 = 共通 file 1 件が大きな array に
-    //       散らばっている = 部分競合 → medium)
+    // high: 直接 literal match があり、かつ片側 coverage が 50% を**厳密に**超える。
+    //       50% 丁度 (1 pattern in 2-element array) は medium 扱い。
     if (hasExact && (aCoverage > 0.5 || bCoverage > 0.5)) return "high";
-    // 親子 glob のみ / 50% 丁度の exact match → medium
+    // 親子 glob のみ / 50% 丁度の exact match / その他 owned overlap → medium
     return "medium";
   }
   if (forbiddenViolations.length > 0) return "low";
@@ -241,14 +254,40 @@ export function detectOverlap(
       const b = subTasks[j]!;
       // ownedFiles 空のタスクは pair 計算対象外。
       if (a.ownedFiles.length === 0 || b.ownedFiles.length === 0) continue;
-      const overlapping = intersectPatterns(a.ownedFiles, b.ownedFiles);
+      // 両方向の overlap を取得する: A 側 (A の patterns が B と被るか) と
+      // B 側 (B の patterns が A と被るか)。非対称ケース (e.g. A=["shared/**","x.ts"]
+      // vs B=["shared/a.ts","shared/b.ts","x.ts"]) で B 側 coverage を A 側 count で
+      // 過小評価する bug を防ぐため、severity 判定では両側を独立に算出する。
+      const overlappingFromA = intersectPatterns(a.ownedFiles, b.ownedFiles);
+      const overlappingFromB = intersectPatterns(b.ownedFiles, a.ownedFiles);
       const forbidden = detectForbiddenViolations(a, b);
-      if (overlapping.length === 0 && forbidden.length === 0) continue;
-      const severity = classifySeverity(overlapping, a, b, forbidden);
+      if (
+        overlappingFromA.length === 0 &&
+        overlappingFromB.length === 0 &&
+        forbidden.length === 0
+      ) continue;
+      const severity = classifySeverity(
+        overlappingFromA,
+        overlappingFromB,
+        a,
+        b,
+        forbidden,
+      );
+      // OverlapPair.overlappingPatterns には両側 union (重複除去) を返却。
+      // これにより consumer は「A 側 / B 側どちらの観点でも overlap している全 pattern」を
+      // 1 list で参照できる (asymmetric case で union のほうが情報量が多い)。
+      const unionPatterns: string[] = [];
+      const seen = new Set<string>();
+      for (const p of [...overlappingFromA, ...overlappingFromB]) {
+        if (!seen.has(p)) {
+          seen.add(p);
+          unionPatterns.push(p);
+        }
+      }
       pairs.push({
         taskA: a.slug,
         taskB: b.slug,
-        overlappingPatterns: overlapping,
+        overlappingPatterns: unionPatterns,
         forbiddenViolations: forbidden,
         severity,
       });

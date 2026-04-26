@@ -103,9 +103,9 @@ coordinator は並列開発着手前に以下を全て検証:
 
 | severity | 条件 | 推奨アクション |
 |---|---|---|
-| **high** | 同 literal pattern が両側に declare、かつ片側 ownedFiles の 50% 超 | `consolidate-into-single-pr` (1 PR に統合する判断材料) |
-| **medium** | 親子 glob 関係 (`backend/**` ⊃ `backend/api/*`) のみ、または 50% 丁度の exact match | `serialize` (`merge_priority` で順次化) |
-| **low** | forbiddenFiles cross-violation のみ (実 owned 重複なし) | `parallel-ok` (警告のみ、並列実行可) |
+| **high** | 同 literal pattern が両側に declare、かつ A 側または B 側 ownedFiles の coverage が **strictly 50% 超** (50% 丁度は medium 扱い)。両側 coverage は独立に算出 (asymmetric ケースを正しく評価) | `consolidate-into-single-pr` (1 PR に統合する判断材料) |
+| **medium** | owned overlap あり、かつ `high` 条件不成立の全ケース。具体的には (a) exact-literal だが coverage ≤ 50% (例: 1 pattern in 2-element array)、(b) 親子 glob のみ (`backend/**` ⊃ `backend/api/*`)、(c) その他 owned overlap 全般 (high の余事象) | `serialize` (`merge_priority` で順次化) |
+| **low** | owned overlap なし、forbidden cross-violation のみ | `parallel-ok` (警告のみ、並列実行可) |
 
 #### Recommendation
 
