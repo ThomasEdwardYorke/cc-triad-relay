@@ -258,10 +258,11 @@ touch .docs/handoff/<project>-{current,backlog,design-decisions,roadmap}.md
    成果を反映した最新状態で `current.md` を更新する (archive 内容の流し込みでは
    なく、current.md は「今の状態」の新しい snapshot に書き換える)
 4. **Design decision ask** (non-blocking, archive 限定、`init` / `update` では発火させない) — archive を書き出した後 (after the archive is written) に operator に問う: 「本セッションで確定した **permanent design decision (恒久方針)** で `design-decisions.md` に追記すべきものは?」YES → 各項目を append (append-only) し archive の `Design decisions` から相互参照 / NO・skip → archive 末尾の **Archive footer** に skip 理由を 1 行記録。skip 可 (non-blocking) だが skip 理由の記録は必須 (audit 用)
-5. **最終報告 emit step (8 section 標準 format、archive 限定、必須)** — step 1-4 完了後に operator へ最終報告を emit。format は [`references/final-report-format.md`](./references/final-report-format.md) の **8 section 固定 layout** (1 開発 / 2 サマリ / 3 次スコープ / 4 残タスク / 5 振り返り / 6 Post-Check Verification / 7 G1-G8 規律 ledger / 8 handoff health) に従う:
+5. **最終報告 emit step (8 section 標準 format、archive 限定、必須)** — step 1-4 完了後に operator へ最終報告を emit。format は [`docs/references/final-report-format.md`](../docs/references/final-report-format.md) の **8 section 固定 layout** (1 開発 / 2 サマリ / 3 次スコープ / 4 残タスク / 5 振り返り / 6 Post-Check Verification / 7 G1-G8 規律 ledger / 8 handoff health) に従う:
    - section skip 禁止 (情報なしなら「該当なし」と明示)
    - consumer 側 memory `reference_session_final_report_template.md` の project-specific 拡張があれば merge (base 8 section 順序は変更しない)
-   - Skill 起動 + 標準 format で「毎回同じ結果」を担保 (Section 6 の Test 1-5 自動 self-verify、ユーザー「完璧ですか?」不要)
+   - Section 6 は **最新 `check` ターンで実施した Post-Check Verification (Test 1-5) の結果を記録 / 反映するのみ** (archive は再走行しない、責務分離: `check` が verify、`archive` が report)
+   - Skill 起動 + 標準 format で「毎回同じ結果」を担保 (ユーザー「完璧ですか?」不要)
    - `update` 単独では emit しない (`update` は current.md 最新化のみ、最終報告は archive ターンに紐付け)
 
 ### `check`
@@ -336,112 +337,24 @@ signals に `ℹ️` アイコンで並記するが、PASS / WARN / FAIL 判定�
 | S-13 | `backlog.md` 肥大化 — 150 行超で WARN / 200 行超で FAIL (**再肥大化 guard**、Gate 1 Structural 由来) | 主: Gate 2 Context loaded の Y (backlog 行数) を流用。fallback (Gate 2 停止時): `find .docs/handoff -maxdepth 1 -name '*-backlog.md' \| head -1 \| xargs wc -l 2>/dev/null` (見つからなければ N/A) | WARN (150+) / FAIL (200+) |
 | S-14〜S-17 | **Gate 4 — Roadmap Freshness** (handoff mode のみ — `taskTrackerMode === "handoff"` + `handoffPaths.roadmap` 設定時に起動、Plans-mode では SKIP + output 省略): S-14 (FAIL, roadmap.md 不在) / S-15 (WARN, backlog `roadmap_ref` が roadmap heading id と未 match、`parseBacklog()` 結果突合) / S-16 (INFO, `Plans.md` + handoff/ 両在 = 移行進行中) / S-17 (INFO, roadmap 30 日 commit なし + 新 backlog entry)。S-14〜S-16 は filesystem のみ、S-17 のみ git 依存。 | 各 signal 参照 | FAIL / WARN / INFO / INFO |
 
-#### Output Template (実行結果の提示形式)
+#### Output Template / Forbidden ops / Edge Cases
 
-check 実行後の report 形式 (heading には bold を使い、`##` は避ける — consumer
-document の regex-based scanner が誤検知しないため):
-
-```markdown
-**session-handoff check** — <YYYY-MM-DD HH:MM>
-
-**Summary**
-<PASS|WARN|FAIL|INIT_REQUIRED> — Structural: {P}/{W}/{F} | Content: {Extracted|Partial|Missing} | Synthesis: <Ready|Partial|Stale|N/A> | Context loaded: <N> lines (current: {X}, backlog: {Y})
-
-**Context loaded**: Gate 2 で `Read` した `current + backlog` の行数合計。
-300 行超は S-12 (current 90+) または S-13 (backlog 150+) のいずれかが既に
-WARN 以上の状態を示唆 (分割検討)。report 要約外の詳細 (Quick-start bash 全文、
-運用ルール、背景 docs 等) も **Claude context に ingest 済**なので、check 後の
-再 Read は不要 (Anti-pattern #10)。
-
-**INIT_REQUIRED**: `.docs/handoff/` が空/未作成時の独立 verdict。他 3 verdict と
-orthogonal、Structural/Content/Synthesis 実行前に判定、`init` 案内を表示。
-
----
-
-**Gate 1 — Structural Integrity**
-
-| 項目 | 結果 | 詳細 |
-| --- | --- | --- |
-| current.md 行数 | ✅ N 行 / 120 上限 | — |
-| detail files 存在 | ✅ 全 N 件 (必須 2 件 + optional M 件) | — |
-| backlog ラベル | ⚠️ M 件ラベルなし | 行 X, Y |
-| design-decisions append-only | ✅ | — |
-| archive 命名規約 | ✅ 全 N 件 | — |
-
----
-
-**Gate 2 — Content Comprehension**
-
-- **Branch**: <branch>
-- **Latest commit**: <hash> <msg> (<date>)
-- **Top priority**: <extracted one-liner>
-- **Quick-start command**: ✅ / ⚠️ missing
-- **Pointers**: N 件 (全て実在確認済 / N 件 broken)
-- **Backlog Top 3 [High]**: 1. ... / 2. ... / 3. ...
-
----
-
-**Gate 3 — Understanding Synthesis**
-
-- **Rehydration verdict**: <Ready|Partial|Stale>
-- **Staleness signals**:
-  - ⚠️ S-01: current.md が N 日更新なし (<date>)
-  - ✅ S-02 / S-03 / S-05 (git 突合 OK)
-  - (他 signals を列挙)
-- **Gate 4 — Roadmap Freshness** (handoff mode のみ、Plans-mode では省略): Mode / Roadmap path / S-14〜S-17 を列挙。
-
----
-
-**Recommended Remediation**
-<FAIL があれば具体的な次アクション、PASS なら「次タスクに着手可能」の一言>
-```
+`check` の **Output Template** (`Summary` + Gate 1-3 + Gate 4 (handoff mode 限定)
++ `Recommended Remediation` の固定 layout)、**Forbidden ops** (read-only must、
+write op / 外部 POST / 推測 stale 断定の禁止) 、**Edge Cases** (未初期化 →
+`INIT_REQUIRED` / git unavailable → S-02/03/05/08/11 SKIP / large archive サンプ
+リング / gh CLI 不在 → S-04 SKIP / current.md markdown 破損時の Gate 2 即時停止 +
+Gate 3 部分実行 + `required_section_missing: FAIL`) は
+[`docs/references/check-details.md`](../docs/references/check-details.md) に
+分離 (本 spec ≤ 500 行 強制のため、Layer 3 で実施)。
 
 #### Post-Check Verification (Test 1-5、check 後の human verification)
 
-`check` PASS でも **Required 4 sections strict 適用は anti-pattern #4 (archive 必読化)** を犯すリスクあり。verdict 確定後、`current.md` を Claude / 人間が確認:
+`check` PASS でも **Required 4 sections strict 適用は anti-pattern #4 (archive 必読化)** を犯すリスクあり。verdict 確定後、`current.md` を Claude / 人間が手動で確認 (`archive` の最終報告 emit step は本 verify を再走行せず、最新 `check` ターンの結果を Section 6 に **記録 / 反映**するのみ):
 
 - [ ] **Test 1** Latest state 具体性 / **Test 2** Top Priority 即着手性 / **Test 3** 確立 invariant 1 行 takeaway (`<decision-id>` 体系のみ) / **Test 4** Quick-start copy-paste 可 / **Test 5** Pointers ≤4 + reachable
 
-判定基準・**Red flag** (過剰圧縮で archive 必読化を犯すパターン)・検証フロー・slim 化判断の優先順位は [`references/post-check-verification.md`](./references/post-check-verification.md) に分離 (Layer 3 完了、本 spec を 500 行台に復帰)。**Gate 1 PASS だけで「完璧」と即答しない** — Required 4 sections strict 適用と anti-pattern #4 両立が完成条件。Test 1-5 ❌ なら `update` で補強 → 再 `check`。
-
-#### Forbidden (check の禁止事項)
-
-`check` は **read-only must**。絶対禁止:
-- **write op 全般**: ファイル書き換え / 削除、`git commit`/`push`/`reset`、
-  `design-decisions.md` 編集 (append-only 守護)、archive 削除 / 移動、
-  上位 memory (project/user) 書き換え、PR/Issue 自動 close
-- **ネットワーク書込**: 外部 POST (read-only `gh pr view` のみ許可)
-- **推測 stale 断定**: git/Glob 実証不可なら「確認不可」で WARN 止まり
-
-#### Edge Cases (劣化ケースのハンドリング)
-
-- **First-time use (未初期化)**: `Glob` で `.docs/handoff/` が空なら `FAIL` では
-  なく `INIT_REQUIRED` を返し、`/session-handoff init` の実行を案内
-- **Git unavailable (CI / shallow clone)**: `Bash: git ...` が exit ≠ 0 なら
-  以下全てを SKIP し、output に "git unavailable — skipped: S-02, S-03,
-  S-05, S-08, S-11, design-decisions append-only 判定" と記載:
-  - Gate 3 の git 依存 signal (S-02 / S-03 / S-05 / S-08 / S-11)
-  - Gate 1 の `design-decisions.md` append-only 判定 (`git diff` 依存、
-    git 不可環境では非決定的なため WARN `append_only_unverified` に格下げ)
-  Structural (git 非依存分) と Content は継続実行 (hard fail しない)
-- **Large archive (> 20 files)**: 主規約 (`session-<YYYY-MM-DD>-*.md`) のみ日付
-  ソートで最新 10 件を命名規約チェック。命名例外 (`summary-*.md` / `pre-*.md`)
-  は件数カウントのみ (日付情報なし)。output に「session archives: N 件中最新 10
-  件サンプリング、exception archives: M 件」と明記
-- **gh CLI 未導入**: S-04 を SKIP (他 signal は継続)
-- **current.md の markdown 破損** (canonical behavior): Required section が
-  regex で拾えないなら以下を統一的に実施:
-  1. Gate 2 (Content Comprehension) を **即時停止** (部分抽出した情報は破棄)
-  2. Gate 3 (Synthesis) を引き続き実行。ただし Gate 3 の staleness signal
-     走査は Gate 2 抽出情報に依存する S-04 / S-05 を SKIP (`content_comprehension
-     halted: signals skipped: S-04, S-05`)
-  3. Output Template では `required_section_missing: FAIL` を Gate 1 Structural
-     結果として carry-over 表示し、Gate 2 / Gate 3 は degraded status で報告
-  4. Recommended Remediation で「current.md の required 4 sections を修復し
-     再実行」を必ず提示
-  (Gate 3 完全 skip ではなく「Gate 2 dependent signals だけ skip」とする理由:
-  Structural (Gate 1) 由来のシグナル S-06 / S-07 / S-09 / S-10 / S-12 / S-13 は
-  Gate 2 に依存しないため、引き続き有用な陳腐化診断を提供できる)
+判定基準・**Red flag** (過剰圧縮で archive 必読化を犯すパターン)・検証フロー・slim 化判断の優先順位は [`docs/references/post-check-verification.md`](../docs/references/post-check-verification.md) に分離 (Layer 3、本 spec ≤ 500 行)。**Gate 1 PASS だけで「完璧」と即答しない** — Required 4 sections strict 適用と anti-pattern #4 両立が完成条件。Test 1-5 ❌ なら `update` で補強 → 再 `check`。
 
 ---
 
@@ -458,7 +371,7 @@ orthogonal、Structural/Content/Synthesis 実行前に判定、`init` 案内を�
 - [ ] `design-decisions.md` は append 以外の操作を拒否
 - [ ] archive 書き出し時に元 session record を `grep -c "Session"` 等で検証し、情報欠損がないこと
 - [ ] **archive 限定**: design decision ask 実行 (恒久方針を `design-decisions.md` に追記 or skip 理由を archive footer に記録)
-- [ ] **archive 限定**: 最終報告 emit step (8 section 標準 format) を [`references/final-report-format.md`](./references/final-report-format.md) に従って走行。consumer 側 memory `reference_session_final_report_template.md` の project-specific 拡張があれば merge。section skip 禁止 (情報なしなら「該当なし」明示)
+- [ ] **archive 限定**: 最終報告 emit step (8 section 標準 format) を [`docs/references/final-report-format.md`](../docs/references/final-report-format.md) に従って走行。consumer 側 memory `reference_session_final_report_template.md` の project-specific 拡張があれば merge。section skip 禁止 (情報なしなら「該当なし」明示)。Section 6 は最新 `check` の Test 1-5 結果を記録 (再走行しない)
 
 ### `check` (read-only 3-gate / 4-gate subcommand)
 
@@ -491,10 +404,12 @@ orthogonal、Structural/Content/Synthesis 実行前に判定、`init` 案内を�
 
 - **[MEMORY.md pattern][anthropic-memory]**: concise index + topic files
 - **[SKILL.md pattern][anthropic-skills]**: overview + supporting files
-  (本 skill 自体は 500 行台 (500–549) を目標、v2 拡張で一時 550 まで許容。以降の
-  追加は **`references/<helper>.md` 分離**で 550 を超えない設計。Layer 3 (2026-04-27)
-  で Post-Check Verification 詳細を [`references/post-check-verification.md`](./references/post-check-verification.md)、
-  最終報告 8 section format を [`references/final-report-format.md`](./references/final-report-format.md) に分離済)
+  (本 skill 自体は **≤ 500 行** を hard limit とする (Anthropic SKILL.md focused
+  原則)。以降の機能追加は **`docs/references/<helper>.md` 分離**で 500 を超えない
+  設計。Layer 3 (2026-04-27) で Post-Check Verification 詳細を
+  [`docs/references/post-check-verification.md`](../docs/references/post-check-verification.md)、
+  最終報告 8 section format を [`docs/references/final-report-format.md`](../docs/references/final-report-format.md)、
+  `check` Output Template / Forbidden / Edge Cases を [`docs/references/check-details.md`](../docs/references/check-details.md) に分離済)
 - **[context window 推奨][anthropic-context]**: 変動する情報と always-on を分離
 
 本 skill が追加する invariant:
@@ -530,7 +445,7 @@ orthogonal、Structural/Content/Synthesis 実行前に判定、`init` 案内を�
 - 本 skill は **汎用テンプレート** である。特定プロジェクトの branch 名 /
   ファイル layout 前提はない。project-specific な拡張は consumer 側
   `.claude/skills/<project>-handoff/` で override する。
-- consumer 側で **8 section 最終報告 format に project-specific フィールド** (compliance / on-call rotation 等) を追加したい場合は memory `reference_session_final_report_template.md` (consumer-side) を保持する。`archive` の最終報告 emit step は plugin generic template ([`references/final-report-format.md`](./references/final-report-format.md)) と consumer memory を **merge** して emit する設計 (base 8 section の順序は変更しない、downstream reader が固定順序を前提とする)。
+- consumer 側で **8 section 最終報告 format に project-specific フィールド** (compliance / on-call rotation 等) を追加したい場合は memory `reference_session_final_report_template.md` (consumer-side) を保持する。`archive` の最終報告 emit step は plugin generic template ([`docs/references/final-report-format.md`](../docs/references/final-report-format.md)) と consumer memory を **merge** して emit する設計 (base 8 section の順序は変更しない、downstream reader が固定順序を前提とする)。
 - 本 skill は破壊的操作を行わない。archive 書き出しは常に追加、
   既存 file の削除はユーザー明示承認を要求する。
 - `update` / `archive` が自動 trigger される場合、

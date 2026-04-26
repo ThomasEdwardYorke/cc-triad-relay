@@ -3,8 +3,11 @@
 > Companion to `commands/session-handoff.md`. Drop this script into a
 > consumer project's `.claude/hooks/` directory to detect a stale
 > `current.md` after every Claude turn and remind the agent to run
-> `Skill({skill: "harness:session-handoff", args: "update"})` plus the
-> standard 8-section final report template.
+> `Skill({skill: "harness:session-handoff", args: "update"})` to refresh
+> `current.md`. The standard 8-section final report is emitted **only
+> from the `archive` subcommand**, not from `update` — the reminder
+> nudges `update` first, and the final report follows naturally on the
+> session's next `archive` turn.
 
 ## What it does
 
