@@ -877,7 +877,7 @@ describe("main() entrypoint fail-open (e2e child-process contract)", () => {
     "session-start accepts empty stdin and returns spec-compliant wire output (decision omitted)",
     () => {
       // SessionStart は Anthropic 公式 hooks reference で `decision` field
-      // 非サポート (Codex pre-flight Q1 finding 確認済)。internal handler は
+      // 非サポート (公式 spec を根拠に確認済)。internal handler は
       // `decision: "approve"` を sentinel として返すが、dispatcher が wire
       // output から omit して spec 準拠の JSON を出力する。
       const result = spawnSync(process.execPath, [distPath, "session-start"], {
@@ -892,6 +892,8 @@ describe("main() entrypoint fail-open (e2e child-process contract)", () => {
       >;
       // wire output から decision field が omit されている (spec 準拠)
       expect(parsed["decision"]).toBeUndefined();
+      // top-level additionalContext も出ない (lift 専用、shape regression 検知)
+      expect(parsed["additionalContext"]).toBeUndefined();
       // empty input + no source → bare approve、hookSpecificOutput.additionalContext
       // も無い (handler が何も hint しない)
       expect(parsed["hookSpecificOutput"]).toBeUndefined();
@@ -918,6 +920,8 @@ describe("main() entrypoint fail-open (e2e child-process contract)", () => {
       >;
       // decision は wire output に出ない
       expect(parsed["decision"]).toBeUndefined();
+      // top-level additionalContext は出ない (lift 専用、shape regression 検知)
+      expect(parsed["additionalContext"]).toBeUndefined();
       // additionalContext は hookSpecificOutput.additionalContext に lift
       const hso = parsed["hookSpecificOutput"] as
         | Record<string, unknown>

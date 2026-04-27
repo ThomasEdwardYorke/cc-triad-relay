@@ -638,7 +638,7 @@ async function main(): Promise<void> {
     // approve)。SessionStart は公式 spec で `decision` field 非サポート、
     // `decision: "approve"` を internal sentinel として handler に残しつつ、
     // dispatcher で wire output から omit することで spec 準拠
-    // (Codex pre-flight Q1 finding により Anthropic 公式 hooks reference 確認済)。
+    // (Anthropic 公式 hooks reference を根拠に確認済)。
     //
     // hookEventName mapping (公式 event 名 vs harness dispatch 名):
     //   - user-prompt-submit → "UserPromptSubmit"
@@ -649,13 +649,33 @@ async function main(): Promise<void> {
     // content-integrity invariant (see __tests__/content-integrity.test.ts):
     // `hookEventName` 識別子から 200 chars 以内に各公式 event 名リテラルが
     // 並ぶこと。inline lookup table で 5 branch (将来 6+ も) を表現する。
-    const hookEventName = ({
-      "user-prompt-submit": "UserPromptSubmit",
-      "post-tool-use-failure": "PostToolUseFailure",
-      "config-change": "ConfigChange",
-      "subagent-start": "SubagentStart",
-      "session-start": "SessionStart",
-    } as Record<string, string>)[hookType] ?? "UserPromptSubmit";
+    // 公式 event 名 lookup を switch + fail-fast で構築 (silent fallback
+    // を排除、CodeRabbit nitpick 対応)。新 hook 分岐を追加し忘れた場合は
+    // throw で即時 PR を blocking する forcing function。
+    let hookEventName: string;
+    switch (hookType) {
+      case "user-prompt-submit":
+        hookEventName = "UserPromptSubmit";
+        break;
+      case "post-tool-use-failure":
+        hookEventName = "PostToolUseFailure";
+        break;
+      case "config-change":
+        hookEventName = "ConfigChange";
+        break;
+      case "subagent-start":
+        hookEventName = "SubagentStart";
+        break;
+      case "session-start":
+        hookEventName = "SessionStart";
+        break;
+      default:
+        // hookType の if 条件と本 switch が drift した場合のみ到達。
+        // 静かに誤値を出す代わりに throw で即時検知させる。
+        throw new Error(
+          `Unexpected hook type in modern hookSpecificOutput branch: ${hookType}`,
+        );
+    }
     const out: Record<string, unknown> = {};
     if (result.decision === "block") {
       out["decision"] = "block";
