@@ -527,10 +527,39 @@ describe("route() dispatcher — hook integration", () => {
   });
 
   describe("session lifecycle", () => {
-    it("session-start returns approve with no reason", async () => {
+    it("session-start returns approve with no reason (legacy: empty input)", async () => {
       const result = await route("session-start", {});
       expect(result.decision).toBe("approve");
       expect(result.reason).toBeUndefined();
+    });
+
+    it("session-start with source=startup returns bare approve (no hint)", async () => {
+      const result = await route("session-start", {
+        hook_event_name: "SessionStart",
+        source: "startup",
+      });
+      expect(result.decision).toBe("approve");
+      expect(result.additionalContext).toBeUndefined();
+    });
+
+    it("session-start with source=resume injects resume hint", async () => {
+      const result = await route("session-start", {
+        hook_event_name: "SessionStart",
+        source: "resume",
+      });
+      expect(result.decision).toBe("approve");
+      expect(result.additionalContext).toBeDefined();
+      expect(result.additionalContext).toContain("resume");
+    });
+
+    it("session-start with source=compact injects compaction hint", async () => {
+      const result = await route("session-start", {
+        hook_event_name: "SessionStart",
+        source: "compact",
+      });
+      expect(result.decision).toBe("approve");
+      expect(result.additionalContext).toBeDefined();
+      expect(result.additionalContext).toContain("compact");
     });
 
     it("session-end returns approve with no reason", async () => {

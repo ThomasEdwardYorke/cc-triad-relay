@@ -326,7 +326,21 @@ export async function route(hookType, input) {
             }
             return ssHR;
         }
-        case "session-start":
+        case "session-start": {
+            const { handleSessionStart } = await import("./hooks/session-start.js");
+            const raw = input;
+            const sstRes = await handleSessionStart({
+                hook_event_name: String(raw["hook_event_name"] ?? "SessionStart"),
+                session_id: extractString(raw, "session_id"),
+                cwd: extractString(raw, "cwd"),
+                source: extractString(raw, "source"),
+            });
+            const sstHR = { decision: sstRes.decision };
+            if (sstRes.additionalContext !== undefined) {
+                sstHR.additionalContext = sstRes.additionalContext;
+            }
+            return sstHR;
+        }
         case "session-end": {
             return { decision: "approve" };
         }
