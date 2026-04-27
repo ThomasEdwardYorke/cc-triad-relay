@@ -14,7 +14,7 @@ harness plugin の `/parallel-worktree` skill は内部で N 並列の worker �
 fan out するが、これは Skill spec ではなく **harness 独自設計**。本 doc は
 現状仕様 + 運用 pattern + 長期 design proposal を 1 箇所に固定する。
 
-## Anthropic 公式 spec 上の事実 (一次資料 2026-04-28)
+## Anthropic 公式 spec 上の事実 (一次資料 2026-04-22 確認、追加調査本 PR)
 
 | 項目 | 状態 |
 |---|---|

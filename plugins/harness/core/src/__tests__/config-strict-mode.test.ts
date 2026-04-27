@@ -2,7 +2,7 @@
  * core/src/__tests__/config-strict-mode.test.ts
  *
  * Strict-mode integration tests for `harness.config.json` shape validation
- * surfaces (Track C / Config strict mode follow-up).
+ * surfaces (config strict mode follow-up).
  *
  * ## Why this file exists
  *
@@ -44,7 +44,6 @@
  * ## Reference
  * - https://vitest.dev/guide/mocking.html (general mocking patterns)
  * - `subagent-stop.ts:99` resolvePythonCandidateDirs implementation
- * - Config strict mode follow-up: shape validation logging strict mode test
  */
 
 import { describe, it, expect, afterEach } from "vitest";
@@ -105,7 +104,7 @@ function makeProject(opts: {
  *
  * The replacement preserves the full `Writable.write(chunk, encoding?,
  * callback?)` signature: encoding (string or callback shorthand) and
- * callback arguments are honored so that future stderr callers using
+ * callback arguments are honored so future stderr callers using
  * encoding/callback variants are not silently dropped. Buffer chunks are
  * decoded with the supplied encoding (default `utf-8`).
  */
@@ -143,8 +142,8 @@ async function captureStderr<T>(
 }
 
 describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnings", () => {
-  it("config が parse 失敗 (broken JSON) → 'parse failed' warning + default fallback", async () => {
-    // 不完全な JSON で loadConfigWithError が parse error を返す → fail-open。
+  it("config parse failure (broken JSON) emits 'parse failed' warning + default fallback", async () => {
+    // Malformed JSON triggers loadConfigWithError -> parse error -> fail-open.
     const dir = makeProject({
       hasPyproject: true,
       hasSrc: true,
@@ -155,17 +154,17 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
       detectAvailableChecks(dir),
     );
 
-    // Fall-back behavior: default ['src', 'app'] が使われる → src/ が ruff target
+    // Fall-back behavior: default ['src', 'app'] is used -> src/ is the ruff target.
     const ruff = result.find((c) => c.tool === "ruff");
     expect(ruff?.command).toContain("src/");
 
-    // Strict-mode assertion: stderr に parse failed 警告 + default hint
+    // Strict-mode assertion: stderr must contain the parse-failed warning + default hint.
     expect(stderr).toContain("[harness subagent-stop]");
     expect(stderr).toContain("parse failed");
     expect(stderr).toContain('["src", "app"]');
   });
 
-  it("tooling.pythonCandidateDirs が string (非配列) → shape-invalid warning + default fallback", async () => {
+  it("tooling.pythonCandidateDirs as string (non-array) emits shape-invalid warning + default fallback", async () => {
     const dir = makeProject({
       hasPyproject: true,
       hasSrc: true,
@@ -189,7 +188,7 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
     expect(stderr).toContain('"not-an-array"');
   });
 
-  it("tooling.pythonCandidateDirs が非文字列を含む配列 → shape-invalid warning", async () => {
+  it("tooling.pythonCandidateDirs containing non-string entries emits shape-invalid warning", async () => {
     const dir = makeProject({
       hasPyproject: true,
       hasSrc: true,
@@ -202,16 +201,16 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
       detectAvailableChecks(dir),
     );
 
-    // shape invalid → defaults
+    // Shape invalid -> defaults.
     const ruff = result.find((c) => c.tool === "ruff");
     expect(ruff?.command).toContain("src/");
 
     expect(stderr).toContain("shape invalid");
   });
 
-  it("tooling.pythonCandidateDirs に shell-metacharacter entry → 'rejected' security warning", async () => {
-    // Shell injection 防止 allowlist regex `/^[a-zA-Z0-9_.-]+$/` を violate。
-    // `$(touch PWNED)` 等の command substitution は reject される。
+  it("entries with shell-metacharacters emit a 'rejected' security warning", async () => {
+    // Allowlist regex `/^[a-zA-Z0-9_.-]+$/` (shell-injection guard) rejects
+    // command substitution like `$(touch PWNED)`.
     const dir = makeProject({
       hasPyproject: true,
       hasSrc: true,
@@ -224,7 +223,7 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
       detectAvailableChecks(dir),
     );
 
-    // Safe entry "src" は kept、unsafe は rejected → ruff target に "src/" が残る
+    // Safe entry "src" is kept; unsafe is rejected -> ruff target retains "src/".
     const ruff = result.find((c) => c.tool === "ruff");
     expect(ruff?.command).toContain("src/");
     expect(ruff?.command).not.toContain("PWNED");
@@ -233,11 +232,11 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
     expect(stderr).toContain("[harness subagent-stop]");
     expect(stderr).toContain("rejected");
     expect(stderr).toContain("$(touch PWNED)");
-    // Allowlist regex を user に見せて修正方法を示す
+    // Allowlist regex must be surfaced so the user can self-correct.
     expect(stderr).toContain("/^[a-zA-Z0-9_.-]+$/");
   });
 
-  it("path separator entry (e.g., '../etc') → 'rejected' security warning", async () => {
+  it("path-separator entries (e.g. '../etc') emit a 'rejected' security warning", async () => {
     const dir = makeProject({
       hasPyproject: true,
       hasSrc: true,
@@ -258,8 +257,8 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
     expect(stderr).toContain("../etc");
   });
 
-  it("全 entry が unsafe → defaults fallback + rejected warning", async () => {
-    // 安全な entry が 1 つも無いケース。default `['src', 'app']` に fallback。
+  it("all entries unsafe -> defaults fallback + rejected warning", async () => {
+    // No safe entries remain. Default `['src', 'app']` is restored.
     const dir = makeProject({
       hasPyproject: true,
       hasSrc: true,
@@ -272,19 +271,19 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
       detectAvailableChecks(dir),
     );
 
-    // src/ は default で拾える (hasSrc=true)
+    // src/ is picked up via default (hasSrc=true).
     const ruff = result.find((c) => c.tool === "ruff");
     expect(ruff?.command).toContain("src/");
 
     expect(stderr).toContain("rejected");
-    // 全 reject なので safe list が空、rejected list に両 entry が含まれる
+    // All entries rejected -> safe list empty, both unsafe entries listed.
     expect(stderr).toContain("$(rm)");
     expect(stderr).toContain("/etc/passwd");
   });
 
-  it("正常な config (string entries) → stderr 出力なし (silent path)", async () => {
-    // Sanity check: config が valid なら stderr に何も出ないこと (regression guard
-    // for "always emit warnings" bug)。
+  it("valid config (string entries) emits no stderr (silent success path)", async () => {
+    // Sanity check: valid config produces zero stderr output (regression
+    // guard for "always emit warnings" bugs).
     const dir = makeProject({
       hasPyproject: true,
       hasSrc: true,
@@ -298,9 +297,9 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
     expect(stderr).toBe("");
   });
 
-  it("config 不在 → stderr 出力なし (default 経路)", async () => {
-    // harness.config.json が無い場合は最も一般的な case で、stderr に
-    // 何も出ないことを確認 (silent default path)。
+  it("config absent emits no stderr (silent default path)", async () => {
+    // Missing harness.config.json is the most common case; it must not
+    // produce any stderr output.
     const dir = makeProject({ hasPyproject: true, hasSrc: true });
 
     const { stderr } = await captureStderr(() => detectAvailableChecks(dir));
