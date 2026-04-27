@@ -34,14 +34,10 @@
  *
  * ## Sanitization
  *
- * `additionalContext` is sanitized through `sanitizeAdditionalContextLine`
- * (same smuggling-guard intent as `stop.ts`; this file additionally escapes
- * U+2028 LINE SEPARATOR / U+2029 PARAGRAPH SEPARATOR — `stop.ts` will be
- * brought to parity in a separate DRY-refactor follow-up PR): raw `\r\n` /
- * `\n` / `\r` / U+2028 / U+2029 are escaped to the two-character literal
- * `\\n`. The hint strings here are static so this is defense-in-depth, but
- * the contract still holds: any future dynamic content cannot smuggle fake
- * section boundaries.
+ * `additionalContext` is sanitized through `sanitizeAdditionalContextLine`,
+ * which escapes CR / LF / U+2028 / U+2029 to the two-character literal `\\n`
+ * to prevent fake section-boundary smuggling. The hint strings here are
+ * static, so this is defense-in-depth.
  */
 
 export interface SessionStartInput {
@@ -70,37 +66,16 @@ const SOURCE_COMPACT_HINT =
   "[SessionStart source=compact] Session continued after compaction. PreCompact has already injected relevant project state into earlier context; verify it above before resuming work.";
 
 /**
- * `additionalContext` の単一行 sanitizer。
+ * Sanitizes one `additionalContext` line by escaping CR / LF and Unicode line
+ * separators (U+2028 / U+2029) to the two-character literal `\\n`.
  *
- * Anthropic 公式 hooks spec (https://code.claude.com/docs/en/hooks) は
- * `additionalContext` の改行 normalize を規定していない (公式 hooks spec
- * 調査で確認)。本 helper は forward-compat hardening として `\r` / `\n` /
- * `\r\n` に加え U+2028 LINE SEPARATOR / U+2029 PARAGRAPH SEPARATOR も
- * literal `\\n` に escape する。
+ * Implementation note: the regex literal uses the `\u2028` / `\u2029` escape
+ * sequence — embedding the raw code points causes esbuild / older JS parsers
+ * to treat them as syntactic line terminators and reject the literal as
+ * unterminated (ES2018 spec).
  *
- * U+2028 / U+2029 は ES2019 までは raw JavaScript source で SyntaxError、
- * JSON literal では valid という edge case のため、untrusted dynamic content
- * から smuggling される可能性を pre-emptively 排除する。現状 hint は static
- * literal のみで影響なしだが、将来 dynamic content inject 時の defense-in-depth。
- *
- * 同名 helper が `stop.ts` にも duplicated されているが、関連する別 PR との
- * merge conflict 回避のため本 PR では session-start.ts のみ更新する
- * (stop.ts は後続 follow-up で DRY 共通化予定)。
- *
- * 単体 unit test を可能にするため export している (session-start.test.ts
- * の `describe("sanitizeAdditionalContextLine — Unicode line separator ...")`
- * が直接 invoke する)。
- *
- * @internal — テスト用に export しているが、`index.ts` のバレル再エクスポート
- * や他 hook からの import 対象ではない。後続 DRY 共通化 PR で別 module
- * (例: `core/src/hooks/_shared/sanitize.ts`) に切り出す予定。
- *
- * Implementation note: regex literal 内では ` ` / ` ` を escape
- * sequence で書く必要がある。raw literal を埋め込むと esbuild / 古い JS
- * parser が syntactic line terminator として扱い `Unterminated regular
- * expression` になる (ES2018 までの仕様)。escape sequence なら source
- * level の line terminator 扱いを回避しつつ、regex match 上は同じ Unicode
- * code point を target にできる。
+ * Exported for unit tests only.
+ * @internal
  */
 export function sanitizeAdditionalContextLine(line: string): string {
   return line.replace(/\r\n|[\n\r\u2028\u2029]/g, "\\n");
