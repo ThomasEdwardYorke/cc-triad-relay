@@ -1,0 +1,376 @@
+/**
+ * core/src/__tests__/config-strict-mode.test.ts
+ *
+ * Strict-mode integration tests for `harness.config.json` shape validation
+ * surfaces (config strict mode follow-up).
+ *
+ * ## Why this file exists
+ *
+ * Several config consumers (e.g., `resolvePythonCandidateDirs` in
+ * `subagent-stop.ts`) follow a fail-open contract: when `harness.config.json`
+ * has a shape-invalid `tooling.pythonCandidateDirs` (non-array, empty array,
+ * non-string entries, shell-metacharacter entries) the function emits a
+ * stderr warning and falls back to defaults instead of throwing.
+ *
+ * Existing tests in `hooks.test.ts` cover the **fallback behavior** (default
+ * dirs are used) but do NOT capture the stderr warning content. Without
+ * coverage of the warning text, a future refactor could silently drop the
+ * fail-open diagnostic and the test suite would still pass — leaving the
+ * user with no visible signal that their config is malformed.
+ *
+ * This file adds strict-mode integration:
+ * 1. Trigger the fail-open path (shape-invalid config, security-rejected entries)
+ * 2. Capture `process.stderr.write` via direct monkey patch
+ * 3. Assert the diagnostic prefix + actionable hint are present
+ *
+ * ## Stderr capture pattern
+ *
+ * We use `process.stderr.write` direct monkey patch (not `vi.spyOn(console,
+ * 'error')`) for two reasons:
+ * - The implementation calls `process.stderr.write()` directly (not
+ *   `console.error()`), so console-level spies miss the writes
+ * - `handoff-integration.test.ts` already uses this pattern, so the project
+ *   has a proven precedent
+ *
+ * Each test save / restore the original `process.stderr.write` in a
+ * try/finally so a thrown assertion never leaks the patched function to
+ * subsequent tests.
+ *
+ * `captureStderr` accepts both sync and async subjects (`() => T | Promise<T>`)
+ * because `detectAvailableChecks` may be refactored to async in the future
+ * without invalidating the regression guard. Test bodies must `await` the
+ * helper accordingly.
+ *
+ * ## Reference
+ * - https://vitest.dev/guide/mocking.html (general mocking patterns)
+ * - `subagent-stop.ts:99` resolvePythonCandidateDirs implementation
+ */
+
+import { describe, it, expect, afterEach } from "vitest";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+import { detectAvailableChecks } from "../hooks/subagent-stop.js";
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const d of tempDirs) {
+    rmSync(d, { recursive: true, force: true });
+  }
+  tempDirs.length = 0;
+});
+
+function makeProject(opts: {
+  hasPyproject?: boolean;
+  hasSrc?: boolean;
+  harnessConfig?: Record<string, unknown>;
+  rawHarnessConfig?: string;
+}): string {
+  const dir = mkdtempSync(join(tmpdir(), "harness-strict-test-"));
+  tempDirs.push(dir);
+  if (opts.hasPyproject) {
+    writeFileSync(join(dir, "pyproject.toml"), "[tool.ruff]\n", "utf-8");
+  }
+  if (opts.hasSrc) {
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src", "__init__.py"), "", "utf-8");
+  }
+  if (opts.rawHarnessConfig !== undefined) {
+    writeFileSync(join(dir, "harness.config.json"), opts.rawHarnessConfig, "utf-8");
+  } else if (opts.harnessConfig) {
+    writeFileSync(
+      join(dir, "harness.config.json"),
+      JSON.stringify(opts.harnessConfig),
+      "utf-8",
+    );
+  }
+  return dir;
+}
+
+/**
+ * Capture stderr writes during the execution of `subject()`.
+ *
+ * Uses direct monkey patch (not `vi.spyOn`) because the production code
+ * calls `process.stderr.write()` directly. We restore the original write
+ * function in a `try / finally` so a thrown assertion never leaks the
+ * patched stderr into subsequent tests.
+ *
+ * `subject` may be sync or async — internal `await subject()` resolves
+ * sync values immediately and waits for async ones, ensuring stderr
+ * writes performed during async resolution are still captured before
+ * `process.stderr.write` is restored.
+ *
+ * The replacement preserves the full `Writable.write(chunk, encoding?,
+ * callback?)` signature: encoding (string or callback shorthand) and
+ * callback arguments are honored so future stderr callers using
+ * encoding/callback variants are not silently dropped. Buffer chunks are
+ * decoded with the supplied encoding (default `utf-8`).
+ */
+async function captureStderr<T>(
+  subject: () => T | Promise<T>,
+): Promise<{ result: T; stderr: string }> {
+  const originalWrite = process.stderr.write;
+  const chunks: string[] = [];
+  process.stderr.write = ((
+    chunk: unknown,
+    encoding?: BufferEncoding | ((err?: Error | null) => void),
+    callback?: (err?: Error | null) => void,
+  ): boolean => {
+    // Node.js `Writable.write(chunk, encoding?, callback?)` allows encoding
+    // to be a callback (shorthand). Disambiguate before decoding.
+    const encodingArg =
+      typeof encoding === "string" ? encoding : undefined;
+    const cb = typeof encoding === "function" ? encoding : callback;
+    if (typeof chunk === "string") {
+      chunks.push(chunk);
+    } else if (Buffer.isBuffer(chunk)) {
+      chunks.push(chunk.toString(encodingArg ?? "utf-8"));
+    } else {
+      chunks.push(String(chunk));
+    }
+    cb?.(null);
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    const result = await subject();
+    return { result, stderr: chunks.join("") };
+  } finally {
+    process.stderr.write = originalWrite;
+  }
+}
+
+describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnings", () => {
+  it("config parse failure (broken JSON) emits 'parse failed' warning + default fallback", async () => {
+    // Malformed JSON triggers loadConfigWithError -> parse error -> fail-open.
+    const dir = makeProject({
+      hasPyproject: true,
+      hasSrc: true,
+      rawHarnessConfig: "{ broken json",
+    });
+
+    const { result, stderr } = await captureStderr(() =>
+      detectAvailableChecks(dir),
+    );
+
+    // Fall-back behavior: default ['src', 'app'] is used -> src/ is the ruff target.
+    const ruff = result.find((c) => c.tool === "ruff");
+    expect(ruff?.command).toContain("src/");
+
+    // Strict-mode assertion: stderr must contain the parse-failed warning + default hint.
+    expect(stderr).toContain("[harness subagent-stop]");
+    expect(stderr).toContain("parse failed");
+    expect(stderr).toContain('["src", "app"]');
+  });
+
+  it("tooling.pythonCandidateDirs as string (non-array) emits shape-invalid warning + default fallback", async () => {
+    const dir = makeProject({
+      hasPyproject: true,
+      hasSrc: true,
+      harnessConfig: {
+        tooling: { pythonCandidateDirs: "not-an-array" },
+      },
+    });
+
+    const { result, stderr } = await captureStderr(() =>
+      detectAvailableChecks(dir),
+    );
+
+    const ruff = result.find((c) => c.tool === "ruff");
+    expect(ruff?.command).toContain("src/");
+
+    expect(stderr).toContain("[harness subagent-stop]");
+    expect(stderr).toContain("tooling.pythonCandidateDirs");
+    expect(stderr).toContain("shape invalid");
+    // Diagnostic must include the actual offending value so the user can
+    // identify what they passed (regression guard for "silent shape-only" warnings).
+    expect(stderr).toContain('"not-an-array"');
+  });
+
+  it("tooling.pythonCandidateDirs containing non-string entries emits shape-invalid warning", async () => {
+    const dir = makeProject({
+      hasPyproject: true,
+      hasSrc: true,
+      harnessConfig: {
+        tooling: { pythonCandidateDirs: ["src", 42, "app"] as unknown },
+      },
+    });
+
+    const { result, stderr } = await captureStderr(() =>
+      detectAvailableChecks(dir),
+    );
+
+    // Shape invalid -> defaults.
+    const ruff = result.find((c) => c.tool === "ruff");
+    expect(ruff?.command).toContain("src/");
+
+    expect(stderr).toContain("shape invalid");
+  });
+
+  it("entries with shell-metacharacters emit a 'rejected' security warning", async () => {
+    // Allowlist regex `/^[a-zA-Z0-9_.-]+$/` (shell-injection guard) rejects
+    // command substitution like `$(touch PWNED)`.
+    const dir = makeProject({
+      hasPyproject: true,
+      hasSrc: true,
+      harnessConfig: {
+        tooling: { pythonCandidateDirs: ["src", "$(touch PWNED)"] },
+      },
+    });
+
+    const { result, stderr } = await captureStderr(() =>
+      detectAvailableChecks(dir),
+    );
+
+    // Safe entry "src" is kept; unsafe is rejected -> ruff target retains "src/".
+    const ruff = result.find((c) => c.tool === "ruff");
+    expect(ruff?.command).toContain("src/");
+    expect(ruff?.command).not.toContain("PWNED");
+
+    // Security-related stderr message
+    expect(stderr).toContain("[harness subagent-stop]");
+    expect(stderr).toContain("rejected");
+    expect(stderr).toContain("$(touch PWNED)");
+    // Allowlist regex must be surfaced so the user can self-correct.
+    expect(stderr).toContain("/^[a-zA-Z0-9_.-]+$/");
+  });
+
+  it("path-separator entries (e.g. '../etc') emit a 'rejected' security warning", async () => {
+    const dir = makeProject({
+      hasPyproject: true,
+      hasSrc: true,
+      harnessConfig: {
+        tooling: { pythonCandidateDirs: ["src", "../etc"] },
+      },
+    });
+
+    const { result, stderr } = await captureStderr(() =>
+      detectAvailableChecks(dir),
+    );
+
+    const ruff = result.find((c) => c.tool === "ruff");
+    expect(ruff?.command).toContain("src/");
+    expect(ruff?.command).not.toContain("etc");
+
+    expect(stderr).toContain("rejected");
+    expect(stderr).toContain("../etc");
+  });
+
+  it("all entries unsafe -> defaults fallback + rejected warning", async () => {
+    // No safe entries remain. Default `['src', 'app']` is restored.
+    const dir = makeProject({
+      hasPyproject: true,
+      hasSrc: true,
+      harnessConfig: {
+        tooling: { pythonCandidateDirs: ["$(rm)", "/etc/passwd"] },
+      },
+    });
+
+    const { result, stderr } = await captureStderr(() =>
+      detectAvailableChecks(dir),
+    );
+
+    // src/ is picked up via default (hasSrc=true).
+    const ruff = result.find((c) => c.tool === "ruff");
+    expect(ruff?.command).toContain("src/");
+
+    expect(stderr).toContain("rejected");
+    // All entries rejected -> safe list empty, both unsafe entries listed.
+    expect(stderr).toContain("$(rm)");
+    expect(stderr).toContain("/etc/passwd");
+  });
+
+  it("valid config (string entries) emits no stderr (silent success path)", async () => {
+    // Sanity check: valid config produces zero stderr output (regression
+    // guard for "always emit warnings" bugs).
+    const dir = makeProject({
+      hasPyproject: true,
+      hasSrc: true,
+      harnessConfig: {
+        tooling: { pythonCandidateDirs: ["src"] },
+      },
+    });
+
+    const { stderr } = await captureStderr(() => detectAvailableChecks(dir));
+
+    expect(stderr).toBe("");
+  });
+
+  it("config absent emits no stderr (silent default path)", async () => {
+    // Missing harness.config.json is the most common case; it must not
+    // produce any stderr output.
+    const dir = makeProject({ hasPyproject: true, hasSrc: true });
+
+    const { stderr } = await captureStderr(() => detectAvailableChecks(dir));
+
+    expect(stderr).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// captureStderr — defensive regression guards
+//
+// Lock down the full Node.js `Writable.write(chunk, encoding?, callback?)`
+// signature support. The helper currently exercises only `write(string)` via
+// production code paths, so a future refactor that drops encoding / callback
+// handling would not be caught by the assertions above. These guards pin the
+// behaviour so any reduction in surface coverage fails fast.
+// ---------------------------------------------------------------------------
+
+describe("captureStderr — Writable.write signature guards", () => {
+  it("invokes the callback when supplied via the (chunk, callback) shorthand", async () => {
+    let callbackArg: Error | null | undefined = undefined;
+    const { stderr } = await captureStderr(() => {
+      const writeFn = process.stderr.write as unknown as (
+        chunk: string,
+        cb: (err?: Error | null) => void,
+      ) => boolean;
+      writeFn("[shorthand]", (err) => {
+        callbackArg = err ?? null;
+      });
+      return "ok";
+    });
+
+    expect(callbackArg).toBeNull();
+    expect(stderr).toContain("[shorthand]");
+  });
+
+  it("decodes Buffer chunks using the supplied encoding", async () => {
+    const { stderr } = await captureStderr(() => {
+      const buf = Buffer.from("[buffer-utf8]", "utf-8");
+      // Cast to silence overload narrowing; production code calls plain
+      // `process.stderr.write(buf, "utf-8")` shape variants too.
+      (process.stderr.write as unknown as (
+        chunk: Buffer,
+        encoding: BufferEncoding,
+      ) => boolean)(buf, "utf-8");
+      return "ok";
+    });
+
+    expect(stderr).toContain("[buffer-utf8]");
+  });
+
+  it("invokes the callback when supplied via the full (chunk, encoding, callback) signature", async () => {
+    let callbackArg: Error | null | undefined = undefined;
+    const { stderr } = await captureStderr(() => {
+      process.stderr.write("[full-args]", "utf-8", (err) => {
+        callbackArg = err ?? null;
+      });
+      return "ok";
+    });
+
+    expect(callbackArg).toBeNull();
+    expect(stderr).toContain("[full-args]");
+  });
+
+  it("restores process.stderr.write to the original after subject() throws", async () => {
+    const original = process.stderr.write;
+    await expect(
+      captureStderr(() => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(process.stderr.write).toBe(original);
+  });
+});
