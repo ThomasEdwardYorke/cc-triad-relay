@@ -20,7 +20,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { handleSessionStart } from "../hooks/session-start.js";
+import {
+  handleSessionStart,
+  sanitizeAdditionalContextLine,
+} from "../hooks/session-start.js";
 
 describe("handleSessionStart", () => {
   describe("source field handling (Anthropic Claude Code SessionStart spec)", () => {
@@ -118,6 +121,46 @@ describe("handleSessionStart", () => {
       });
       expect(result.additionalContext).toBeDefined();
       expect(result.additionalContext).not.toMatch(/[\r\n]/);
+    });
+  });
+
+  /**
+   * U+2028 LINE SEPARATOR / U+2029 PARAGRAPH SEPARATOR は JavaScript spec edge
+   * case (ES2019 までは raw source 内で SyntaxError、JSON literal では valid)。
+   * `additionalContext` は Anthropic 公式 spec で string、Claude as context と
+   * して次 turn に届くため、未知の line terminator が section boundary を
+   * smuggle する可能性を pre-emptively 排除する forward-compat hardening。
+   *
+   * Anthropic 公式 hooks spec には U+2028 / U+2029 escape の規定なし
+   * (公式 hooks spec 調査で確認)。本 escape は plugin-specific safety policy。
+   */
+  describe("sanitizeAdditionalContextLine — Unicode line separator (forward-compat)", () => {
+    it("U+2028 LINE SEPARATOR は literal `\\n` に escape される", () => {
+      const input = "before after";
+      expect(sanitizeAdditionalContextLine(input)).toBe("before\\nafter");
+    });
+
+    it("U+2029 PARAGRAPH SEPARATOR は literal `\\n` に escape される", () => {
+      const input = "before after";
+      expect(sanitizeAdditionalContextLine(input)).toBe("before\\nafter");
+    });
+
+    it("LF / CR / CRLF / U+2028 / U+2029 が混在しても全て `\\n` に escape される", () => {
+      const input = "a\nb\rc d e\r\nf";
+      expect(sanitizeAdditionalContextLine(input)).toBe(
+        "a\\nb\\nc\\nd\\ne\\nf",
+      );
+    });
+
+    it("通常テキスト (line terminator なし) は変更なし", () => {
+      const input = "plain text without line breaks";
+      expect(sanitizeAdditionalContextLine(input)).toBe(input);
+    });
+
+    it("既存 \\r / \\n / \\r\\n の escape 挙動は維持 (regression guard)", () => {
+      expect(sanitizeAdditionalContextLine("a\nb")).toBe("a\\nb");
+      expect(sanitizeAdditionalContextLine("a\rb")).toBe("a\\nb");
+      expect(sanitizeAdditionalContextLine("a\r\nb")).toBe("a\\nb");
     });
   });
 
