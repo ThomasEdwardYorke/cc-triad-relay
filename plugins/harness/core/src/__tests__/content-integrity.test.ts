@@ -758,6 +758,80 @@ describe("disable-model-invocation for side-effecting workflows (Anthropic skill
   );
 });
 
+/**
+ * Anthropic Claude Code slash command frontmatter の field 順序は公式 spec で
+ * 定義されていない (community convention、公式 docs reference:
+ * https://code.claude.com/docs/en/slash-commands#frontmatter-reference)。
+ * 本 plugin の 14 commands は一貫した canonical order を採用しており、
+ * drift を CI で阻止する regression guard。
+ *
+ * canonical order:
+ *   name → description → description-ja → allowed-tools → argument-hint →
+ *   disable-model-invocation → context
+ *
+ * 各 command は subset (一部 field 不在) で OK。出現する field の **相対順序**
+ * のみを assert する (subsequence 判定)。新規 field を導入する際は
+ * CANONICAL_FIELD_ORDER list を更新する。
+ */
+describe("slash command frontmatter — canonical field order (community convention lock-in)", () => {
+  const CANONICAL_FIELD_ORDER = [
+    "name",
+    "description",
+    "description-ja",
+    "allowed-tools",
+    "argument-hint",
+    "disable-model-invocation",
+    "context",
+  ] as const;
+
+  /**
+   * Frontmatter 文字列から top-level YAML key の出現順序を抽出する。
+   *
+   * - 行頭 (空白なし) に `<key>:` の pattern がある行のみ key として認識
+   * - 配列 / インデント続行行 (`  - item` / `  key: val`) は無視
+   * - CANONICAL_FIELD_ORDER に含まれる key のみを抽出 (将来追加 field は
+   *   本テストの対象外、describe 内 list 更新で対応)
+   */
+  function extractTopLevelKeys(frontmatter: string): string[] {
+    const keys: string[] = [];
+    for (const line of frontmatter.split(/\r?\n/)) {
+      const match = /^([a-z][a-z0-9-]*):/.exec(line);
+      if (!match) continue;
+      const key = match[1]!;
+      if ((CANONICAL_FIELD_ORDER as readonly string[]).includes(key)) {
+        keys.push(key);
+      }
+    }
+    return keys;
+  }
+
+  it("CANONICAL_FIELD_ORDER list は 7 要素で重複なし (sanity guard)", () => {
+    expect(CANONICAL_FIELD_ORDER.length).toBe(7);
+    expect(new Set(CANONICAL_FIELD_ORDER).size).toBe(7);
+  });
+
+  it.each(COMMAND_NAMES)(
+    "%s command の frontmatter field は canonical order の subsequence",
+    (name) => {
+      const fm = extractFrontmatter(readCommand(name));
+      const actual = extractTopLevelKeys(fm);
+
+      // canonical の中で actual の各 key の index を取り、strictly increasing で
+      // あること (subsequence 判定 = 抜けは OK、順序逆転は NG)。
+      const indices = actual.map((k) =>
+        (CANONICAL_FIELD_ORDER as readonly string[]).indexOf(k),
+      );
+      for (let i = 1; i < indices.length; i++) {
+        expect(
+          indices[i],
+          `${name}.md: field "${actual[i]}" appears AFTER "${actual[i - 1]}" in canonical order. ` +
+            `Got: ${actual.join(" → ")}`,
+        ).toBeGreaterThan(indices[i - 1]!);
+      }
+    },
+  );
+});
+
 describe("coderabbit-review command の Step 2.6 chat bucket helper", () => {
   const content = readCommand("coderabbit-review");
 
