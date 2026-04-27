@@ -3,12 +3,24 @@
  * Integration tests for the `route()` dispatcher in `index.ts`.
  *
  * The dispatcher connects every hook handler to the public hook-result
- * protocol. Handlers produce a typed result with `additionalContext`, which
- * the dispatcher must translate into the public `reason` field so that
- * Claude Code receives it through the hook output contract.
+ * protocol. Handlers produce a typed result with `additionalContext`. For
+ * Anthropic 公式 modern hookSpecificOutput hooks (UserPromptSubmit /
+ * PostToolUseFailure / ConfigChange / SubagentStart / SessionStart / Stop /
+ * SubagentStop / PreCompact、Track A spec compliance により全 8 hook が
+ * 同 branch に統合)、dispatcher は `HookResult.additionalContext` を wire
+ * output `hookSpecificOutput.additionalContext` に lift し、
+ * `decision: "approve"` sentinel を wire output から omit する (公式 spec で
+ * `decision` field 自体非サポートまたは `"block"` のみ許容のため)。
+ *
+ * Harness-internal lifecycle hooks (task-created / task-completed /
+ * worktree-remove 等、Anthropic 公式 hook 名でない harness 独自 event)
+ * は dispatcher の legacy `JSON.stringify(result)` 経路で
+ * `HookResult.reason` 経由のシリアライズを保つ (公式 spec の対象外、
+ * internal sentinel として `decision: "approve"` 出力を許容)。
  *
  * These tests exercise the end-to-end flow per hook type, guarding against
- * regression of the `additionalContext → reason` conversion.
+ * regression of the additionalContext lift (modern branch) / reason mapping
+ * (legacy branch) per hook category.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -1286,8 +1298,9 @@ describe("main() safe-fallback diagnostic surfacing", () => {
     "config-change",
     "subagent-start",
     // Track A spec compliance: Anthropic spec 準拠で modern hookSpecificOutput
-    // branch に合流した hook。silent {} drop / safe-fallback 経路の保証は
-    // legacy branch の Stop / SubagentStop / PreCompact でも必要。
+    // branch に合流した hook (Stop / SubagentStop / PreCompact)。これら 3 hook
+    // でも silent {} drop / safe-fallback 経路の保証が必要なため、modern branch
+    // の MODERN_HOOK_TYPES に追加して同 contract を共有する。
     "stop",
     "subagent-stop",
     "pre-compact",
