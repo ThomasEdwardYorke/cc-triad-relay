@@ -135,6 +135,49 @@ describe("route() dispatcher — hook integration", () => {
       expect(result.reason).toBeDefined();
       expect(result.reason).toContain("CI チェック対象なし");
     });
+
+    /**
+     * dispatcher integration tests for `stop_hook_active`. Without these,
+     * the SubagentStopInput field could be silently dropped at the
+     * dispatcher boundary (e.g., a missing `extractBoolean` call) and unit
+     * tests of `handleSubagentStop` alone would still pass while the
+     * runtime guard never fires.
+     */
+    it("stop_hook_active=true via dispatcher → guard fires (no CI、no additionalContext)", async () => {
+      const result = await route("subagent-stop", {
+        hook_event_name: "SubagentStop",
+        cwd: tmpRoot,
+        agent_type: "worker",
+        stop_hook_active: true,
+      });
+      expect(result.decision).toBe("approve");
+      // guard の早期 return では additionalContext 未設定なので reason も undefined
+      expect(result.reason).toBeUndefined();
+    });
+
+    it("stop_hook_active=false via dispatcher → 通常 CI 経路 (legacy 互換)", async () => {
+      const result = await route("subagent-stop", {
+        hook_event_name: "SubagentStop",
+        cwd: tmpRoot,
+        agent_type: "worker",
+        stop_hook_active: false,
+      });
+      expect(result.decision).toBe("approve");
+      expect(result.reason).toContain("CI チェック対象なし");
+    });
+
+    it("非 boolean な stop_hook_active は extractBoolean で undefined → guard 非発火 (defensive)", async () => {
+      const result = await route("subagent-stop", {
+        hook_event_name: "SubagentStop",
+        cwd: tmpRoot,
+        agent_type: "worker",
+        // string は extractBoolean で reject される (`typeof !== "boolean"`)
+        stop_hook_active: "true" as unknown as boolean,
+      });
+      expect(result.decision).toBe("approve");
+      // guard 非発火 → 通常経路
+      expect(result.reason).toContain("CI チェック対象なし");
+    });
   });
 
   describe("subagent-start", () => {

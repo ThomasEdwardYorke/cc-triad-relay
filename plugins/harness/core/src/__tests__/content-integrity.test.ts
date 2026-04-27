@@ -680,6 +680,45 @@ describe("slash command frontmatter — Claude Code 公式仕様", () => {
   });
 });
 
+/**
+ * Anthropic Claude Code Skills spec (https://code.claude.com/docs/en/skills)
+ * の `disable-model-invocation` 関連の不変条件:
+ *
+ * - true 設定時、Claude は **自身の判断で** このスキルを auto-invoke できない
+ * - ユーザーが `/<skill-name>` を直接タイプした場合のみ実行される
+ * - 不可逆な副作用 (merge / push / publish / tag) を伴う slash command で
+ *   accidental Claude-initiated invocation を防ぐ用途
+ *
+ * 本テストは、確定的に side-effecting な workflow (`branch-merge` / `harness-release`)
+ * が `disable-model-invocation: true` を frontmatter に持つことを CI で固定する。
+ * 将来 frontmatter から外す変更が来たら CI で即検知される。
+ */
+describe("disable-model-invocation for side-effecting workflows (Anthropic skills spec)", () => {
+  // 不可逆な副作用 (feature/dev/main への merge) を伴うため。
+  it("branch-merge command は disable-model-invocation: true を持つ (irreversible merge)", () => {
+    const fm = extractFrontmatter(readCommand("branch-merge"));
+    expect(fm).toMatch(/^disable-model-invocation:\s*true\b/m);
+  });
+
+  // 不可逆な副作用 (タグ作成 / GitHub Release / バージョンバンプ) を伴うため。
+  it("harness-release command は disable-model-invocation: true を持つ (irreversible release)", () => {
+    const fm = extractFrontmatter(readCommand("harness-release"));
+    expect(fm).toMatch(/^disable-model-invocation:\s*true\b/m);
+  });
+
+  // boolean syntax: 公式仕様で値は `true` / `false` (YAML bool)、`"true"` / `1` 等は不可。
+  it.each(COMMAND_NAMES)(
+    "%s command の disable-model-invocation (設定がある場合) は true / false の boolean",
+    (name) => {
+      const fm = extractFrontmatter(readCommand(name));
+      const m = /^disable-model-invocation:\s*(\S+)/m.exec(fm);
+      if (m) {
+        expect(["true", "false"]).toContain(m[1]);
+      }
+    },
+  );
+});
+
 describe("coderabbit-review command の Step 2.6 chat bucket helper", () => {
   const content = readCommand("coderabbit-review");
 

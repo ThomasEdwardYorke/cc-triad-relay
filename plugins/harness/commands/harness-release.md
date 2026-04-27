@@ -4,6 +4,7 @@ description: "Unified release skill for Harness v3. Handles branch creation, bra
 description-ja: "Harness v3 統合リリーススキル。新規featureブランチ作成・ブランチマージ・CHANGELOG・バージョンバンプ・タグ・GitHub Release を統合。以下で起動: リリース、バージョンバンプ、タグ作成、ブランチ作成、マージ、/harness-release、/branch-merge、/new-feature-branch。実装・コードレビュー・プランニング・セットアップには使わない。"
 allowed-tools: ["Read", "Write", "Edit", "Bash"]
 argument-hint: "[branch|merge|patch|minor|major|--dry-run]"
+disable-model-invocation: true
 context: fork
 ---
 

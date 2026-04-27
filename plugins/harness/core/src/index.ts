@@ -85,6 +85,11 @@ function extractString(obj: Record<string, unknown>, key: string): string | unde
   return typeof val === "string" ? val : undefined;
 }
 
+function extractBoolean(obj: Record<string, unknown>, key: string): boolean | undefined {
+  const val = obj[key];
+  return typeof val === "boolean" ? val : undefined;
+}
+
 export async function route(
   hookType: HookType,
   input: HookInput | Record<string, unknown>,
@@ -133,6 +138,12 @@ export async function route(
         agent_id: extractString(raw, "agent_id"),
         agent_transcript_path: extractString(raw, "agent_transcript_path"),
         last_assistant_message: extractString(raw, "last_assistant_message"),
+        // Anthropic SubagentStop spec: propagate stop_hook_active to enable
+        // the infinite-loop guard inside handleSubagentStop. Without this
+        // line the guard never fires at runtime regardless of the input
+        // payload Claude Code delivers (raw stdin had it but dispatcher
+        // dropped it).
+        stop_hook_active: extractBoolean(raw, "stop_hook_active"),
       });
       const stopHookResult: HookResult = { decision: stopResult.decision };
       if (stopResult.additionalContext !== undefined) {
