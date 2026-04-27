@@ -524,6 +524,83 @@ describe("route() dispatcher — hook integration", () => {
       expect(result.reason).toBeDefined();
       expect(result.reason).not.toContain("[harness-work essence]");
     });
+
+    /**
+     * Anthropic Claude Code Stop hook spec
+     * (https://code.claude.com/docs/en/hooks) で `stop_hook_active` boolean
+     * が true のときは hook 再 fire を抑止する契約。SubagentStop と同一
+     * semantics (公式 hooks spec で Stop hook payload も `stop_hook_active`
+     * と `last_assistant_message` を receive と確認済)。subagent-stop
+     * dispatcher で先行適用された `extractBoolean` propagate を Stop hook にも
+     * 対称適用しないと handler 側 guard が runtime で発火しないため、
+     * dispatcher boundary integration tests で固定する。
+     */
+    it("stop_hook_active=true via dispatcher → guard fires (config あっても reminder なし)", async () => {
+      const config = {
+        work: {
+          qualityGates: {
+            enforceTddImplement: true,
+            enforceHarnessWorkEssence: true,
+          },
+        },
+      };
+      writeFileSync(
+        join(tmpRoot, "harness.config.json"),
+        JSON.stringify(config),
+      );
+
+      const result = await route("stop", {
+        hook_event_name: "Stop",
+        cwd: tmpRoot,
+        stop_hook_active: true,
+      });
+      expect(result.decision).toBe("approve");
+      // guard 早期 return → reason / additionalContext なし、config 評価より前
+      expect(result.reason).toBeUndefined();
+    });
+
+    it("stop_hook_active=false via dispatcher → 通常経路 (gates 設定で reminder 発火)", async () => {
+      const config = {
+        work: {
+          qualityGates: {
+            enforceTddImplement: true,
+          },
+        },
+      };
+      writeFileSync(
+        join(tmpRoot, "harness.config.json"),
+        JSON.stringify(config),
+      );
+
+      const result = await route("stop", {
+        hook_event_name: "Stop",
+        cwd: tmpRoot,
+        stop_hook_active: false,
+      });
+      expect(result.decision).toBe("approve");
+      // guard 非発火 → 通常経路で reminder
+      expect(result.reason).toContain("TDD 必須");
+    });
+
+    it("非 boolean な stop_hook_active は extractBoolean で undefined → guard 非発火 (defensive)", async () => {
+      const config = {
+        work: { qualityGates: { enforceTddImplement: true } },
+      };
+      writeFileSync(
+        join(tmpRoot, "harness.config.json"),
+        JSON.stringify(config),
+      );
+
+      const result = await route("stop", {
+        hook_event_name: "Stop",
+        cwd: tmpRoot,
+        // string は extractBoolean (typeof !== "boolean") で undefined 化
+        stop_hook_active: "true" as unknown as boolean,
+      });
+      expect(result.decision).toBe("approve");
+      // guard 非発火 → 通常経路で reminder
+      expect(result.reason).toContain("TDD 必須");
+    });
   });
 
   describe("session lifecycle", () => {

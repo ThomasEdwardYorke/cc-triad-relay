@@ -192,6 +192,12 @@ export async function route(
         hook_event_name: String(raw["hook_event_name"] ?? "Stop"),
         session_id: extractString(raw, "session_id"),
         cwd: extractString(raw, "cwd"),
+        // Anthropic Stop hook spec: propagate stop_hook_active to enable the
+        // infinite-loop guard inside handleStop. Without this line the guard
+        // never fires at runtime regardless of the input payload Claude Code
+        // delivers (raw stdin had it but dispatcher dropped it). subagent-stop
+        // で先行対応済 — 本 fix は Stop hook への対称適用。
+        stop_hook_active: extractBoolean(raw, "stop_hook_active"),
       });
       const stopHR: HookResult = { decision: stopRes.decision };
       if (stopRes.additionalContext !== undefined) {

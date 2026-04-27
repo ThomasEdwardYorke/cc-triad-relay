@@ -16,6 +16,7 @@ vi.mock("node:child_process", () => ({
 
 import { handlePreCompact } from "../hooks/pre-compact.js";
 import { handleSubagentStop, detectAvailableChecks } from "../hooks/subagent-stop.js";
+import { handleStop } from "../hooks/stop.js";
 import {
   handleTaskCreated,
   handleTaskCompleted,
@@ -435,6 +436,103 @@ describe("handleSubagentStop stop_hook_active guard (infinite loop prevention)",
     expect(result.decision).toBe("approve");
     expect(result.ciTriggered).toBe(false);
     expect(mockedExecSync).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Anthropic Claude Code Stop hook spec (https://code.claude.com/docs/en/hooks)
+ * の `stop_hook_active` boolean は true のとき hook 再 fire を抑止する契約。
+ * SubagentStop と同一 semantics (公式 hooks spec で Stop hook payload も
+ * `stop_hook_active` と `last_assistant_message` を receive と確認済)。
+ *
+ * `stop.ts` の StopInput interface には field declared 済だが
+ * (1) dispatcher で `extractBoolean` propagate されていない (SubagentStop 側で
+ * 先行適用された dispatcher boundary fix の Stop 版未対応)、(2) handler が
+ * runtime で参照していない、という二段の漏れがあった。本 describe は
+ * handler 側 guard が config 評価より前に early-return することを固定する
+ * (subagent-stop の同名 guard describe と対称)。
+ */
+describe("handleStop stop_hook_active guard (infinite loop prevention)", () => {
+  const baseInput = {
+    hook_event_name: "Stop",
+    session_id: "sess-stop-loop-guard",
+  };
+
+  it("stop_hook_active=true は config が gates あっても bare approve に落ちる", async () => {
+    const dir = makeTempProject({
+      harnessConfig: {
+        work: {
+          qualityGates: {
+            enforceTddImplement: true,
+            enforcePseudoCoderabbit: true,
+            enforceRealCoderabbit: true,
+            enforceCodexSecondOpinion: true,
+            enforceHarnessWorkEssence: true,
+          },
+        },
+      },
+    });
+    const result = await handleStop({
+      ...baseInput,
+      cwd: dir,
+      stop_hook_active: true,
+    });
+    expect(result.decision).toBe("approve");
+    expect(result.additionalContext).toBeUndefined();
+  });
+
+  it("stop_hook_active=false は通常経路 (gates 設定で reminder 発火)", async () => {
+    const dir = makeTempProject({
+      harnessConfig: {
+        work: {
+          qualityGates: {
+            enforceTddImplement: true,
+            enforceHarnessWorkEssence: false,
+          },
+        },
+      },
+    });
+    const result = await handleStop({
+      ...baseInput,
+      cwd: dir,
+      stop_hook_active: false,
+    });
+    expect(result.decision).toBe("approve");
+    expect(result.additionalContext).toContain("TDD 必須");
+  });
+
+  it("stop_hook_active 不在 (legacy) は通常経路 (backwards compatible)", async () => {
+    const dir = makeTempProject({
+      harnessConfig: {
+        work: {
+          qualityGates: {
+            enforceTddImplement: true,
+          },
+        },
+      },
+    });
+    const result = await handleStop({
+      ...baseInput,
+      cwd: dir,
+      // stop_hook_active 意図的に不在
+    });
+    expect(result.decision).toBe("approve");
+    expect(result.additionalContext).toContain("TDD 必須");
+  });
+
+  it("stop_hook_active=true は config 不在でも bare approve (guard が config 経路より優先)", async () => {
+    // harness.config.json 不在の場合、通常 handler は existsSync false で
+    // bare approve に落ちるが、guard 経路でも同じ shape を返すことを確認。
+    // 観測的には区別不能だが、guard が「誤って通常経路まで遮断しない」ことを
+    // 念のため固定する (regression guard)。
+    const dir = makeTempProject(); // harnessConfig 無し
+    const result = await handleStop({
+      ...baseInput,
+      cwd: dir,
+      stop_hook_active: true,
+    });
+    expect(result.decision).toBe("approve");
+    expect(result.additionalContext).toBeUndefined();
   });
 });
 

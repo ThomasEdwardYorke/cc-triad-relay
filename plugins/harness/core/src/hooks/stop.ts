@@ -32,6 +32,16 @@ export async function handleStop(
 ): Promise<StopResult> {
   const projectRoot = input.cwd ?? process.cwd();
 
+  // Anthropic Claude Code Stop hook spec (https://code.claude.com/docs/en/hooks):
+  // `stop_hook_active === true` 時は再帰起動防止のため全 reminder を抑止し
+  // bare approve に落ちる。subagent-stop の guard と同 pattern (公式 hooks
+  // spec で SubagentStop と同一 semantics と確認済)。existsSync(configPath)
+  // チェックよりも前に置くことで、config 評価とは独立して uniform に
+  // short-circuit する (config 在不在で動作差なし)。
+  if (input.stop_hook_active === true) {
+    return { decision: "approve" };
+  }
+
   // Keep the historical behavior of returning a bare approve when the
   // project has no `harness.config.json` at all — we don't want to
   // start emitting reminders for projects that never opted in.
