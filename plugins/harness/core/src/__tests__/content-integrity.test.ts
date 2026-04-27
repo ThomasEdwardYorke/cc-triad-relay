@@ -4903,17 +4903,31 @@ describe("Track A — Stop / SubagentStop / PreCompact hookSpecificOutput lift d
     expect(src).toMatch(/hookType\s*===\s*"pre-compact"/);
   });
 
-  it("route() の 3 hook で additionalContext field を直接使う (legacy reason 経由を排除)", () => {
+  it("route() の 3 hook で additionalContext を spec-supported systemMessage に routing する (Anthropic spec 準拠)", () => {
     const src = readFileSync(indexPath, "utf-8");
-    // route 関数内で `<hookResult>.additionalContext = <handlerResult>.additionalContext`
-    // pattern を 3 hook 全てで持つ。legacy `<hookResult>.reason = ...` は廃止済。
+    // 2026-04-28 spec audit: Stop / SubagentStop / PreCompact は公式 spec で
+    // `additionalContext` を一切サポートしない (top-level も hookSpecificOutput
+    // も)。universal `systemMessage` field で context を運ぶのが正規 channel。
+    // handler は backward-compat semantics 保持のため additionalContext を返し、
+    // dispatcher は systemMessage に routing して wire output を spec 準拠化。
     expect(src).toMatch(
+      /compactHookResult\.systemMessage\s*=\s*compactResult\.additionalContext/,
+    );
+    expect(src).toMatch(
+      /stopHookResult\.systemMessage\s*=\s*stopResult\.additionalContext/,
+    );
+    expect(src).toMatch(
+      /stopHR\.systemMessage\s*=\s*stopRes\.additionalContext/,
+    );
+    // Negative guard: legacy `additionalContext = additionalContext` lift は
+    // 廃止。3 hook では directly assign しないこと (regression block)。
+    expect(src).not.toMatch(
       /compactHookResult\.additionalContext\s*=\s*compactResult\.additionalContext/,
     );
-    expect(src).toMatch(
+    expect(src).not.toMatch(
       /stopHookResult\.additionalContext\s*=\s*stopResult\.additionalContext/,
     );
-    expect(src).toMatch(
+    expect(src).not.toMatch(
       /stopHR\.additionalContext\s*=\s*stopRes\.additionalContext/,
     );
   });

@@ -113,13 +113,20 @@ export async function route(
     }
     case "pre-compact": {
       // PreCompact: context 圧縮直前に発火する observability hook。
-      // 公式仕様 (https://code.claude.com/docs/en/hooks) で PreCompact は
-      // `decision: "block"` only / `additionalContext` top-level 非サポート。
-      // handler の internal sentinel `decision: "approve"` + `additionalContext`
-      // を main() の hookSpecificOutput branch で wire output に lift して
-      // spec 準拠 (`{hookSpecificOutput: {hookEventName: "PreCompact",
-      // additionalContext: "..."}}`) に整形する。`reason` field 経由の
-      // legacy mapping は廃止済。
+      //
+      // 公式仕様 (https://code.claude.com/docs/en/hooks) audit (Codex 一次資料
+      // 確認、2026-04-28): PreCompact schema は `decision: "block"` のみ
+      // documented。`additionalContext` は **top-level も
+      // `hookSpecificOutput.*` も spec で許容されない**。spec-supported な
+      // context delivery channel は universal `systemMessage` field のみ
+      // (公式 hooks JSON output reference)。
+      //
+      // handler は backward-compat semantics 保持のため `additionalContext`
+      // で context を返却し、dispatcher は **`systemMessage` に routing** して
+      // wire output を spec 準拠化する (modern branch が `systemMessage` を
+      // top-level universal field として load する)。`decision: "approve"` は
+      // internal sentinel として残るが、modern branch の
+      // `decision === "block"` ガードで wire output から自動 omit される。
       const { handlePreCompact } = await import("./hooks/pre-compact.js");
       const raw = input as Record<string, unknown>;
       const compactResult = await handlePreCompact({
@@ -131,17 +138,21 @@ export async function route(
       });
       const compactHookResult: HookResult = { decision: compactResult.decision };
       if (compactResult.additionalContext !== undefined) {
-        compactHookResult.additionalContext = compactResult.additionalContext;
+        compactHookResult.systemMessage = compactResult.additionalContext;
       }
       return compactHookResult;
     }
     case "subagent-stop": {
       // SubagentStop: subagent 完了直後に発火する observability hook。
-      // 公式仕様 (https://code.claude.com/docs/en/hooks) で SubagentStop は
-      // `decision: "block"` only / `additionalContext` top-level 非サポート。
-      // PreCompact / Stop と同 pattern で main() の hookSpecificOutput branch
-      // 経由で wire output を spec 準拠に整形する。`reason` field 経由の
-      // legacy mapping は廃止済。
+      //
+      // 公式仕様 (https://code.claude.com/docs/en/hooks) audit (Codex 一次資料
+      // 確認、2026-04-28): SubagentStop は Stop と同 schema で
+      // `decision: "block"` のみ documented。`additionalContext` は spec で
+      // **top-level も `hookSpecificOutput.*` も非サポート**。spec-supported
+      // な context delivery channel は universal `systemMessage` field のみ。
+      //
+      // PreCompact / Stop と同 pattern で handler は `additionalContext` を
+      // 返し、dispatcher は `systemMessage` に routing する。
       const { handleSubagentStop } = await import("./hooks/subagent-stop.js");
       const raw = input as Record<string, unknown>;
       const stopResult = await handleSubagentStop({
@@ -161,7 +172,7 @@ export async function route(
       });
       const stopHookResult: HookResult = { decision: stopResult.decision };
       if (stopResult.additionalContext !== undefined) {
-        stopHookResult.additionalContext = stopResult.additionalContext;
+        stopHookResult.systemMessage = stopResult.additionalContext;
       }
       return stopHookResult;
     }
@@ -217,9 +228,14 @@ export async function route(
         // で先行対応済 — 本 fix は Stop hook への対称適用。
         stop_hook_active: extractBoolean(raw, "stop_hook_active"),
       });
+      // Stop: spec audit (Codex 一次資料、2026-04-28) — `decision: "block"`
+      // only / `additionalContext` は top-level も `hookSpecificOutput.*` も
+      // spec で許容されない。spec-supported channel は universal
+      // `systemMessage` のみ。handler の `additionalContext` を
+      // `systemMessage` に routing して wire output を spec 準拠化する。
       const stopHR: HookResult = { decision: stopRes.decision };
       if (stopRes.additionalContext !== undefined) {
-        stopHR.additionalContext = stopRes.additionalContext;
+        stopHR.systemMessage = stopRes.additionalContext;
       }
       return stopHR;
     }
@@ -642,32 +658,46 @@ async function main(): Promise<void> {
     hookType === "config-change" ||
     hookType === "subagent-start" ||
     hookType === "session-start" ||
-    // Anthropic 公式仕様 (https://code.claude.com/docs/en/hooks) の追加準拠
-    // (Track A spec compliance): Stop / SubagentStop / PreCompact は `decision: "block"`
-    // のみ許容、`additionalContext` の top-level 出力は documented されない。
-    // 旧実装は legacy `JSON.stringify(result)` 経路で `{decision: "approve",
-    // additionalContext: "..."}` を吐いており、(1) `"approve"` が許容値外、
-    // (2) top-level `additionalContext` が未文書化、の二重 spec 違反だった。
-    // 本 branch に合流させ、`decision: "approve"` を omit + `additionalContext`
-    // を `hookSpecificOutput.additionalContext` に lift して spec 準拠に整形する。
-    // 公式 spec 上 Stop / SubagentStop / PreCompact での
-    // `hookSpecificOutput.additionalContext` の挙動は未文書化だが、
-    // SessionStart / PostToolUseFailure / UserPromptSubmit と同形式の
-    // forward-compat hardening として採用 (locale-neutral / defensive
-    // policy 継承)。
+    // Anthropic 公式仕様 (https://code.claude.com/docs/en/hooks) audit
+    // (Codex 一次資料確認、2026-04-28):
+    //   Stop / SubagentStop / PreCompact schema は `decision: "block"` のみ
+    //   許容。`additionalContext` は **top-level も `hookSpecificOutput.*` も
+    //   spec で許容されない** (各 event ページの output schema に登場せず、
+    //   universal output reference にも該当 field なし)。
+    //
+    // 旧実装の lift to `hookSpecificOutput.additionalContext` は誤った
+    // 「forward-compat hardening」であり、spec 違反のまま wire output に
+    // 不正な field を流していた。spec-supported な context delivery channel
+    // は universal `systemMessage` field のみ。route() で
+    // handler の `additionalContext` を `systemMessage` に routing 済み
+    // (実際には `result.additionalContext === undefined` で本 branch に到達
+    // するため、`hookSpecificOutput` は payload 不在で自動 omit される)。
+    //
+    // 本 branch を経由する理由は依然として有効:
+    //   (a) `decision: "approve"` を wire output から strip (spec 準拠)
+    //   (b) `systemMessage` を top-level universal field として lift
+    //   (c) universal control fields (continue / stopReason / suppressOutput) lift
     hookType === "stop" ||
     hookType === "subagent-stop" ||
     hookType === "pre-compact"
   ) {
     // UserPromptSubmit / PostToolUseFailure / ConfigChange / SubagentStart /
-    // SessionStart / Stop / SubagentStop / PreCompact:
-    // 公式仕様 (https://code.claude.com/docs/en/hooks) の
+    // SessionStart: 公式仕様 (https://code.claude.com/docs/en/hooks) の
     // `hookSpecificOutput.additionalContext` / `sessionTitle` に lift して
-    // stdout に JSON を書く。decision=block 時は top-level の decision/reason
-    // も load する (ConfigChange では opt-in block、UserPromptSubmit では
-    // prompt 拒否、SubagentStart / SessionStart / Stop / SubagentStop /
-    // PreCompact は block 非対応 or sentinel-only のため `decision: "approve"`
-    // が internal sentinel として残るが、wire output からは omit される)。
+    // stdout に JSON を書く (これらの event は spec で hookSpecificOutput
+    // の additionalContext field を documented で許容)。
+    //
+    // Stop / SubagentStop / PreCompact: route() が `additionalContext` を
+    // `systemMessage` に routing 済みのため、本 branch の `result.additionalContext`
+    // は undefined。結果として `hookSpecificOutput` は payload 不在で自動 omit
+    // される (spec compliant: これら 3 event は hookSpecificOutput の
+    // additionalContext を許容しない)。`systemMessage` のみ top-level に lift。
+    //
+    // decision=block 時は top-level の decision/reason も load する
+    // (ConfigChange では opt-in block、UserPromptSubmit では prompt 拒否、
+    // SubagentStart / SessionStart / Stop / SubagentStop / PreCompact は
+    // block 非対応 or sentinel-only のため `decision: "approve"` は internal
+    // sentinel として残るが、wire output からは omit される)。
     //
     // hookEventName mapping (公式 event 名 vs harness dispatch 名):
     //   - user-prompt-submit → "UserPromptSubmit"
