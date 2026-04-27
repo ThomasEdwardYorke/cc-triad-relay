@@ -14,6 +14,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadConfigWithError } from "../config.js";
+import { sanitizeAdditionalContextLine } from "./_shared/sanitize.js";
 
 export interface StopInput {
   hook_event_name: string;
@@ -117,8 +118,4 @@ export async function handleStop(
     decision: "approve",
     additionalContext: sections.join("\\n"),
   };
-}
-
-function sanitizeAdditionalContextLine(line: string): string {
-  return line.replace(/\r\n|[\n\r]/g, "\\n");
 }
