@@ -791,6 +791,18 @@ describe("slash command frontmatter — canonical field order (community convent
    * - 配列 / インデント続行行 (`  - item` / `  key: val`) は無視
    * - CANONICAL_FIELD_ORDER に含まれる key のみを抽出 (将来追加 field は
    *   本テストの対象外、describe 内 list 更新で対応)
+   *
+   * **前提制約 (重要)**:
+   * 本 helper は frontmatter 全 field 値が **inline single-line** で記述
+   * されることを前提とする。multiline YAML block scalar (`|` / `>` style)
+   * を field value に使うと、continuation 行の text が `key:` パターンに
+   * match して false positive になる (例: 値内の "name: foo" が新 key と
+   * 誤判定される)。現状の 14 commands は全 field が inline で対応済だが、
+   * 将来 multiline 記述が必要になった場合は本 helper を `parseYaml(...)`
+   * + `Object.keys()` 経由に書き換える (yaml library は import 済)。
+   *
+   * 本制約は別の sanity test (block scalar marker 不在を全 commands で assert)
+   * で固定し、drift を CI で検知する。
    */
   function extractTopLevelKeys(frontmatter: string): string[] {
     const keys: string[] = [];
@@ -809,6 +821,31 @@ describe("slash command frontmatter — canonical field order (community convent
     expect(CANONICAL_FIELD_ORDER.length).toBe(7);
     expect(new Set(CANONICAL_FIELD_ORDER).size).toBe(7);
   });
+
+  it.each(COMMAND_NAMES)(
+    "%s command の frontmatter には multiline block scalar marker (`|` / `>`) が含まれない (extractTopLevelKeys 前提)",
+    (name) => {
+      // extractTopLevelKeys は inline single-line frontmatter 前提のため、
+      // multiline block scalar (`description: |` / `description: >` のような
+      // YAML block scalar style) が混入すると continuation 行の text が新 key
+      // と誤判定される false positive 経路を持つ。本 sanity test は 14 commands
+      // 全件で block scalar marker が値部分に出現しないことを assert し、
+      // helper の前提を CI で固定する。drift があれば即時検知され、
+      // helper を parseYaml ベースに refactor すべき signal となる。
+      const fm = extractFrontmatter(readCommand(name));
+      // YAML block scalar marker: `key: |` / `key: >` (行末に `|` / `>` のみ、
+      // または `|-` / `>+` 等の chomp indicator 付き)。値部分が空白を間に挟んで
+      // 行末に block scalar marker を持つ pattern を全行 scan で禁止。
+      const blockScalarLines = fm
+        .split(/\r?\n/)
+        .filter((line) => /^[a-z][a-z0-9-]*:\s+[|>][+-]?\s*$/.test(line));
+      expect(
+        blockScalarLines,
+        `${name}.md: multiline block scalar が検出されました。inline single-line に書き換えるか、` +
+          `extractTopLevelKeys を parseYaml ベースに refactor してください。検出行: ${blockScalarLines.join(" / ")}`,
+      ).toEqual([]);
+    },
+  );
 
   it.each(COMMAND_NAMES)(
     "%s command の frontmatter field は canonical order の subsequence",
