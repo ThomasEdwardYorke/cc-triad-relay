@@ -137,11 +137,11 @@ describe("route() dispatcher — hook integration", () => {
     });
 
     /**
-     * dispatcher integration tests for `stop_hook_active`. Without these, the
-     * SubagentStopInput field could be silently dropped at the dispatcher
-     * boundary (extractBoolean missing) and unit tests of `handleSubagentStop`
-     * alone would still pass while the runtime guard never fires. CR
-     * round-1 review on PR #50 caught this exact scenario.
+     * dispatcher integration tests for `stop_hook_active`. Without these,
+     * the SubagentStopInput field could be silently dropped at the
+     * dispatcher boundary (e.g., a missing `extractBoolean` call) and unit
+     * tests of `handleSubagentStop` alone would still pass while the
+     * runtime guard never fires.
      */
     it("stop_hook_active=true via dispatcher → guard fires (no CI、no additionalContext)", async () => {
       const result = await route("subagent-stop", {
