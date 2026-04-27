@@ -89,6 +89,10 @@ const SOURCE_COMPACT_HINT =
  * の `describe("sanitizeAdditionalContextLine — Unicode line separator ...")`
  * が直接 invoke する)。
  *
+ * @internal — テスト用に export しているが、`index.ts` のバレル再エクスポート
+ * や他 hook からの import 対象ではない。後続 DRY 共通化 PR で別 module
+ * (例: `core/src/hooks/_shared/sanitize.ts`) に切り出す予定。
+ *
  * Implementation note: regex literal 内では ` ` / ` ` を escape
  * sequence で書く必要がある。raw literal を埋め込むと esbuild / 古い JS
  * parser が syntactic line terminator として扱い `Unterminated regular
