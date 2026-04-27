@@ -55,7 +55,7 @@ field に load し stdout に書き出す。
 公式 command hook spec に従い、成功時は worktree absolute path を raw stdout、
 失敗時は stderr + exit 1。
 
-### Branch 3: modern hookSpecificOutput lift
+### Branch 3: modern hookSpecificOutput lift + universal systemMessage
 
 以下 8 hook を含む:
 
@@ -64,27 +64,54 @@ field に load し stdout に書き出す。
 - `config-change` → `"ConfigChange"`
 - `subagent-start` → `"SubagentStart"`
 - `session-start` → `"SessionStart"`
-- `stop` → `"Stop"` (本 PR で追加)
-- `subagent-stop` → `"SubagentStop"` (本 PR で追加)
-- `pre-compact` → `"PreCompact"` (本 PR で追加)
+- `stop` → `"Stop"` (Track A で追加、後の本 PR で hookSpecificOutput lift から
+  systemMessage routing に移行)
+- `subagent-stop` → `"SubagentStop"` (同上)
+- `pre-compact` → `"PreCompact"` (同上)
 
 整形ルール:
+
 1. `result.decision === "block"` のみ wire `out["decision"] = "block"` に lift。
    `decision: "approve"` sentinel は **wire output から omit** (公式 spec 準拠)
 2. `result.additionalContext` を `hookSpecificOutput.additionalContext` に lift
+   (SessionStart / UserPromptSubmit / PostToolUseFailure / ConfigChange /
+   SubagentStart の 5 hook のみ。**Stop / SubagentStop / PreCompact では
+   route() で `additionalContext` ではなく `systemMessage` に routing 済みの
+   ため、本 lift path には到達しない** = `hookSpecificOutput` は payload 不在で
+   自動 omit される)
 3. `result.systemMessage` (or safe-fallback reason) を top-level `systemMessage`
-   に load
+   に load (universal field、全 hook で spec 準拠)
 4. `result.continue / stopReason / suppressOutput` を top-level lift
 
-**未文書化 hook での hookSpecificOutput.additionalContext lift について**:
-Stop / SubagentStop / PreCompact / ConfigChange / SubagentStart で
-`hookSpecificOutput.additionalContext` は公式に documented されていない。
-ただし PostToolUseFailure / UserPromptSubmit / SessionStart で documented
-された pattern と同形式の forward-compat hardening として採用する
-(D-115 locale-neutral / defensive policy 継承)。Anthropic runner が無視した
-としても、(a) `decision: "approve"` 違反は完全解消、(b) top-level non-spec
-field の汚染は除去、(c) 将来公式 documented 化された場合 zero migration、
-の 3 点で改善されている。
+**Stop / SubagentStop / PreCompact が systemMessage 経路を取る理由 (2026-04-28
+spec 準拠 migration)**:
+
+Anthropic 公式 hooks spec (Codex 一次資料 audit、2026-04-28 確定) で、これら
+3 hook の output schema には `additionalContext` field が **top-level も
+`hookSpecificOutput.*` も documented されていない**。
+
+旧実装 (PR #58) は「forward-compat hardening として `hookSpecificOutput.
+additionalContext` に lift」する path を採用していたが、これは spec が暗黙に
+許容する想定の defensive 実装で、Codex 一次資料調査で **spec が積極的に
+許容しない (= hookSpecificOutput envelope 自体が当該 event で undefined)** と
+判明。
+
+migration: `route()` で `result.additionalContext = ...` から
+`result.systemMessage = ...` に経路を切替。`systemMessage` は spec の universal
+output field (公式 docs `JSON output reference` で「Warning message shown to
+the user」かつ「`systemMessage` または `additionalContext` の content は
+delivered to Claude as context on the next turn」と documented) で、全 hook で
+許容される。これにより:
+
+- (a) `decision: "approve"` 違反は引き続き完全解消 (modern branch の
+  decision strip path で対応)
+- (b) top-level non-spec `additionalContext` の汚染は引き続き除去
+- (c) `hookSpecificOutput.additionalContext` の non-spec lift も解消
+- (d) context delivery は spec-supported `systemMessage` channel で代替
+  (semantics は同等: "delivered to Claude on next turn")
+
+handler 側の interface (`additionalContext` を返却) は backward-compat 維持の
+ため変更せず、dispatcher 段階で routing する設計。
 
 ### Branch 4: legacy `JSON.stringify(result)`
 

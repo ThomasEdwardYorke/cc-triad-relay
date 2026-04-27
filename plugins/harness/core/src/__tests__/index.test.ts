@@ -61,12 +61,12 @@ describe("route() dispatcher — hook integration", () => {
   });
 
   describe("pre-compact", () => {
-    // Track A spec compliance: PreCompact は公式 spec で `additionalContext` を
-    // top-level に出力すると non-spec field となる。dispatcher は handler の
-    // `additionalContext` を `HookResult.additionalContext` field 経由で
-    // hookSpecificOutput.additionalContext に lift する (旧実装は legacy
-    // `HookResult.reason` 経由で wire output へ top-level に出していた)。
-    it("lifts handler.additionalContext to HookResult.additionalContext (Track A spec compliance)", async () => {
+    // Hook spec audit (2026-04-28, Codex 一次資料): PreCompact は公式 spec で
+    // `additionalContext` を top-level も `hookSpecificOutput.*` も
+    // documented されない。spec-supported channel は universal `systemMessage`
+    // のみ。dispatcher は handler の `additionalContext` を `systemMessage`
+    // に routing して spec 準拠化する。
+    it("routes handler.additionalContext to HookResult.systemMessage (spec-compliant universal field)", async () => {
       const result = await route("pre-compact", {
         hook_event_name: "PreCompact",
         cwd: tmpRoot,
@@ -74,11 +74,12 @@ describe("route() dispatcher — hook integration", () => {
       });
 
       expect(result.decision).toBe("approve");
-      expect(result.additionalContext).toBeDefined();
-      expect(result.additionalContext).toContain("=== Harness PreCompact");
-      expect(result.additionalContext).toContain("[trigger] auto");
-      // legacy `reason` field に流れていないこと (regression guard)。
+      expect(result.systemMessage).toBeDefined();
+      expect(result.systemMessage).toContain("=== Harness PreCompact");
+      expect(result.systemMessage).toContain("[trigger] auto");
+      // Regression guards: legacy fields must be silent for spec compliance.
       expect(result.reason).toBeUndefined();
+      expect(result.additionalContext).toBeUndefined();
     });
 
     it("preserves `custom_instructions` at the highest-priority position", async () => {
@@ -89,18 +90,18 @@ describe("route() dispatcher — hook integration", () => {
         custom_instructions: "keep the assignment table verbatim",
       });
 
-      expect(result.additionalContext).toBeDefined();
-      expect(result.additionalContext).toContain("[custom_instructions]");
-      expect(result.additionalContext).toContain(
+      expect(result.systemMessage).toBeDefined();
+      expect(result.systemMessage).toContain("[custom_instructions]");
+      expect(result.systemMessage).toContain(
         "keep the assignment table verbatim",
       );
 
       // `custom_instructions` must appear BEFORE the `[trigger]` footer so
       // that compaction sees the user's retention instructions first.
-      const customIdx = (result.additionalContext ?? "").indexOf(
+      const customIdx = (result.systemMessage ?? "").indexOf(
         "[custom_instructions]",
       );
-      const triggerIdx = (result.additionalContext ?? "").indexOf("[trigger]");
+      const triggerIdx = (result.systemMessage ?? "").indexOf("[trigger]");
       expect(customIdx).toBeGreaterThan(-1);
       expect(triggerIdx).toBeGreaterThan(customIdx);
     });
@@ -117,16 +118,16 @@ describe("route() dispatcher — hook integration", () => {
       });
 
       expect(result.decision).toBe("approve");
-      expect(result.additionalContext).toContain("[trigger] unknown");
+      expect(result.systemMessage).toContain("[trigger] unknown");
     });
   });
 
   describe("subagent-stop", () => {
-    // Track A spec compliance: SubagentStop は公式 spec で `additionalContext` を
-    // top-level 出力すると non-spec field。dispatcher は handler の
-    // `additionalContext` を `HookResult.additionalContext` 経由で lift する
-    // (旧 legacy `reason` 経由出力は廃止)。
-    it("non-worker agents: no additionalContext (handler returns no diagnostic)", async () => {
+    // Hook spec audit (2026-04-28, Codex 一次資料): SubagentStop は Stop と
+    // 同 schema で `additionalContext` を top-level も `hookSpecificOutput.*`
+    // も documented されない。spec-supported channel は universal
+    // `systemMessage` のみ。dispatcher は `systemMessage` に routing する。
+    it("non-worker agents: no systemMessage (handler returns no diagnostic)", async () => {
       const result = await route("subagent-stop", {
         hook_event_name: "SubagentStop",
         cwd: tmpRoot,
@@ -134,11 +135,12 @@ describe("route() dispatcher — hook integration", () => {
       });
 
       expect(result.decision).toBe("approve");
+      expect(result.systemMessage).toBeUndefined();
       expect(result.additionalContext).toBeUndefined();
       expect(result.reason).toBeUndefined();
     });
 
-    it("worker agent with no detectable stack: lifts 'no CI targets' message to additionalContext", async () => {
+    it("worker agent with no detectable stack: routes 'no CI targets' message to systemMessage", async () => {
       // Empty tmp dir has no pyproject.toml / package.json, so
       // detectAvailableChecks() returns [].
       const result = await route("subagent-stop", {
@@ -148,10 +150,11 @@ describe("route() dispatcher — hook integration", () => {
       });
 
       expect(result.decision).toBe("approve");
-      expect(result.additionalContext).toBeDefined();
-      expect(result.additionalContext).toContain("CI チェック対象なし");
-      // legacy `reason` 経由 lift は廃止 (Track A spec compliance regression guard)
+      expect(result.systemMessage).toBeDefined();
+      expect(result.systemMessage).toContain("CI チェック対象なし");
+      // Regression guards: legacy / non-spec fields must stay empty.
       expect(result.reason).toBeUndefined();
+      expect(result.additionalContext).toBeUndefined();
     });
 
     it("plugin-namespaced agent type 'harness:worker' is treated as worker", async () => {
@@ -162,8 +165,8 @@ describe("route() dispatcher — hook integration", () => {
       });
 
       expect(result.decision).toBe("approve");
-      expect(result.additionalContext).toBeDefined();
-      expect(result.additionalContext).toContain("CI チェック対象なし");
+      expect(result.systemMessage).toBeDefined();
+      expect(result.systemMessage).toContain("CI チェック対象なし");
     });
 
     /**
@@ -173,7 +176,7 @@ describe("route() dispatcher — hook integration", () => {
      * tests of `handleSubagentStop` alone would still pass while the
      * runtime guard never fires.
      */
-    it("stop_hook_active=true via dispatcher → guard fires (no CI、no additionalContext)", async () => {
+    it("stop_hook_active=true via dispatcher → guard fires (no CI、no systemMessage)", async () => {
       const result = await route("subagent-stop", {
         hook_event_name: "SubagentStop",
         cwd: tmpRoot,
@@ -181,12 +184,14 @@ describe("route() dispatcher — hook integration", () => {
         stop_hook_active: true,
       });
       expect(result.decision).toBe("approve");
-      // guard の早期 return では additionalContext 未設定
+      // Guard short-circuits before producing a CI summary; systemMessage
+      // therefore stays unset.
+      expect(result.systemMessage).toBeUndefined();
       expect(result.additionalContext).toBeUndefined();
       expect(result.reason).toBeUndefined();
     });
 
-    it("stop_hook_active=false via dispatcher → 通常 CI 経路 (modern hookSpecificOutput)", async () => {
+    it("stop_hook_active=false via dispatcher → normal CI path (systemMessage populated)", async () => {
       const result = await route("subagent-stop", {
         hook_event_name: "SubagentStop",
         cwd: tmpRoot,
@@ -194,7 +199,7 @@ describe("route() dispatcher — hook integration", () => {
         stop_hook_active: false,
       });
       expect(result.decision).toBe("approve");
-      expect(result.additionalContext).toContain("CI チェック対象なし");
+      expect(result.systemMessage).toContain("CI チェック対象なし");
     });
 
     it("非 boolean な stop_hook_active は extractBoolean で undefined → guard 非発火 (defensive)", async () => {
@@ -206,8 +211,8 @@ describe("route() dispatcher — hook integration", () => {
         stop_hook_active: "true" as unknown as boolean,
       });
       expect(result.decision).toBe("approve");
-      // guard 非発火 → 通常経路
-      expect(result.additionalContext).toContain("CI チェック対象なし");
+      // guard 非発火 → 通常経路 (systemMessage に CI 結果が乗る)
+      expect(result.systemMessage).toContain("CI チェック対象なし");
     });
   });
 
@@ -335,24 +340,25 @@ describe("route() dispatcher — hook integration", () => {
   });
 
   describe("stop", () => {
-    // Track A spec compliance: Stop は公式 spec で `additionalContext` を
-    // top-level 出力すると non-spec field。dispatcher は handler の
-    // `additionalContext` を `HookResult.additionalContext` 経由で
-    // hookSpecificOutput.additionalContext に lift する (旧 legacy `reason`
-    // 経由出力は廃止)。`result.reason` は `decision === "block"` 時のみ
-    // populate されるため、approve sentinel での Stop hook では undefined。
-    it("returns approve with no additionalContext when no harness.config.json exists", async () => {
+    // Hook spec audit (2026-04-28, Codex 一次資料): Stop は公式 spec で
+    // `additionalContext` を top-level も `hookSpecificOutput.*` も documented
+    // されない。spec-supported channel は universal `systemMessage` のみ。
+    // dispatcher は handler の `additionalContext` を `systemMessage` に
+    // routing する。`result.reason` は `decision === "block"` 時のみ populate
+    // されるため、approve sentinel での Stop hook では undefined。
+    it("returns approve with no systemMessage when no harness.config.json exists", async () => {
       const result = await route("stop", {
         hook_event_name: "Stop",
         cwd: tmpRoot,
       });
 
       expect(result.decision).toBe("approve");
+      expect(result.systemMessage).toBeUndefined();
       expect(result.additionalContext).toBeUndefined();
       expect(result.reason).toBeUndefined();
     });
 
-    it("lifts qualityGates reminders to additionalContext when config enables them", async () => {
+    it("lifts qualityGates reminders to systemMessage when config enables them", async () => {
       const config = {
         work: {
           qualityGates: {
@@ -374,18 +380,19 @@ describe("route() dispatcher — hook integration", () => {
       });
 
       expect(result.decision).toBe("approve");
-      expect(result.additionalContext).toBeDefined();
-      expect(result.additionalContext).toContain("品質ゲート");
-      expect(result.additionalContext).toContain("TDD 必須");
-      expect(result.additionalContext).toContain("疑似 CodeRabbit 必須");
-      expect(result.additionalContext).toContain("Codex セカンドオピニオン必須");
+      expect(result.systemMessage).toBeDefined();
+      expect(result.systemMessage).toContain("品質ゲート");
+      expect(result.systemMessage).toContain("TDD 必須");
+      expect(result.systemMessage).toContain("疑似 CodeRabbit 必須");
+      expect(result.systemMessage).toContain("Codex セカンドオピニオン必須");
       // enforceRealCoderabbit=false → no "本物 CodeRabbit" entry.
-      expect(result.additionalContext).not.toContain("本物 CodeRabbit 必須");
-      // legacy `reason` 経由 lift は廃止 (Track A spec compliance regression guard)
+      expect(result.systemMessage).not.toContain("本物 CodeRabbit 必須");
+      // Regression guards: legacy / non-spec fields stay empty.
       expect(result.reason).toBeUndefined();
+      expect(result.additionalContext).toBeUndefined();
     });
 
-    it("returns no additionalContext when every qualityGate is explicitly disabled", async () => {
+    it("returns no systemMessage when every qualityGate is explicitly disabled", async () => {
       // All four gates explicitly false — loadConfigSafe merges user values
       // over defaults, so setting the full set here is required to produce
       // an empty reminder list (unlike the earlier impl that read raw JSON
@@ -411,7 +418,7 @@ describe("route() dispatcher — hook integration", () => {
       });
 
       expect(result.decision).toBe("approve");
-      expect(result.additionalContext).toBeUndefined();
+      expect(result.systemMessage).toBeUndefined();
     });
 
     it("partial qualityGates override keeps default-enabled gates in the reminder (mergeConfig semantics)", async () => {
@@ -437,11 +444,11 @@ describe("route() dispatcher — hook integration", () => {
         cwd: tmpRoot,
       });
 
-      expect(result.additionalContext).toBeDefined();
-      expect(result.additionalContext).not.toContain("TDD 必須");
-      expect(result.additionalContext).toContain("疑似 CodeRabbit 必須");
-      expect(result.additionalContext).toContain("本物 CodeRabbit 必須");
-      expect(result.additionalContext).toContain("Codex セカンドオピニオン必須");
+      expect(result.systemMessage).toBeDefined();
+      expect(result.systemMessage).not.toContain("TDD 必須");
+      expect(result.systemMessage).toContain("疑似 CodeRabbit 必須");
+      expect(result.systemMessage).toContain("本物 CodeRabbit 必須");
+      expect(result.systemMessage).toContain("Codex セカンドオピニオン必須");
     });
 
     it("emits the harness-work essence reminder when enforceHarnessWorkEssence is true", async () => {
@@ -470,13 +477,13 @@ describe("route() dispatcher — hook integration", () => {
       });
 
       expect(result.decision).toBe("approve");
-      expect(result.additionalContext).toBeDefined();
-      expect(result.additionalContext).toContain("[harness-work essence]");
-      expect(result.additionalContext).toContain("docs/harness-work-essence.md");
-      expect(result.additionalContext).toContain("never give up");
+      expect(result.systemMessage).toBeDefined();
+      expect(result.systemMessage).toContain("[harness-work essence]");
+      expect(result.systemMessage).toContain("docs/harness-work-essence.md");
+      expect(result.systemMessage).toContain("never give up");
       // `[品質ゲート]` block must be absent when every per-phase gate is
       // disabled — the essence reminder is orthogonal.
-      expect(result.additionalContext).not.toContain("[品質ゲート]");
+      expect(result.systemMessage).not.toContain("[品質ゲート]");
     });
 
     it("emits both blocks when phase gates and the essence flag are enabled together", async () => {
@@ -501,17 +508,16 @@ describe("route() dispatcher — hook integration", () => {
         cwd: tmpRoot,
       });
 
-      expect(result.additionalContext).toBeDefined();
-      expect(result.additionalContext).toContain("[品質ゲート] TDD 必須");
-      expect(result.additionalContext).toContain("[harness-work essence]");
+      expect(result.systemMessage).toBeDefined();
+      expect(result.systemMessage).toContain("[品質ゲート] TDD 必須");
+      expect(result.systemMessage).toContain("[harness-work essence]");
     });
 
-    it("sanitizes additionalContext newlines to prevent section-boundary injection", async () => {
-      // The additionalContext payload joins sections; if a future section
-      // text gains an embedded LF/CR (e.g. from dynamic config), it could
-      // forge fake section boundaries downstream. Lock the contract to
-      // "no raw newlines — section separator is the literal two-character
-      // `\\n`".
+    it("sanitizes systemMessage newlines to prevent section-boundary injection", async () => {
+      // The systemMessage payload joins sections; if a future section text
+      // gains an embedded LF/CR (e.g. from dynamic config), it could forge
+      // fake section boundaries downstream. Lock the contract to "no raw
+      // newlines — section separator is the literal two-character `\\n`".
       const config = {
         work: {
           qualityGates: {
@@ -533,12 +539,12 @@ describe("route() dispatcher — hook integration", () => {
         cwd: tmpRoot,
       });
 
-      expect(result.additionalContext).toBeDefined();
-      expect(result.additionalContext).toContain("[品質ゲート]");
-      expect(result.additionalContext).toContain("[harness-work essence]");
-      expect(result.additionalContext).not.toMatch(/\r/);
-      expect(result.additionalContext).not.toMatch(/\n/);
-      expect(result.additionalContext).toContain("\\n");
+      expect(result.systemMessage).toBeDefined();
+      expect(result.systemMessage).toContain("[品質ゲート]");
+      expect(result.systemMessage).toContain("[harness-work essence]");
+      expect(result.systemMessage).not.toMatch(/\r/);
+      expect(result.systemMessage).not.toMatch(/\n/);
+      expect(result.systemMessage).toContain("\\n");
     });
 
     it("omits the essence reminder when enforceHarnessWorkEssence is left at its default", async () => {
@@ -561,8 +567,8 @@ describe("route() dispatcher — hook integration", () => {
         cwd: tmpRoot,
       });
 
-      expect(result.additionalContext).toBeDefined();
-      expect(result.additionalContext).not.toContain("[harness-work essence]");
+      expect(result.systemMessage).toBeDefined();
+      expect(result.systemMessage).not.toContain("[harness-work essence]");
     });
 
     /**
@@ -595,7 +601,9 @@ describe("route() dispatcher — hook integration", () => {
         stop_hook_active: true,
       });
       expect(result.decision).toBe("approve");
-      // guard 早期 return → additionalContext / reason 共に undefined、config 評価より前
+      // guard 早期 return → systemMessage / additionalContext / reason 全て
+      // undefined、config 評価より前。
+      expect(result.systemMessage).toBeUndefined();
       expect(result.additionalContext).toBeUndefined();
       expect(result.reason).toBeUndefined();
     });
@@ -619,8 +627,8 @@ describe("route() dispatcher — hook integration", () => {
         stop_hook_active: false,
       });
       expect(result.decision).toBe("approve");
-      // guard 非発火 → 通常経路で reminder
-      expect(result.additionalContext).toContain("TDD 必須");
+      // guard 非発火 → 通常経路で reminder (systemMessage に lift)
+      expect(result.systemMessage).toContain("TDD 必須");
     });
 
     it("非 boolean な stop_hook_active は extractBoolean で undefined → guard 非発火 (defensive)", async () => {
@@ -639,8 +647,8 @@ describe("route() dispatcher — hook integration", () => {
         stop_hook_active: "true" as unknown as boolean,
       });
       expect(result.decision).toBe("approve");
-      // guard 非発火 → 通常経路で reminder
-      expect(result.additionalContext).toContain("TDD 必須");
+      // guard 非発火 → 通常経路で reminder (systemMessage に lift)
+      expect(result.systemMessage).toContain("TDD 必須");
     });
   });
 
@@ -1011,11 +1019,17 @@ describe("main() entrypoint fail-open (e2e child-process contract)", () => {
   );
 
   it.skipIf(!distExists)(
-    "stop: qualityGates 設定あり → additionalContext を hookSpecificOutput.additionalContext に lift",
+    "stop: qualityGates configured → additionalContext routed to systemMessage (spec-compliant universal field)",
     () => {
-      // Track A spec compliance: qualityGates 設定下では handler が品質ゲート
-      // reminder を additionalContext で生成。dispatcher は spec 準拠で
-      // hookSpecificOutput に lift する。`decision` は wire output に出ない。
+      // Hook spec compliance audit (2026-04-28, Codex primary-source review):
+      // Stop / SubagentStop / PreCompact do NOT support `additionalContext`
+      // per the Anthropic spec (https://code.claude.com/docs/en/hooks) —
+      // neither at top-level NOR inside `hookSpecificOutput`. The
+      // spec-supported channel for "context delivered to Claude on next
+      // turn" is the universal `systemMessage` field. Handler still
+      // produces the quality-gate reminder text via `additionalContext`
+      // for backward-compat semantics; dispatcher routes it into
+      // `systemMessage` so the wire output stays spec-compliant.
       const tmpRootStop = mkTmp("harness-stop-e2e");
       try {
         writeFileSync(
@@ -1042,19 +1056,19 @@ describe("main() entrypoint fail-open (e2e child-process contract)", () => {
           string,
           unknown
         >;
-        // decision は wire output に出ない (Anthropic 公式 spec 準拠)
+        // `decision: "approve"` is omitted from wire output (spec allows
+        // only `block`; modern branch strips other values).
         expect(parsed["decision"]).toBeUndefined();
-        // top-level additionalContext は出ない (lift 専用)
+        // `additionalContext` (top-level) is not in spec for Stop event
         expect(parsed["additionalContext"]).toBeUndefined();
-        // additionalContext は hookSpecificOutput.additionalContext に lift
-        const hso = parsed["hookSpecificOutput"] as
-          | Record<string, unknown>
-          | undefined;
-        expect(hso).toBeDefined();
-        expect(hso?.["hookEventName"]).toBe("Stop");
-        expect(typeof hso?.["additionalContext"]).toBe("string");
-        expect(String(hso?.["additionalContext"])).toContain("TDD 必須");
-        expect(String(hso?.["additionalContext"])).toContain(
+        // `hookSpecificOutput.additionalContext` is also not in spec for
+        // Stop event — must NOT appear.
+        expect(parsed["hookSpecificOutput"]).toBeUndefined();
+        // Reminder text travels through the universal `systemMessage`
+        // field (spec-supported for every hook event).
+        expect(typeof parsed["systemMessage"]).toBe("string");
+        expect(String(parsed["systemMessage"])).toContain("TDD 必須");
+        expect(String(parsed["systemMessage"])).toContain(
           "[harness-work essence]",
         );
       } finally {
@@ -1064,12 +1078,12 @@ describe("main() entrypoint fail-open (e2e child-process contract)", () => {
   );
 
   it.skipIf(!distExists)(
-    "subagent-stop: worker agent_type → additionalContext を hookSpecificOutput.additionalContext に lift",
+    "subagent-stop: worker agent_type → additionalContext routed to systemMessage (spec-compliant universal field)",
     () => {
-      // Track A spec compliance: SubagentStop は Stop と同 semantics で公式
-      // spec 上 `decision: "block"` のみ許容。empty tmp dir → CI 対象なし
-      // → handler は "CI チェック対象なし" を additionalContext で返却し
-      // dispatcher が spec 準拠 wire output に lift する。
+      // SubagentStop inherits Stop's spec — neither additionalContext
+      // top-level nor hookSpecificOutput.additionalContext is documented.
+      // empty tmp dir → handler emits "no CI" notice in additionalContext;
+      // dispatcher routes it to systemMessage for spec compliance.
       const tmpRootSubStop = mkTmp("harness-subagent-stop-e2e");
       try {
         const result = spawnSync(
@@ -1092,13 +1106,9 @@ describe("main() entrypoint fail-open (e2e child-process contract)", () => {
         >;
         expect(parsed["decision"]).toBeUndefined();
         expect(parsed["additionalContext"]).toBeUndefined();
-        const hso = parsed["hookSpecificOutput"] as
-          | Record<string, unknown>
-          | undefined;
-        expect(hso).toBeDefined();
-        expect(hso?.["hookEventName"]).toBe("SubagentStop");
-        expect(typeof hso?.["additionalContext"]).toBe("string");
-        expect(String(hso?.["additionalContext"])).toContain(
+        expect(parsed["hookSpecificOutput"]).toBeUndefined();
+        expect(typeof parsed["systemMessage"]).toBe("string");
+        expect(String(parsed["systemMessage"])).toContain(
           "CI チェック対象なし",
         );
       } finally {
@@ -1108,12 +1118,13 @@ describe("main() entrypoint fail-open (e2e child-process contract)", () => {
   );
 
   it.skipIf(!distExists)(
-    "pre-compact: trigger=auto → additionalContext を hookSpecificOutput.additionalContext に lift",
+    "pre-compact: trigger=auto → additionalContext routed to systemMessage (spec-compliant universal field)",
     () => {
-      // Track A spec compliance: PreCompact は context compaction 直前の
-      // observability hook。公式 spec で `additionalContext` top-level 非
-      // サポート。dispatcher は handler の Plans.md / branch / open PRs
-      // sections を hookSpecificOutput.additionalContext に lift する。
+      // PreCompact: context-compaction observability hook. Spec only
+      // documents `decision: "block"`; additionalContext is not part of
+      // the schema (top-level nor hookSpecificOutput). Plans.md / branch /
+      // open-PRs sections are routed via `systemMessage` so they survive
+      // compaction as spec-supported context delivery.
       const tmpRootPreC = mkTmp("harness-pre-compact-e2e");
       try {
         const result = spawnSync(process.execPath, [distPath, "pre-compact"], {
@@ -1132,16 +1143,12 @@ describe("main() entrypoint fail-open (e2e child-process contract)", () => {
         >;
         expect(parsed["decision"]).toBeUndefined();
         expect(parsed["additionalContext"]).toBeUndefined();
-        const hso = parsed["hookSpecificOutput"] as
-          | Record<string, unknown>
-          | undefined;
-        expect(hso).toBeDefined();
-        expect(hso?.["hookEventName"]).toBe("PreCompact");
-        expect(typeof hso?.["additionalContext"]).toBe("string");
-        expect(String(hso?.["additionalContext"])).toContain(
+        expect(parsed["hookSpecificOutput"]).toBeUndefined();
+        expect(typeof parsed["systemMessage"]).toBe("string");
+        expect(String(parsed["systemMessage"])).toContain(
           "=== Harness PreCompact",
         );
-        expect(String(hso?.["additionalContext"])).toContain("[trigger] auto");
+        expect(String(parsed["systemMessage"])).toContain("[trigger] auto");
       } finally {
         rmSync(tmpRootPreC, { recursive: true, force: true });
       }
