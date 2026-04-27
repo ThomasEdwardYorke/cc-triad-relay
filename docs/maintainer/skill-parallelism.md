@@ -75,9 +75,9 @@ coordinator が手動で制御 (固定値 or skill argument)。
 3 Track の review を並列で行いたい case:
 
 ```bash
-/codex-team review-1   # 1 個目
-/codex-team review-2   # 2 個目
-/codex-team review-3   # 3 個目
+/my-skill review-1   # 1 つ目
+/my-skill review-2   # 2 つ目
+/my-skill review-3   # 3 つ目
 ```
 
 Skill 起動は逐次。並列性が要件なら Agent tool fan out (Pattern 1) を使う。
@@ -93,7 +93,7 @@ Skill 起動は逐次。並列性が要件なら Agent tool fan out (Pattern 1) 
 
 ### Body draft
 
-```markdown
+````markdown
 ## Summary
 
 Currently Claude Code Skills do not have a documented mechanism for
@@ -144,7 +144,7 @@ Argument override:
   intrusive, breaks existing skill semantics
 - SDK-level fan out only — requires plugin authors to drop down to TS/JS,
   reduces accessibility
-```
+````
 
 ## Reference
 

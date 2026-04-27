@@ -102,21 +102,43 @@ function makeProject(opts: {
  * sync values immediately and waits for async ones, ensuring stderr
  * writes performed during async resolution are still captured before
  * `process.stderr.write` is restored.
+ *
+ * The replacement preserves the full `Writable.write(chunk, encoding?,
+ * callback?)` signature: encoding (string or callback shorthand) and
+ * callback arguments are honored so that future stderr callers using
+ * encoding/callback variants are not silently dropped. Buffer chunks are
+ * decoded with the supplied encoding (default `utf-8`).
  */
 async function captureStderr<T>(
   subject: () => T | Promise<T>,
 ): Promise<{ result: T; stderr: string }> {
-  const originalWrite = process.stderr.write.bind(process.stderr);
+  const originalWrite = process.stderr.write;
   const chunks: string[] = [];
-  process.stderr.write = ((chunk: unknown) => {
-    chunks.push(typeof chunk === "string" ? chunk : String(chunk));
+  process.stderr.write = ((
+    chunk: unknown,
+    encoding?: BufferEncoding | ((err?: Error | null) => void),
+    callback?: (err?: Error | null) => void,
+  ): boolean => {
+    // Node.js `Writable.write(chunk, encoding?, callback?)` allows encoding
+    // to be a callback (shorthand). Disambiguate before decoding.
+    const encodingArg =
+      typeof encoding === "string" ? encoding : undefined;
+    const cb = typeof encoding === "function" ? encoding : callback;
+    if (typeof chunk === "string") {
+      chunks.push(chunk);
+    } else if (Buffer.isBuffer(chunk)) {
+      chunks.push(chunk.toString(encodingArg ?? "utf-8"));
+    } else {
+      chunks.push(String(chunk));
+    }
+    cb?.(null);
     return true;
   }) as typeof process.stderr.write;
   try {
     const result = await subject();
     return { result, stderr: chunks.join("") };
   } finally {
-    process.stderr.write = originalWrite as typeof process.stderr.write;
+    process.stderr.write = originalWrite;
   }
 }
 
