@@ -534,6 +534,34 @@ describe("handleStop stop_hook_active guard (infinite loop prevention)", () => {
     expect(result.decision).toBe("approve");
     expect(result.additionalContext).toBeUndefined();
   });
+
+  it("公式 Stop hook spec フィールド last_assistant_message を受け取れる (subagent-stop と対称)", async () => {
+    // Anthropic Claude Code Stop hook spec (https://code.claude.com/docs/en/hooks)
+    // の payload field `last_assistant_message` を declare + propagate するため、
+    // handler 側で string field を受け取れることを verify。現時点で handler は
+    // この field を runtime 参照しないが、subagent-stop の同型 test
+    // (`公式フィールド agent_transcript_path を受け取れる`) と対称な coverage
+    // を維持する (将来 last_assistant_message を活用するロジック追加時の
+    // pre-existing safety net)。
+    const dir = makeTempProject({
+      harnessConfig: {
+        work: {
+          qualityGates: {
+            enforceTddImplement: true,
+          },
+        },
+      },
+    });
+    const result = await handleStop({
+      ...baseInput,
+      cwd: dir,
+      last_assistant_message: "Done with the task",
+    });
+    expect(result.decision).toBe("approve");
+    // last_assistant_message は handler が runtime 参照しないが、reminder は
+    // 通常通り fire (受け取り経路 lossless)。
+    expect(result.additionalContext).toContain("TDD 必須");
+  });
 });
 
 describe("detectAvailableChecks (stack-neutral default ['src', 'app'] + tooling.pythonCandidateDirs override)", () => {

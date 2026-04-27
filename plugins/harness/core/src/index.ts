@@ -192,6 +192,10 @@ export async function route(
         hook_event_name: String(raw["hook_event_name"] ?? "Stop"),
         session_id: extractString(raw, "session_id"),
         cwd: extractString(raw, "cwd"),
+        // Anthropic Stop hook spec: Stop event payload は last_assistant_message
+        // を deliver する。subagent-stop.ts と同型に propagate (現 handler は
+        // 参照しないが、公式 spec 完全対称化のため declare + propagate)。
+        last_assistant_message: extractString(raw, "last_assistant_message"),
         // Anthropic Stop hook spec: propagate stop_hook_active to enable the
         // infinite-loop guard inside handleStop. Without this line the guard
         // never fires at runtime regardless of the input payload Claude Code
