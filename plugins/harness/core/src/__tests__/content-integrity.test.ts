@@ -4934,17 +4934,17 @@ describe("Track A — Stop / SubagentStop / PreCompact hookSpecificOutput lift d
 });
 
 // ============================================================
-// Track D — Skill 並列性 (Skill concurrent invocation) doc lock-in
+// docs/maintainer/skill-parallelism.md — anchor lock-in
 //
-// `docs/maintainer/skill-parallelism.md` (PR #59 で main 入り) の重要 anchor
-// を content-integrity に固定する。Skill spec から `--parallel=N` flag /
-// `concurrency` field が **存在しない** ことを documenting し、harness 独自
-// の Agent tool fan-out pattern が Skill spec 準拠であることを記述している。
-// 将来 doc を整理する際にこれら anchor が削除されると、Anthropic 公式提案
-// (GitHub Feature request draft) の根拠が失われるため drift guard を入れる。
+// `skill-parallelism.md` の重要 anchor を content-integrity に固定する。
+// Skill spec から `--parallel=N` flag / `concurrency` field が **存在しない**
+// ことを documenting し、harness 独自の Agent tool fan-out pattern が
+// Skill spec 準拠であることを記述している。将来 doc を整理する際にこれら
+// anchor が削除されると、Anthropic 公式提案 (GitHub Feature request draft)
+// の根拠が失われるため drift guard を入れる。
 // ============================================================
 
-describe("Track D — docs/maintainer/skill-parallelism.md anchor lock-in", () => {
+describe("docs/maintainer/skill-parallelism.md anchor lock-in", () => {
   const docPath = resolve(
     PLUGIN_ROOT,
     "../../docs/maintainer/skill-parallelism.md",
@@ -4981,7 +4981,12 @@ describe("Track D — docs/maintainer/skill-parallelism.md anchor lock-in", () =
     const content = readFileSync(docPath, "utf-8");
     // 長期 proposal section: upstream Anthropic への Feature request draft が
     // doc に含まれていることを lock-in。proposal を削除する将来変更を block。
+    // Two **independent** assertions so neither anchor can vanish silently:
+    // (a) the proposal narrative wording, and (b) the literal `--parallel`
+    // CLI shape that's the actual API request. The earlier OR pattern let
+    // `--parallel` disappear if `parallelism` survived.
     expect(content).toMatch(/proposal|propose|feature\s+request/i);
-    expect(content).toMatch(/parallelism|--parallel=N|--parallel\s*=\s*N/);
+    expect(content).toMatch(/parallelism/i);
+    expect(content).toMatch(/--parallel(=N|\s*=\s*N)?/);
   });
 });
