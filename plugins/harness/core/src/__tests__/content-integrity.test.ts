@@ -4861,3 +4861,60 @@ describe("session-handoff skill — Layer 3 (archive 最終報告 emit step + do
     }
   });
 });
+
+// ============================================================
+// Track A — Stop / SubagentStop / PreCompact spec compliance forcing function
+//
+// Anthropic 公式仕様 (https://code.claude.com/docs/en/hooks) で Stop /
+// SubagentStop / PreCompact は `decision: "block"` のみ許容、`additionalContext`
+// の top-level 出力は documented されない。dispatcher は modern
+// hookSpecificOutput branch に合流させ、`decision: "approve"` を omit +
+// `hookSpecificOutput.additionalContext` に lift して spec 準拠に整形する。
+//
+// 本 describe は drift detection: 将来誰かが modern branch から 3 hook を
+// 削除した場合に即時 fail させる forcing function。`hookEventName = "<name>"`
+// 直接代入 + main() 条件分岐を string-level で固定する。
+// ============================================================
+
+describe("Track A — Stop / SubagentStop / PreCompact hookSpecificOutput lift drift guard", () => {
+  const indexPath = resolve(PLUGIN_ROOT, "core/src/index.ts");
+
+  it("main() hookEventName switch に Stop case (drift guard)", () => {
+    const src = readFileSync(indexPath, "utf-8");
+    expect(src).toMatch(/hookEventName\s*=\s*"Stop"/);
+  });
+
+  it("main() hookEventName switch に SubagentStop case (drift guard)", () => {
+    const src = readFileSync(indexPath, "utf-8");
+    expect(src).toMatch(/hookEventName\s*=\s*"SubagentStop"/);
+  });
+
+  it("main() hookEventName switch に PreCompact case (drift guard)", () => {
+    const src = readFileSync(indexPath, "utf-8");
+    expect(src).toMatch(/hookEventName\s*=\s*"PreCompact"/);
+  });
+
+  it("main() modern hookSpecificOutput branch 条件に 3 hook が含まれる", () => {
+    const src = readFileSync(indexPath, "utf-8");
+    // hookType === "stop" / "subagent-stop" / "pre-compact" の 3 条件が同 branch
+    // で OR 結合されている (modern branch 拡張のロック)
+    expect(src).toMatch(/hookType\s*===\s*"stop"/);
+    expect(src).toMatch(/hookType\s*===\s*"subagent-stop"/);
+    expect(src).toMatch(/hookType\s*===\s*"pre-compact"/);
+  });
+
+  it("route() の 3 hook で additionalContext field を直接使う (legacy reason 経由を排除)", () => {
+    const src = readFileSync(indexPath, "utf-8");
+    // route 関数内で `<hookResult>.additionalContext = <handlerResult>.additionalContext`
+    // pattern を 3 hook 全てで持つ。legacy `<hookResult>.reason = ...` は廃止済。
+    expect(src).toMatch(
+      /compactHookResult\.additionalContext\s*=\s*compactResult\.additionalContext/,
+    );
+    expect(src).toMatch(
+      /stopHookResult\.additionalContext\s*=\s*stopResult\.additionalContext/,
+    );
+    expect(src).toMatch(
+      /stopHR\.additionalContext\s*=\s*stopRes\.additionalContext/,
+    );
+  });
+});
