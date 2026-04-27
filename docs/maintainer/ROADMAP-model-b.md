@@ -70,10 +70,10 @@ Model B (各 worktree で独立 claude プロセス + 同一ハーネス) へ進
 
 ### Phase 0 完了条件
 
-- [ ] 全 P0.1-11 が commit された
-- [ ] harness-setup check が全て緑
-- [ ] Claude Code の smoke test (`claude --version` + `/harness-plan` 起動) が通る
-- [ ] Codex 1 agent で差分レビュー (敵対的視点) が actionable 0
+- [x] **全 P0.1-11 が commit された** — v0.2.0〜v0.4.3 series で順次 landing。P0.5 (security-auditor frontmatter) / P0.6 (全 6 agent maxTurns) / P0.7 (`tdd-implement.md` plugin 内移動) は content-integrity で lock-in 済
+- [x] **harness-setup check が全て緑** — `commands/harness-setup.md` の expected list が `tdd-implement` / `parallel-worktree` / `pseudo-coderabbit-loop` / `coderabbit-mimic` を含み、`content-integrity.test.ts` `harness-setup check の expected 配列` describe で固定
+- [x] **Claude Code の smoke test (`claude --version` + `/harness-plan` 起動) が通る** — meta-session で `/session-handoff check` 実行 + agent invoke で empirical 検証済
+- [x] **Codex 1 agent で差分レビュー (敵対的視点) が actionable 0** — gen-13 / gen-14 / gen-15 / gen-17 / gen-18 で Codex Phase 7 GO 連続観測、CodeRabbit `request_changes_workflow: true` effective 後は Real CR APPROVED state も auto-fire
 
 ---
 
@@ -93,8 +93,8 @@ Model B (各 worktree で独立 claude プロセス + 同一ハーネス) へ進
 
 ### Phase 1 完了条件
 
-- [ ] `/compact` 後も担当表コンテキスト維持
-- [ ] `harness:worker` 完了時に CI が自動実行
+- [x] **`/compact` 後も担当表コンテキスト維持** — `core/src/hooks/pre-compact.ts` で `readAssignmentTable()` が Plans.md / 担当表を抽出し `additionalContext` として compaction を survive。`hooks.test.ts handlePreCompact` describe で coverage、`harness.config.json work.plansFile` / `work.assignmentSectionMarkers` で project-side 設定可能
+- [x] **`harness:worker` 完了時に CI が自動実行** — `core/src/hooks/subagent-stop.ts` で worker / harness:worker 検出後 ruff / mypy / pytest / typecheck を `runCiCheck()` 経由で safety net 実行。`stop_hook_active` guard で infinite loop 防止 (gen-19、Anthropic spec 準拠)
 - [x] **per-agent model routing が効く (security-auditor に opus、codex-sync に haiku)** — P1.3 / P1.4 実装済 (v4.1)。`model:` frontmatter が agent invocation に propagate することを content-integrity で lock-in 済
 - [x] **session-handoff skill で長期プロジェクト引き継ぎをサポート (P1.7、2026-04-22)**
 - [x] **Codex model registry (harness-dispatched Codex 呼出) の pin 機能** — `plugins/harness/core/src/models/resolver.ts` + `harness.config.schema.json` `models` section + `bin/harness model resolve|check` + codex-sync / codex-team / coderabbit-mimic に `--model` 注入 + `generality.test.ts` B-10 (model slug hardcode 検出)。shipped default は OpenAI 2026-04-24 リリースの GPT-5.5 に pin
