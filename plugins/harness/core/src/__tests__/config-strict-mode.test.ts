@@ -36,6 +36,11 @@
  * try/finally so a thrown assertion never leaks the patched function to
  * subsequent tests.
  *
+ * `captureStderr` accepts both sync and async subjects (`() => T | Promise<T>`)
+ * because `detectAvailableChecks` may be refactored to async in the future
+ * without invalidating the regression guard. Test bodies must `await` the
+ * helper accordingly.
+ *
  * ## Reference
  * - https://vitest.dev/guide/mocking.html (general mocking patterns)
  * - `subagent-stop.ts:99` resolvePythonCandidateDirs implementation
@@ -92,8 +97,15 @@ function makeProject(opts: {
  * calls `process.stderr.write()` directly. We restore the original write
  * function in a `try / finally` so a thrown assertion never leaks the
  * patched stderr into subsequent tests.
+ *
+ * `subject` may be sync or async — internal `await subject()` resolves
+ * sync values immediately and waits for async ones, ensuring stderr
+ * writes performed during async resolution are still captured before
+ * `process.stderr.write` is restored.
  */
-function captureStderr<T>(subject: () => T): { result: T; stderr: string } {
+async function captureStderr<T>(
+  subject: () => T | Promise<T>,
+): Promise<{ result: T; stderr: string }> {
   const originalWrite = process.stderr.write.bind(process.stderr);
   const chunks: string[] = [];
   process.stderr.write = ((chunk: unknown) => {
@@ -101,7 +113,7 @@ function captureStderr<T>(subject: () => T): { result: T; stderr: string } {
     return true;
   }) as typeof process.stderr.write;
   try {
-    const result = subject();
+    const result = await subject();
     return { result, stderr: chunks.join("") };
   } finally {
     process.stderr.write = originalWrite as typeof process.stderr.write;
@@ -109,7 +121,7 @@ function captureStderr<T>(subject: () => T): { result: T; stderr: string } {
 }
 
 describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnings", () => {
-  it("config が parse 失敗 (broken JSON) → 'parse failed' warning + default fallback", () => {
+  it("config が parse 失敗 (broken JSON) → 'parse failed' warning + default fallback", async () => {
     // 不完全な JSON で loadConfigWithError が parse error を返す → fail-open。
     const dir = makeProject({
       hasPyproject: true,
@@ -117,7 +129,9 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
       rawHarnessConfig: "{ broken json",
     });
 
-    const { result, stderr } = captureStderr(() => detectAvailableChecks(dir));
+    const { result, stderr } = await captureStderr(() =>
+      detectAvailableChecks(dir),
+    );
 
     // Fall-back behavior: default ['src', 'app'] が使われる → src/ が ruff target
     const ruff = result.find((c) => c.tool === "ruff");
@@ -129,7 +143,7 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
     expect(stderr).toContain('["src", "app"]');
   });
 
-  it("tooling.pythonCandidateDirs が string (非配列) → shape-invalid warning + default fallback", () => {
+  it("tooling.pythonCandidateDirs が string (非配列) → shape-invalid warning + default fallback", async () => {
     const dir = makeProject({
       hasPyproject: true,
       hasSrc: true,
@@ -138,7 +152,9 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
       },
     });
 
-    const { result, stderr } = captureStderr(() => detectAvailableChecks(dir));
+    const { result, stderr } = await captureStderr(() =>
+      detectAvailableChecks(dir),
+    );
 
     const ruff = result.find((c) => c.tool === "ruff");
     expect(ruff?.command).toContain("src/");
@@ -151,7 +167,7 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
     expect(stderr).toContain('"not-an-array"');
   });
 
-  it("tooling.pythonCandidateDirs が非文字列を含む配列 → shape-invalid warning", () => {
+  it("tooling.pythonCandidateDirs が非文字列を含む配列 → shape-invalid warning", async () => {
     const dir = makeProject({
       hasPyproject: true,
       hasSrc: true,
@@ -160,7 +176,9 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
       },
     });
 
-    const { result, stderr } = captureStderr(() => detectAvailableChecks(dir));
+    const { result, stderr } = await captureStderr(() =>
+      detectAvailableChecks(dir),
+    );
 
     // shape invalid → defaults
     const ruff = result.find((c) => c.tool === "ruff");
@@ -169,7 +187,7 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
     expect(stderr).toContain("shape invalid");
   });
 
-  it("tooling.pythonCandidateDirs に shell-metacharacter entry → 'rejected' security warning", () => {
+  it("tooling.pythonCandidateDirs に shell-metacharacter entry → 'rejected' security warning", async () => {
     // Shell injection 防止 allowlist regex `/^[a-zA-Z0-9_.-]+$/` を violate。
     // `$(touch PWNED)` 等の command substitution は reject される。
     const dir = makeProject({
@@ -180,7 +198,9 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
       },
     });
 
-    const { result, stderr } = captureStderr(() => detectAvailableChecks(dir));
+    const { result, stderr } = await captureStderr(() =>
+      detectAvailableChecks(dir),
+    );
 
     // Safe entry "src" は kept、unsafe は rejected → ruff target に "src/" が残る
     const ruff = result.find((c) => c.tool === "ruff");
@@ -195,7 +215,7 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
     expect(stderr).toContain("/^[a-zA-Z0-9_.-]+$/");
   });
 
-  it("path separator entry (e.g., '../etc') → 'rejected' security warning", () => {
+  it("path separator entry (e.g., '../etc') → 'rejected' security warning", async () => {
     const dir = makeProject({
       hasPyproject: true,
       hasSrc: true,
@@ -204,7 +224,9 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
       },
     });
 
-    const { result, stderr } = captureStderr(() => detectAvailableChecks(dir));
+    const { result, stderr } = await captureStderr(() =>
+      detectAvailableChecks(dir),
+    );
 
     const ruff = result.find((c) => c.tool === "ruff");
     expect(ruff?.command).toContain("src/");
@@ -214,7 +236,7 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
     expect(stderr).toContain("../etc");
   });
 
-  it("全 entry が unsafe → defaults fallback + rejected warning", () => {
+  it("全 entry が unsafe → defaults fallback + rejected warning", async () => {
     // 安全な entry が 1 つも無いケース。default `['src', 'app']` に fallback。
     const dir = makeProject({
       hasPyproject: true,
@@ -224,7 +246,9 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
       },
     });
 
-    const { result, stderr } = captureStderr(() => detectAvailableChecks(dir));
+    const { result, stderr } = await captureStderr(() =>
+      detectAvailableChecks(dir),
+    );
 
     // src/ は default で拾える (hasSrc=true)
     const ruff = result.find((c) => c.tool === "ruff");
@@ -236,7 +260,7 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
     expect(stderr).toContain("/etc/passwd");
   });
 
-  it("正常な config (string entries) → stderr 出力なし (silent path)", () => {
+  it("正常な config (string entries) → stderr 出力なし (silent path)", async () => {
     // Sanity check: config が valid なら stderr に何も出ないこと (regression guard
     // for "always emit warnings" bug)。
     const dir = makeProject({
@@ -247,17 +271,17 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
       },
     });
 
-    const { stderr } = captureStderr(() => detectAvailableChecks(dir));
+    const { stderr } = await captureStderr(() => detectAvailableChecks(dir));
 
     expect(stderr).toBe("");
   });
 
-  it("config 不在 → stderr 出力なし (default 経路)", () => {
+  it("config 不在 → stderr 出力なし (default 経路)", async () => {
     // harness.config.json が無い場合は最も一般的な case で、stderr に
     // 何も出ないことを確認 (silent default path)。
     const dir = makeProject({ hasPyproject: true, hasSrc: true });
 
-    const { stderr } = captureStderr(() => detectAvailableChecks(dir));
+    const { stderr } = await captureStderr(() => detectAvailableChecks(dir));
 
     expect(stderr).toBe("");
   });
