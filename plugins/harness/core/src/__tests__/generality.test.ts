@@ -2212,7 +2212,16 @@ describe("codex-sync.md parallel dispatch cross-reference fixation", () => {
   function extractSection(): string {
     const idx = content.indexOf(subsectionHeader);
     if (idx === -1) return "";
-    const next = content.indexOf("\n## ", idx);
+    // Terminate at the next `### ` (sibling subsection) OR `## ` (parent
+    // section change), whichever comes first. Splitting only on `## ` would
+    // accidentally include any future sibling `### ` added under the same
+    // parent, expanding the zone-scoped check beyond the intended subsection.
+    const start = idx + subsectionHeader.length;
+    const candidates = [
+      content.indexOf("\n### ", start),
+      content.indexOf("\n## ", start),
+    ].filter((n) => n !== -1);
+    const next = candidates.length > 0 ? Math.min(...candidates) : -1;
     return content.slice(idx, next === -1 ? content.length : next);
   }
 
