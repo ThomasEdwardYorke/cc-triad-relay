@@ -194,6 +194,46 @@ interface BacklogEntry {
 **Plans.md mode (legacy)**: 既存ロジックを変更せず、`Plans.md` 担当表 + assignmentSectionMarkers
 で抽出する従来経路を継続。**zero-diff for existing users**。
 
+#### Maintainer-mode (meta-session) use case
+
+harness plugin **自身の改修 session (meta-session)** で `/harness-work` を使うには、
+plugin repo (例: `~/.claude/plugins/marketplaces/<plugin-name>/`) に
+`harness.config.json` を置き、`work.taskTrackerMode = "handoff"` を宣言する。
+これにより既存の handoff mode が **そのまま maintainer use case として機能** する。
+
+**設定例** (plugin `harness.config.json`):
+
+```jsonc
+{
+  "work": {
+    "taskTrackerMode": "handoff",
+    "handoffPaths": {
+      "roadmap":   "docs/maintainer/ROADMAP-<scope>.md",
+      "backlog":   "docs/maintainer/BACKLOG-<scope>.md",
+      "current":   "docs/maintainer/CURRENT-<scope>.md",
+      "decisions": "docs/maintainer/DECISIONS-<scope>.md"
+    }
+  }
+}
+```
+
+これにより `/harness-work` は plugin の **maintainer task** を `parseBacklog()` で
+抽出し、Auto Mode Detection (Solo / Parallel / Breezing) を適用、`/tdd-implement`
+v2 / `/parallel-worktree` v1 に委譲する。Plans.md 駆動 (consumer 側) と
+完全対称、新 flag は不要 (既存 `taskTrackerMode` config field で同等以上の制御が可能)。
+
+**意図的に project-specific flag (例: `--<project-name>-mode` 形のような naming)
+を新設しない理由**:
+- 既存 `taskTrackerMode = "handoff"` で同等以上の制御が可能
+- project-specific flag naming は **R2 (内部識別子 leak) 違反リスク** が高い
+- generic config field (`taskTrackerMode`) であれば全 consumer / maintainer で再利用可能
+
+generality CI test pattern **B-3g** が `--<project-name>-mode` 形の
+project-specific flag naming が plugin shipped spec に混入することを CI 段階で
+block する (将来 leak 予防の forcing function)。具体的 block 対象 list は
+`plugins/harness/core/src/__tests__/generality.test.ts` の B-3g pattern
+定義を参照。
+
 #### Step 0 が確定する dispatch source は以降の全 step に適用される (重要)
 
 Step 0 で得た **dispatch source** (Plans.md path もしくは BacklogEntry[]) と **mode tag** (`plans` / `handoff`) は、以降の **Pre-flight / Step 1 / Step 3 / Step 5 / state-update** すべてで参照される。各 step は次のアダプタ規約に従う:
