@@ -758,6 +758,148 @@ describe("disable-model-invocation for side-effecting workflows (Anthropic skill
   );
 });
 
+/**
+ * Anthropic Claude Code slash command frontmatter の field 順序は公式 spec で
+ * 定義されていない (community convention、公式 docs reference:
+ * https://code.claude.com/docs/en/slash-commands#frontmatter-reference)。
+ * 本 plugin の 14 commands は一貫した canonical order を採用しており、
+ * drift を CI で阻止する regression guard。
+ *
+ * canonical order:
+ *   name → description → description-ja → allowed-tools → argument-hint →
+ *   disable-model-invocation → context
+ *
+ * 各 command は subset (一部 field 不在) で OK。出現する field の **相対順序**
+ * のみを assert する (subsequence 判定)。新規 field を導入する際は
+ * CANONICAL_FIELD_ORDER list を更新する。
+ */
+describe("slash command frontmatter — canonical field order (community convention lock-in)", () => {
+  const CANONICAL_FIELD_ORDER = [
+    "name",
+    "description",
+    "description-ja",
+    "allowed-tools",
+    "argument-hint",
+    "disable-model-invocation",
+    "context",
+  ] as const;
+
+  /**
+   * Frontmatter 文字列から top-level YAML key の出現順序を抽出する。
+   *
+   * - 行頭 (空白なし) に `<key>:` の pattern がある行のみ key として認識
+   * - 配列 / インデント続行行 (`  - item` / `  key: val`) は無視
+   * - CANONICAL_FIELD_ORDER に含まれる key のみを抽出 (将来追加 field は
+   *   本テストの対象外、describe 内 list 更新で対応)
+   *
+   * **前提制約 (重要)**:
+   * 本 helper は frontmatter 全 field 値が **inline single-line** で記述
+   * されることを前提とする。multiline YAML block scalar (`|` / `>` style)
+   * を field value に使うと、continuation 行の text が `key:` パターンに
+   * match して false positive になる (例: 値内の "name: foo" が新 key と
+   * 誤判定される)。現状の 14 commands は全 field が inline で対応済だが、
+   * 将来 multiline 記述が必要になった場合は本 helper を `parseYaml(...)`
+   * + `Object.keys()` 経由に書き換える (yaml library は import 済)。
+   *
+   * 本制約は別の sanity test (block scalar marker 不在を全 commands で assert)
+   * で固定し、drift を CI で検知する。
+   */
+  function extractTopLevelKeys(frontmatter: string): string[] {
+    const keys: string[] = [];
+    for (const line of frontmatter.split(/\r?\n/)) {
+      const match = /^([a-z][a-z0-9-]*):/.exec(line);
+      if (!match) continue;
+      const key = match[1]!;
+      if ((CANONICAL_FIELD_ORDER as readonly string[]).includes(key)) {
+        keys.push(key);
+      }
+    }
+    return keys;
+  }
+
+  it("CANONICAL_FIELD_ORDER list は 7 要素で重複なし (sanity guard)", () => {
+    expect(CANONICAL_FIELD_ORDER.length).toBe(7);
+    expect(new Set(CANONICAL_FIELD_ORDER).size).toBe(7);
+  });
+
+  it.each(COMMAND_NAMES)(
+    "%s command の frontmatter には multiline block scalar marker (`|` / `>`) が含まれない (extractTopLevelKeys 前提)",
+    (name) => {
+      // extractTopLevelKeys は inline single-line frontmatter 前提のため、
+      // multiline block scalar (`description: |` / `description: >` のような
+      // YAML block scalar style) が混入すると continuation 行の text が新 key
+      // と誤判定される false positive 経路を持つ。本 sanity test は 14 commands
+      // 全件で block scalar marker が値部分に出現しないことを assert し、
+      // helper の前提を CI で固定する。drift があれば即時検知され、
+      // helper を parseYaml ベースに refactor すべき signal となる。
+      const fm = extractFrontmatter(readCommand(name));
+      // YAML block scalar marker: `key: |` / `key: >` の各種 combination:
+      //   - 単独: `|` / `>`
+      //   - chomp indicator: `|+` / `|-` / `>+` / `>-`
+      //   - indentation indicator: `|1` 〜 `|9` / `>1` 〜 `>9`
+      //   - chomp + indentation combination (両順序): `|2+` / `|+2` / `>3-` / `>-3`
+      // 文字クラス `[+\-0-9]*` で全 combination を catch。order 検証は YAML
+      // parser の責務 (本 helper は detection 専念)。
+      const blockScalarLines = fm
+        .split(/\r?\n/)
+        .filter((line) => /^[a-z][a-z0-9-]*:\s+[|>][+\-0-9]*\s*$/.test(line));
+      expect(
+        blockScalarLines,
+        `${name}.md: multiline block scalar が検出されました。inline single-line に書き換えるか、` +
+          `extractTopLevelKeys を parseYaml ベースに refactor してください。検出行: ${blockScalarLines.join(" / ")}`,
+      ).toEqual([]);
+    },
+  );
+
+  /**
+   * forcing function: 未知の top-level field が frontmatter に追加された時、
+   * `extractTopLevelKeys` は CANONICAL_FIELD_ORDER でない key を先に filter
+   * で捨てる設計のため、subsequence 判定では検知できない (false negative
+   * 経路)。新規 field 追加時に CANONICAL_FIELD_ORDER list を更新する強制力
+   * を CI で持つため、別 it.each で全 14 commands に対し未知 top-level key
+   * が出現しないことを assert する。drift があれば即時 fail し、
+   * CANONICAL_FIELD_ORDER 更新の signal となる。
+   */
+  it.each(COMMAND_NAMES)(
+    "%s command の frontmatter に未知の top-level field がない (CANONICAL_FIELD_ORDER 同期 forcing function)",
+    (name) => {
+      const fm = extractFrontmatter(readCommand(name));
+      const allTopLevelKeys = fm
+        .split(/\r?\n/)
+        .flatMap((line) => /^([a-z][a-z0-9-]*):/.exec(line)?.[1] ?? []);
+      const unknown = allTopLevelKeys.filter(
+        (key) =>
+          !(CANONICAL_FIELD_ORDER as readonly string[]).includes(key),
+      );
+      expect(
+        unknown,
+        `${name}.md: CANONICAL_FIELD_ORDER を更新してください。unknown fields: ${unknown.join(", ")}`,
+      ).toEqual([]);
+    },
+  );
+
+  it.each(COMMAND_NAMES)(
+    "%s command の frontmatter field は canonical order の subsequence",
+    (name) => {
+      const fm = extractFrontmatter(readCommand(name));
+      const actual = extractTopLevelKeys(fm);
+
+      // canonical の中で actual の各 key の index を取り、strictly increasing で
+      // あること (subsequence 判定 = 抜けは OK、順序逆転は NG)。
+      const indices = actual.map((k) =>
+        (CANONICAL_FIELD_ORDER as readonly string[]).indexOf(k),
+      );
+      for (let i = 1; i < indices.length; i++) {
+        expect(
+          indices[i],
+          `${name}.md: field "${actual[i]}" appears AFTER "${actual[i - 1]}" in canonical order. ` +
+            `Got: ${actual.join(" → ")}`,
+        ).toBeGreaterThan(indices[i - 1]!);
+      }
+    },
+  );
+});
+
 describe("coderabbit-review command の Step 2.6 chat bucket helper", () => {
   const content = readCommand("coderabbit-review");
 
