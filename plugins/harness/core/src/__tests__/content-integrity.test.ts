@@ -4932,3 +4932,56 @@ describe("Track A — Stop / SubagentStop / PreCompact hookSpecificOutput lift d
     );
   });
 });
+
+// ============================================================
+// Track D — Skill 並列性 (Skill concurrent invocation) doc lock-in
+//
+// `docs/maintainer/skill-parallelism.md` (PR #59 で main 入り) の重要 anchor
+// を content-integrity に固定する。Skill spec から `--parallel=N` flag /
+// `concurrency` field が **存在しない** ことを documenting し、harness 独自
+// の Agent tool fan-out pattern が Skill spec 準拠であることを記述している。
+// 将来 doc を整理する際にこれら anchor が削除されると、Anthropic 公式提案
+// (GitHub Feature request draft) の根拠が失われるため drift guard を入れる。
+// ============================================================
+
+describe("Track D — docs/maintainer/skill-parallelism.md anchor lock-in", () => {
+  const docPath = resolve(
+    PLUGIN_ROOT,
+    "../../docs/maintainer/skill-parallelism.md",
+  );
+
+  it("documents the absence of `--parallel` / `concurrency` skill frontmatter (Anthropic spec)", () => {
+    const content = readFileSync(docPath, "utf-8");
+    // Spec 上の事実: Skill frontmatter に `--parallel` / `concurrency` field
+    // は存在しない。これは Anthropic 公式提案 (GitHub Feature request) の根拠。
+    expect(content).toMatch(/`--parallel`/);
+    expect(content).toMatch(/`concurrency`/);
+    expect(content).toMatch(/存在しない|not\s+exist/i);
+  });
+
+  it("documents the harness Agent-tool fan-out pattern as spec-compliant", () => {
+    const content = readFileSync(docPath, "utf-8");
+    // harness `/parallel-worktree` の Agent tool fan-out pattern は
+    // Skill spec 違反ではなく、Skill 内から Agent tool を spawn する公式
+    // documented mechanism の応用 (run_in_background=true).
+    expect(content).toMatch(/Agent\s*tool/i);
+    expect(content).toMatch(/fan\s*out/i);
+    expect(content).toMatch(/run_in_background/);
+    expect(content).toMatch(/\/parallel-worktree/);
+  });
+
+  it("references the official Anthropic skills/sdk docs (primary source)", () => {
+    const content = readFileSync(docPath, "utf-8");
+    // 一次資料 URL を必ず保持。proposal を上流に出すときの引用に使う。
+    expect(content).toMatch(/code\.claude\.com\/docs\/en\/skills/);
+    expect(content).toMatch(/code\.claude\.com\/docs\/en\/sdk/);
+  });
+
+  it("contains the upstream proposal draft (GitHub Feature request)", () => {
+    const content = readFileSync(docPath, "utf-8");
+    // 長期 proposal section: upstream Anthropic への Feature request draft が
+    // doc に含まれていることを lock-in。proposal を削除する将来変更を block。
+    expect(content).toMatch(/proposal|propose|feature\s+request/i);
+    expect(content).toMatch(/parallelism|--parallel=N|--parallel\s*=\s*N/);
+  });
+});
