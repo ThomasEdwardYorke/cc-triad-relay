@@ -61,10 +61,10 @@ export interface SessionStartResult {
 }
 
 const SOURCE_RESUME_HINT =
-  "[SessionStart source=resume] Session resumed from prior state. Re-read handoff docs / Plans.md / open PRs before continuing previous work.";
+  "[SessionStart source=resume] Session resumed from prior state. Re-check your handoff notes and active review context before continuing prior work.";
 
 const SOURCE_COMPACT_HINT =
-  "[SessionStart source=compact] Session continued after compaction. PreCompact has already injected project state into earlier context; verify the assignment table and open PRs above before resuming work.";
+  "[SessionStart source=compact] Session continued after compaction. PreCompact has already injected relevant project state into earlier context; verify it above before resuming work.";
 
 function sanitizeAdditionalContextLine(line: string): string {
   return line.replace(/\r\n|[\n\r]/g, "\\n");
