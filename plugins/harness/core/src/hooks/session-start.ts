@@ -35,11 +35,13 @@
  * ## Sanitization
  *
  * `additionalContext` is sanitized through `sanitizeAdditionalContextLine`
- * (mirrors the same guard in `stop.ts`): raw `\r\n` / `\n` / `\r` /
- * U+2028 LINE SEPARATOR / U+2029 PARAGRAPH SEPARATOR are escaped to the
- * two-character literal `\\n`. The hint strings here are static so this is
- * defense-in-depth, but the contract still holds: any future dynamic
- * content cannot smuggle fake section boundaries.
+ * (same smuggling-guard intent as `stop.ts`; this file additionally escapes
+ * U+2028 LINE SEPARATOR / U+2029 PARAGRAPH SEPARATOR — `stop.ts` will be
+ * brought to parity in a separate DRY-refactor follow-up PR): raw `\r\n` /
+ * `\n` / `\r` / U+2028 / U+2029 are escaped to the two-character literal
+ * `\\n`. The hint strings here are static so this is defense-in-depth, but
+ * the contract still holds: any future dynamic content cannot smuggle fake
+ * section boundaries.
  */
 
 export interface SessionStartInput {
