@@ -316,6 +316,21 @@ agent itself never reads or mutates the env var — the remediation lives
 with the human operator / caller, because the truncation happens one
 layer above this agent's blast radius.
 
+### When parallel dispatch amplifies the risk
+
+The truncation discussed above is a per-agent cap. When a parent
+dispatches multiple `codex-sync` agents in parallel and observes some
+children stopping mid-response even though each individual response
+fits well within `TASK_MAX_OUTPUT_LENGTH`, the bottleneck is the
+*parent* subagent's own context budget — the same scenario that
+motivated the "Output File Redirect (optional, prompt-driven)" mode
+above. Set the `[output-file: ...]` marker on each child to keep
+inline payloads off the parent budget.
+
+Upstream Codex CLI does not currently publish a hard `codex exec`
+stdout cap, so this remains an empirical observation rather than a
+documented limit.
+
 ## Routing Guide
 
 - **Short tasks where a synchronous result is required** -> this agent (`codex-sync`)

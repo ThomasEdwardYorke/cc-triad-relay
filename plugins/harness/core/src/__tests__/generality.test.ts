@@ -2195,3 +2195,66 @@ describe("exemption grammar (unified, pipe-separated)", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// codex-sync.md parallel dispatch cross-reference fixation
+// ---------------------------------------------------------------------------
+// Output File Redirect section と Mid-Response Truncation section を結ぶ
+// cross-reference subsection を CI で固定する。複数 codex-sync agent を
+// parallel dispatch した際の **parent subagent budget 累積** という別 symptom
+// を、既に shipped 済の `[output-file: ...]` redirect 機能に誘導する役割。
+// 将来の編集で subsection が削除 / orphan 化した場合に PR を blocking する。
+describe("codex-sync.md parallel dispatch cross-reference fixation", () => {
+  const specPath = resolve(PLUGIN_ROOT, "agents/codex-sync.md");
+  const content = readFileSync(specPath, "utf8");
+  const subsectionHeader = "### When parallel dispatch amplifies the risk";
+
+  function extractSection(): string {
+    const idx = content.indexOf(subsectionHeader);
+    if (idx === -1) return "";
+    // Terminate at the next `### ` (sibling subsection) OR `## ` (parent
+    // section change), whichever comes first. Splitting only on `## ` would
+    // accidentally include any future sibling `### ` added under the same
+    // parent, expanding the zone-scoped check beyond the intended subsection.
+    const start = idx + subsectionHeader.length;
+    const candidates = [
+      content.indexOf("\n### ", start),
+      content.indexOf("\n## ", start),
+    ].filter((n) => n !== -1);
+    const next = candidates.length > 0 ? Math.min(...candidates) : -1;
+    return content.slice(idx, next === -1 ? content.length : next);
+  }
+
+  it("subsection header が codex-sync.md に存在する (presence guard)", () => {
+    expect(content).toContain(subsectionHeader);
+  });
+
+  it("既存 'Output File Redirect' parent section header が存在する (rename / removal を blocking)", () => {
+    expect(content).toContain("## Output File Redirect (optional, prompt-driven)");
+  });
+
+  it("subsection が既存 Output File Redirect 機能への cross-reference を含む (orphan 化防止)", () => {
+    const section = extractSection();
+    expect(section.length).toBeGreaterThan(0);
+    expect(section).toMatch(/output-file|Output File Redirect/i);
+  });
+
+  it("subsection が project-local leak / locale-specific / 具体数値を含まない (zone scan)", () => {
+    const section = extractSection();
+    expect(section.length).toBeGreaterThan(0);
+    // R2 (project-specific identifiers) / R3 (generic placeholders).
+    // gen-N pattern intentionally aligned with the project-wide B-3f
+    // blocklist — `(?<![\w-])gen-\d+\b` is fixed by 4 negative regression
+    // tests (gen-1.3 / regen-13 / case variants); broadening the pattern
+    // would break those CI guards.
+    expect(section).not.toMatch(/parts-management|new-partslist/);
+    expect(section).not.toMatch(/(?<![\w-])gen-\d+\b/);
+    expect(section).not.toMatch(/Phase\s+\d+|Round\s+\d+/);
+    expect(section).not.toMatch(/\bD-\d+\b/);
+    // R3 locale: 日本語 / CJK 文字混入なし (English-first shipped spec)
+    expect(section).not.toMatch(/[　-〿぀-ゟ゠-ヿ一-鿿]/);
+    // session-specific empirical 数値 leak guard — narrow to "<N> agents" / "<N> parallel"
+    // (workers / children は legit 表現 e.g. "32-bit children" との衝突回避で除外)
+    expect(section).not.toMatch(/\b\d+\+?\s*(agents?|parallel)\b/i);
+  });
+});
