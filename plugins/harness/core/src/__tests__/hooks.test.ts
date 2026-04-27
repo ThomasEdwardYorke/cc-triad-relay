@@ -402,6 +402,11 @@ describe("handleSubagentStop stop_hook_active guard (infinite loop prevention)",
     });
     expect(result.decision).toBe("approve");
     expect(result.ciTriggered).toBe(true);
+    // 対称性 guard (Pseudo CR Track B finding 対応): false 経路で実際に
+    // execSync が呼ばれていることを assert し、guard が誤って通常経路まで
+    // 遮断するバグを検出可能にする。beforeEach で mockReset 済のため追加
+    // コストなし。
+    expect(mockedExecSync).toHaveBeenCalled();
   });
 
   it("stop_hook_active 不在 (legacy) は CI を通常どおり実行する (backwards compatible)", async () => {
@@ -413,6 +418,9 @@ describe("handleSubagentStop stop_hook_active guard (infinite loop prevention)",
     });
     expect(result.decision).toBe("approve");
     expect(result.ciTriggered).toBe(true);
+    // 対称性 guard: undefined 経路でも execSync が走ることを assert
+    // (=undefined → typeof "boolean" guard で除外されないことの担保)。
+    expect(mockedExecSync).toHaveBeenCalled();
   });
 
   it("stop_hook_active=true + 非 worker agent は worker 通過と同じ早期 approve", async () => {
