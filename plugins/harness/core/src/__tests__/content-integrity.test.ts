@@ -529,6 +529,45 @@ describe("worker agent の Co-Authored-By プレースホルダー", () => {
   });
 });
 
+/**
+ * `hooks.json` の SessionStart 登録は Anthropic SessionStart spec で
+ * non-blocking に分類される (timeout 経過後 dispatcher は continue、
+ * additionalContext は best-effort で Claude に届く)。誤って `timeout` を
+ * 大きく変更したり `blocking: true` を付与すると、session 起動が遅延 / fail
+ * になり UX が破綻する。timeout 値と blocking flag 不在を test で固定し
+ * drift を阻止する regression guard。
+ *
+ * 同様の guard が将来必要になる hook 種別 (PreCompact / SubagentStop 等) は
+ * 順次追加。本 test の対象は SessionStart のみ。
+ */
+describe("hooks.json — SessionStart timeout regression guard", () => {
+  const hooksJsonPath = resolve(PLUGIN_ROOT, "hooks", "hooks.json");
+  const hooksJson = JSON.parse(readFileSync(hooksJsonPath, "utf-8"));
+
+  it("SessionStart 配列の先頭エントリに timeout: 15 が登録されている", () => {
+    const sessionStartEntries = hooksJson.hooks?.SessionStart;
+    expect(Array.isArray(sessionStartEntries)).toBe(true);
+    expect(sessionStartEntries.length).toBeGreaterThan(0);
+    const firstHook = sessionStartEntries[0]?.hooks?.[0];
+    expect(firstHook?.timeout).toBe(15);
+  });
+
+  it("SessionStart 配列の先頭エントリに blocking フラグは付与されていない (non-blocking 維持)", () => {
+    // Anthropic SessionStart spec: hook は非 blocking のまま運用する。
+    // additionalContext の注入は non-blocking でも届く設計 (pre-compact.ts
+    // / task-lifecycle.ts と同じ)。誤って blocking 化したら session 起動
+    // 遅延 / failure を招くため明示的に `blocking` field の不在を assert。
+    const firstHook = hooksJson.hooks?.SessionStart?.[0]?.hooks?.[0];
+    expect(firstHook?.blocking).toBeUndefined();
+  });
+
+  it("SessionStart の dispatcher コマンドが core/dist/index.js への session-start route を呼出す", () => {
+    const firstHook = hooksJson.hooks?.SessionStart?.[0]?.hooks?.[0];
+    expect(firstHook?.command).toContain("hook-dispatcher.mjs");
+    expect(firstHook?.command).toContain("session-start");
+  });
+});
+
 describe("harness-setup check の expected 配列", () => {
   const binSource = readFileSync(
     resolve(PLUGIN_ROOT, "bin", "harness"),
