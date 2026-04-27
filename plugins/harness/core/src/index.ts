@@ -626,28 +626,35 @@ async function main(): Promise<void> {
     hookType === "user-prompt-submit" ||
     hookType === "post-tool-use-failure" ||
     hookType === "config-change" ||
-    hookType === "subagent-start"
+    hookType === "subagent-start" ||
+    hookType === "session-start"
   ) {
-    // UserPromptSubmit / PostToolUseFailure / ConfigChange / SubagentStart:
-    // 公式仕様 (https://code.claude.com/docs/en/hooks) の
+    // UserPromptSubmit / PostToolUseFailure / ConfigChange / SubagentStart /
+    // SessionStart: 公式仕様 (https://code.claude.com/docs/en/hooks) の
     // `hookSpecificOutput.additionalContext` / `sessionTitle` に lift して
     // stdout に JSON を書く。decision=block 時は top-level の decision/reason
     // も load する (ConfigChange では opt-in block、UserPromptSubmit では
-    // prompt 拒否、SubagentStart は block 非対応のため常に approve)。
+    // prompt 拒否、SubagentStart / SessionStart は block 非対応のため常に
+    // approve)。SessionStart は公式 spec で `decision` field 非サポート、
+    // `decision: "approve"` を internal sentinel として handler に残しつつ、
+    // dispatcher で wire output から omit することで spec 準拠
+    // (Codex pre-flight Q1 finding により Anthropic 公式 hooks reference 確認済)。
     //
     // hookEventName mapping (公式 event 名 vs harness dispatch 名):
     //   - user-prompt-submit → "UserPromptSubmit"
     //   - post-tool-use-failure → "PostToolUseFailure"
     //   - config-change → "ConfigChange"
     //   - subagent-start → "SubagentStart"
+    //   - session-start → "SessionStart" (decision omit、SessionStart は spec で decision 非サポート)
     // content-integrity invariant (see __tests__/content-integrity.test.ts):
     // `hookEventName` 識別子から 200 chars 以内に各公式 event 名リテラルが
-    // 並ぶこと。inline lookup table で 4 branch (将来 5+ も) を表現する。
+    // 並ぶこと。inline lookup table で 5 branch (将来 6+ も) を表現する。
     const hookEventName = ({
       "user-prompt-submit": "UserPromptSubmit",
       "post-tool-use-failure": "PostToolUseFailure",
       "config-change": "ConfigChange",
       "subagent-start": "SubagentStart",
+      "session-start": "SessionStart",
     } as Record<string, string>)[hookType] ?? "UserPromptSubmit";
     const out: Record<string, unknown> = {};
     if (result.decision === "block") {

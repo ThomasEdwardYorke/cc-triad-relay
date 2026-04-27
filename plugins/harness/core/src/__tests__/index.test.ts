@@ -874,18 +874,58 @@ describe("main() entrypoint fail-open (e2e child-process contract)", () => {
   );
 
   it.skipIf(!distExists)(
-    "session-start accepts empty stdin and returns a bare approve",
+    "session-start accepts empty stdin and returns spec-compliant wire output (decision omitted)",
     () => {
+      // SessionStart は Anthropic 公式 hooks reference で `decision` field
+      // 非サポート (Codex pre-flight Q1 finding 確認済)。internal handler は
+      // `decision: "approve"` を sentinel として返すが、dispatcher が wire
+      // output から omit して spec 準拠の JSON を出力する。
       const result = spawnSync(process.execPath, [distPath, "session-start"], {
         input: "",
         encoding: "utf-8",
         timeout: 5_000,
       });
       expect(result.status).toBe(0);
-      const parsed = JSON.parse(result.stdout.trim()) as {
-        decision: string;
-      };
-      expect(parsed.decision).toBe("approve");
+      const parsed = JSON.parse(result.stdout.trim()) as Record<
+        string,
+        unknown
+      >;
+      // wire output から decision field が omit されている (spec 準拠)
+      expect(parsed["decision"]).toBeUndefined();
+      // empty input + no source → bare approve、hookSpecificOutput.additionalContext
+      // も無い (handler が何も hint しない)
+      expect(parsed["hookSpecificOutput"]).toBeUndefined();
+    },
+  );
+
+  it.skipIf(!distExists)(
+    "session-start with source=resume lifts additionalContext to hookSpecificOutput (spec-compliant)",
+    () => {
+      // resume hint の追加は wire output で `hookSpecificOutput.additionalContext`
+      // に lift される (公式 spec 準拠)。top-level に出ない、`decision` も omit。
+      const result = spawnSync(process.execPath, [distPath, "session-start"], {
+        input: JSON.stringify({
+          hook_event_name: "SessionStart",
+          source: "resume",
+        }),
+        encoding: "utf-8",
+        timeout: 5_000,
+      });
+      expect(result.status).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim()) as Record<
+        string,
+        unknown
+      >;
+      // decision は wire output に出ない
+      expect(parsed["decision"]).toBeUndefined();
+      // additionalContext は hookSpecificOutput.additionalContext に lift
+      const hso = parsed["hookSpecificOutput"] as
+        | Record<string, unknown>
+        | undefined;
+      expect(hso).toBeDefined();
+      expect(hso?.["hookEventName"]).toBe("SessionStart");
+      expect(typeof hso?.["additionalContext"]).toBe("string");
+      expect(String(hso?.["additionalContext"])).toContain("resume");
     },
   );
 
