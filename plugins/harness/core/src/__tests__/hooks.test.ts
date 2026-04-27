@@ -363,6 +363,73 @@ describe("handleSubagentStop", () => {
   });
 });
 
+/**
+ * Anthropic Claude Code SubagentStop spec (https://code.claude.com/docs/en/hooks)
+ * では `stop_hook_active` boolean が true のときに hook を再 fire しない契約。
+ * `stop.ts` は既に対応済 (line 22)、`subagent-stop.ts` は未対応で、worker
+ * の連続実行 → SubagentStop hook 再帰起動という infinite loop の余地があった。
+ * 本ガードで早期 bare approve に落とし、CI 再実行を抑止する。
+ */
+describe("handleSubagentStop stop_hook_active guard (infinite loop prevention)", () => {
+  const baseInput = {
+    hook_event_name: "SubagentStop",
+    session_id: "sess-loop-guard",
+    agent_type: "worker",
+    agent_id: "agent-loop",
+  };
+
+  it("stop_hook_active=true は CI を実行せず bare approve に落ちる (worker でも)", async () => {
+    const dir = makeTempProject({ hasPyproject: true, hasSrc: true, hasTests: true });
+    const result = await handleSubagentStop({
+      ...baseInput,
+      cwd: dir,
+      stop_hook_active: true,
+    });
+    expect(result.decision).toBe("approve");
+    expect(result.ciTriggered).toBe(false);
+    expect(result.ciResults).toBeUndefined();
+    expect(result.additionalContext).toBeUndefined();
+    // CI を実行していないので execSync は 1 回も呼ばれていないこと
+    expect(mockedExecSync).not.toHaveBeenCalled();
+  });
+
+  it("stop_hook_active=false は CI を通常どおり実行する", async () => {
+    const dir = makeTempProject({ hasPyproject: true, hasSrc: true });
+    const result = await handleSubagentStop({
+      ...baseInput,
+      cwd: dir,
+      stop_hook_active: false,
+    });
+    expect(result.decision).toBe("approve");
+    expect(result.ciTriggered).toBe(true);
+  });
+
+  it("stop_hook_active 不在 (legacy) は CI を通常どおり実行する (backwards compatible)", async () => {
+    const dir = makeTempProject({ hasPyproject: true, hasSrc: true });
+    const result = await handleSubagentStop({
+      ...baseInput,
+      cwd: dir,
+      // stop_hook_active は意図的に渡さない (legacy 動作の検証)
+    });
+    expect(result.decision).toBe("approve");
+    expect(result.ciTriggered).toBe(true);
+  });
+
+  it("stop_hook_active=true + 非 worker agent は worker 通過と同じ早期 approve", async () => {
+    // 非 worker は元々 CI を実行しないが、stop_hook_active true でも
+    // 動作が壊れないことを検証 (early-return 経路の優先順位確認)。
+    const result = await handleSubagentStop({
+      ...baseInput,
+      agent_type: "reviewer",
+      cwd: "/tmp",
+      stop_hook_active: true,
+    });
+    expect(result.decision).toBe("approve");
+    expect(result.ciTriggered).toBe(false);
+    expect(mockedExecSync).not.toHaveBeenCalled();
+  });
+});
+
 describe("detectAvailableChecks (stack-neutral default ['src', 'app'] + tooling.pythonCandidateDirs override)", () => {
   it("Python layout が 1 つも無ければ ruff/mypy を skip (false positive 回避)", () => {
     // `.` fallback を禁じているので、src/ / app/ がなければ ruff/mypy を

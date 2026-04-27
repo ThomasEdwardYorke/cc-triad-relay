@@ -20,6 +20,15 @@ export interface SubagentStopInput {
   agent_id?: string | undefined;
   agent_transcript_path?: string | undefined;
   last_assistant_message?: string | undefined;
+  /**
+   * Anthropic SubagentStop spec field
+   * (https://code.claude.com/docs/en/hooks). When `true`, this hook is
+   * firing recursively because a prior Stop / SubagentStop decision
+   * caused continuation. Running CI again would create an infinite
+   * loop, so the handler short-circuits to a bare approve. Mirrors the
+   * same field already honored by `stop.ts`.
+   */
+  stop_hook_active?: boolean | undefined;
 }
 
 export interface CiCheckResult {
@@ -184,6 +193,15 @@ export function detectAvailableChecks(
 export async function handleSubagentStop(
   input: SubagentStopInput,
 ): Promise<SubagentStopResult> {
+  // Anthropic SubagentStop spec: when this hook is firing because a prior
+  // Stop / SubagentStop decision continued execution, re-running CI here
+  // could trigger another decision → another stop → another fire, looping
+  // indefinitely. Short-circuit to a bare approve before any agent_type
+  // dispatch so the guard runs uniformly for worker and non-worker agents.
+  if (input.stop_hook_active === true) {
+    return { decision: "approve", ciTriggered: false };
+  }
+
   const agentType = input.agent_type ?? "";
   const isWorker = WORKER_AGENT_TYPES.has(agentType);
 

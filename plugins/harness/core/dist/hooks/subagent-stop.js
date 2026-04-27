@@ -129,6 +129,14 @@ export function detectAvailableChecks(projectRoot) {
     return checks;
 }
 export async function handleSubagentStop(input) {
+    // Anthropic SubagentStop spec: when this hook is firing because a prior
+    // Stop / SubagentStop decision continued execution, re-running CI here
+    // could trigger another decision → another stop → another fire, looping
+    // indefinitely. Short-circuit to a bare approve before any agent_type
+    // dispatch so the guard runs uniformly for worker and non-worker agents.
+    if (input.stop_hook_active === true) {
+        return { decision: "approve", ciTriggered: false };
+    }
     const agentType = input.agent_type ?? "";
     const isWorker = WORKER_AGENT_TYPES.has(agentType);
     if (!isWorker) {
