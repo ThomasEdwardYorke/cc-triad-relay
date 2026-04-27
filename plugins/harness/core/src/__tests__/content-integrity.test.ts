@@ -833,16 +833,47 @@ describe("slash command frontmatter — canonical field order (community convent
       // helper の前提を CI で固定する。drift があれば即時検知され、
       // helper を parseYaml ベースに refactor すべき signal となる。
       const fm = extractFrontmatter(readCommand(name));
-      // YAML block scalar marker: `key: |` / `key: >` (行末に `|` / `>` のみ、
-      // または `|-` / `>+` 等の chomp indicator 付き)。値部分が空白を間に挟んで
-      // 行末に block scalar marker を持つ pattern を全行 scan で禁止。
+      // YAML block scalar marker: `key: |` / `key: >` の各種 combination:
+      //   - 単独: `|` / `>`
+      //   - chomp indicator: `|+` / `|-` / `>+` / `>-`
+      //   - indentation indicator: `|1` 〜 `|9` / `>1` 〜 `>9`
+      //   - chomp + indentation combination (両順序): `|2+` / `|+2` / `>3-` / `>-3`
+      // 文字クラス `[+\-0-9]*` で全 combination を catch。order 検証は YAML
+      // parser の責務 (本 helper は detection 専念)。
       const blockScalarLines = fm
         .split(/\r?\n/)
-        .filter((line) => /^[a-z][a-z0-9-]*:\s+[|>][+-]?\s*$/.test(line));
+        .filter((line) => /^[a-z][a-z0-9-]*:\s+[|>][+\-0-9]*\s*$/.test(line));
       expect(
         blockScalarLines,
         `${name}.md: multiline block scalar が検出されました。inline single-line に書き換えるか、` +
           `extractTopLevelKeys を parseYaml ベースに refactor してください。検出行: ${blockScalarLines.join(" / ")}`,
+      ).toEqual([]);
+    },
+  );
+
+  /**
+   * forcing function: 未知の top-level field が frontmatter に追加された時、
+   * `extractTopLevelKeys` は CANONICAL_FIELD_ORDER でない key を先に filter
+   * で捨てる設計のため、subsequence 判定では検知できない (false negative
+   * 経路)。新規 field 追加時に CANONICAL_FIELD_ORDER list を更新する強制力
+   * を CI で持つため、別 it.each で全 14 commands に対し未知 top-level key
+   * が出現しないことを assert する。drift があれば即時 fail し、
+   * CANONICAL_FIELD_ORDER 更新の signal となる。
+   */
+  it.each(COMMAND_NAMES)(
+    "%s command の frontmatter に未知の top-level field がない (CANONICAL_FIELD_ORDER 同期 forcing function)",
+    (name) => {
+      const fm = extractFrontmatter(readCommand(name));
+      const allTopLevelKeys = fm
+        .split(/\r?\n/)
+        .flatMap((line) => /^([a-z][a-z0-9-]*):/.exec(line)?.[1] ?? []);
+      const unknown = allTopLevelKeys.filter(
+        (key) =>
+          !(CANONICAL_FIELD_ORDER as readonly string[]).includes(key),
+      );
+      expect(
+        unknown,
+        `${name}.md: CANONICAL_FIELD_ORDER を更新してください。unknown fields: ${unknown.join(", ")}`,
       ).toEqual([]);
     },
   );
