@@ -13,6 +13,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadConfigWithError } from "../config.js";
+import { sanitizeAdditionalContextLine } from "./_shared/sanitize.js";
 export async function handleStop(input) {
     const projectRoot = input.cwd ?? process.cwd();
     // Anthropic Claude Code Stop hook spec (https://code.claude.com/docs/en/hooks):
@@ -78,8 +79,5 @@ export async function handleStop(input) {
         decision: "approve",
         additionalContext: sections.join("\\n"),
     };
-}
-function sanitizeAdditionalContextLine(line) {
-    return line.replace(/\r\n|[\n\r]/g, "\\n");
 }
 //# sourceMappingURL=stop.js.map
