@@ -34,16 +34,27 @@
  *
  * ## Sanitization
  *
- * `additionalContext` is sanitized through `sanitizeAdditionalContextLine`
- * (mirrors the same guard in `stop.ts`): raw `\r\n` / `\n` / `\r` are
- * escaped to the two-character literal `\\n`. The hint strings here are
- * static so this is defense-in-depth, but the contract still holds: any
- * future dynamic content cannot smuggle fake section boundaries.
+ * `additionalContext` is sanitized through `sanitizeAdditionalContextLine`,
+ * which escapes CR / LF / U+2028 / U+2029 to the two-character literal `\\n`
+ * to prevent fake section-boundary smuggling. The hint strings here are
+ * static, so this is defense-in-depth.
  */
 const SOURCE_RESUME_HINT = "[SessionStart source=resume] Session resumed from prior state. Re-check your handoff notes and active review context before continuing prior work.";
 const SOURCE_COMPACT_HINT = "[SessionStart source=compact] Session continued after compaction. PreCompact has already injected relevant project state into earlier context; verify it above before resuming work.";
-function sanitizeAdditionalContextLine(line) {
-    return line.replace(/\r\n|[\n\r]/g, "\\n");
+/**
+ * Sanitizes one `additionalContext` line by escaping CR / LF and Unicode line
+ * separators (U+2028 / U+2029) to the two-character literal `\\n`.
+ *
+ * Implementation note: the regex literal uses the `\u2028` / `\u2029` escape
+ * sequence — embedding the raw code points causes esbuild / older JS parsers
+ * to treat them as syntactic line terminators and reject the literal as
+ * unterminated (ES2018 spec).
+ *
+ * Exported for unit tests only.
+ * @internal
+ */
+export function sanitizeAdditionalContextLine(line) {
+    return line.replace(/\r\n|[\n\r\u2028\u2029]/g, "\\n");
 }
 export async function handleSessionStart(input) {
     const source = input.source;

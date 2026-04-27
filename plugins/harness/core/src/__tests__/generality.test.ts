@@ -1,4 +1,4 @@
-/* generality-exemption: B-1,B-2a,B-2b,B-2c,B-2d,B-2e,B-2f,B-3a,B-3b,B-3c,B-3d,B-3e,B-3f,B-4a,B-4b,B-5,B-6,B-7,B-8,B-9,B-10 | HARNESS-generality-self | 2099-12-31 | detector harness itself must reference patterns it blocks (self-reference unavoidable, until v1.0 redesign) */
+/* generality-exemption: B-1,B-2a,B-2b,B-2c,B-2d,B-2e,B-2f,B-3a,B-3b,B-3c,B-3d,B-3e,B-3f,B-3g,B-4a,B-4b,B-5,B-6,B-7,B-8,B-9,B-10 | HARNESS-generality-self | 2099-12-31 | detector harness itself must reference patterns it blocks (self-reference unavoidable, until v1.0 redesign) */
 /**
  * core/src/__tests__/generality.test.ts
  *
@@ -262,6 +262,27 @@ const BLOCK_PATTERNS: BlockPattern[] = [
       "内部 session 世代 ID (`gen-N`) が含まれています。consumer-side handoff の運用 ID で、" +
       "shipped spec には残さないでください。CHANGELOG.md / docs/maintainer/session-notes/ / " +
       "commit message に移管してください。",
+    appliesToTests: true,
+  },
+  // B-3g: project-specific flag naming guard (Codex pre-flight Track A finding 由来)
+  // 過去の meta-session で「`/harness-work --maintainer-mode` 拡張」のような
+  // project-specific flag 提案が backlog 入りしたが、これは R2 (内部識別子 leak)
+  // リスクが高い。`--source plans|roadmap` のような generic flag、もしくは既存
+  // `taskTrackerMode = "handoff"` config field の活用に倒すべし (forcing function)。
+  // 対象 flag 名: `--maintainer-mode` / `--model-b-mode` / `--parts-management-mode`
+  // / `--script-generate-mode` / `--new-partslist-mode` 等の project-specific 形。
+  // generic flag (`--source` / `--mode` / `--target` 等) と config field
+  // (`taskTrackerMode` 等) は対象外。
+  {
+    id: "B-3g",
+    category: "tracker-id",
+    pattern:
+      /--(?:maintainer-mode|model-b-mode|parts-management-mode|script-generate-mode|new-partslist-mode)\b/g,
+    message:
+      "project-specific flag naming (例: `--maintainer-mode` / `--model-b-mode`) が含まれています。" +
+      "shipped spec では既存 `work.taskTrackerMode = \"handoff\"` config field の活用、" +
+      "または generic flag (`--source plans|roadmap` 等) で受けるべきです。" +
+      "本 pattern は将来の leak 予防 (B-3 系 tracker-id forcing function)。",
     appliesToTests: true,
   },
 
@@ -2192,6 +2213,60 @@ describe("exemption grammar (unified, pipe-separated)", () => {
       it("negative: `gEN-13` (mixed case lower-upper-upper、case-sensitive guard 完全性) は match しない", () => {
         expect(matches("gEN-13")).toBe(false);
       });
+    });
+  });
+
+  // ─────────────── B-3g project-specific flag naming guard (forcing function) ───────────────
+  // Codex pre-flight Track A finding 由来。`/harness-work --maintainer-mode` のような
+  // project-specific flag naming は **R2 (内部識別子 leak) リスク高** のため、shipped spec
+  // で検出して block する forcing function。代わりに既存 `work.taskTrackerMode = "handoff"`
+  // config field の活用、もしくは generic flag (`--source plans|roadmap` 等) で受ける。
+  // generic flag (`--source` / `--mode` / `--target` 等) や config field
+  // (`taskTrackerMode`) は対象外 (negative case で固定)。
+  describe("B-3g project-specific flag naming guard (positive / negative)", () => {
+    const b3g = BLOCK_PATTERNS.find((p) => p.id === "B-3g");
+    if (!b3g) {
+      throw new Error("B-3g pattern is missing from BLOCK_PATTERNS");
+    }
+    const pat = b3g.pattern;
+    const matches = (src: string): boolean => {
+      pat.lastIndex = 0;
+      return pat.test(src);
+    };
+
+    it("positive: `--maintainer-mode` (project-specific flag) は match する", () => {
+      expect(matches("--maintainer-mode")).toBe(true);
+    });
+
+    it("positive: `--model-b-mode` (project-specific flag) は match する", () => {
+      expect(matches("--model-b-mode")).toBe(true);
+    });
+
+    it("positive: `--parts-management-mode` (project-specific flag) は match する", () => {
+      expect(matches("--parts-management-mode")).toBe(true);
+    });
+
+    it("positive: `--script-generate-mode` / `--new-partslist-mode` も match する", () => {
+      expect(matches("--script-generate-mode")).toBe(true);
+      expect(matches("--new-partslist-mode")).toBe(true);
+    });
+
+    it("negative: `--source` (generic flag) は match しない", () => {
+      expect(matches("--source")).toBe(false);
+    });
+
+    it("negative: `--mode` / `--target` / `--scope` (generic prefix) は match しない", () => {
+      expect(matches("--mode")).toBe(false);
+      expect(matches("--target")).toBe(false);
+      expect(matches("--scope")).toBe(false);
+    });
+
+    it("negative: `taskTrackerMode` (camelCase config field、flag ではない) は match しない", () => {
+      expect(matches("taskTrackerMode")).toBe(false);
+    });
+
+    it("negative: `--maintainermode` (hyphen 不在) は match しない (`\\b` boundary)", () => {
+      expect(matches("--maintainermode")).toBe(false);
     });
   });
 });

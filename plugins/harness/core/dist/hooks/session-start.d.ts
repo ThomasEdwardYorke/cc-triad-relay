@@ -34,11 +34,10 @@
  *
  * ## Sanitization
  *
- * `additionalContext` is sanitized through `sanitizeAdditionalContextLine`
- * (mirrors the same guard in `stop.ts`): raw `\r\n` / `\n` / `\r` are
- * escaped to the two-character literal `\\n`. The hint strings here are
- * static so this is defense-in-depth, but the contract still holds: any
- * future dynamic content cannot smuggle fake section boundaries.
+ * `additionalContext` is sanitized through `sanitizeAdditionalContextLine`,
+ * which escapes CR / LF / U+2028 / U+2029 to the two-character literal `\\n`
+ * to prevent fake section-boundary smuggling. The hint strings here are
+ * static, so this is defense-in-depth.
  */
 export interface SessionStartInput {
     hook_event_name: string;
@@ -57,5 +56,18 @@ export interface SessionStartResult {
     decision: "approve";
     additionalContext?: string;
 }
+/**
+ * Sanitizes one `additionalContext` line by escaping CR / LF and Unicode line
+ * separators (U+2028 / U+2029) to the two-character literal `\\n`.
+ *
+ * Implementation note: the regex literal uses the `\u2028` / `\u2029` escape
+ * sequence — embedding the raw code points causes esbuild / older JS parsers
+ * to treat them as syntactic line terminators and reject the literal as
+ * unterminated (ES2018 spec).
+ *
+ * Exported for unit tests only.
+ * @internal
+ */
+export declare function sanitizeAdditionalContextLine(line: string): string;
 export declare function handleSessionStart(input: SessionStartInput): Promise<SessionStartResult>;
 //# sourceMappingURL=session-start.d.ts.map
