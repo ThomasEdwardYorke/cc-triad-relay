@@ -602,7 +602,7 @@ async function main() {
         // 公式 spec 上 Stop / SubagentStop / PreCompact での
         // `hookSpecificOutput.additionalContext` の挙動は未文書化だが、
         // SessionStart / PostToolUseFailure / UserPromptSubmit と同形式の
-        // forward-compat hardening として採用 (D-115 locale-neutral / defensive
+        // forward-compat hardening として採用 (locale-neutral / defensive
         // policy 継承)。
         hookType === "stop" ||
         hookType === "subagent-stop" ||
