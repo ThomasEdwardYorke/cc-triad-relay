@@ -307,3 +307,70 @@ describe("resolvePythonCandidateDirs (subagent-stop) — stderr fail-open warnin
     expect(stderr).toBe("");
   });
 });
+
+// ---------------------------------------------------------------------------
+// captureStderr — defensive regression guards
+//
+// Lock down the full Node.js `Writable.write(chunk, encoding?, callback?)`
+// signature support. The helper currently exercises only `write(string)` via
+// production code paths, so a future refactor that drops encoding / callback
+// handling would not be caught by the assertions above. These guards pin the
+// behaviour so any reduction in surface coverage fails fast.
+// ---------------------------------------------------------------------------
+
+describe("captureStderr — Writable.write signature guards", () => {
+  it("invokes the callback when supplied via the (chunk, callback) shorthand", async () => {
+    let callbackArg: Error | null | undefined = undefined;
+    const { stderr } = await captureStderr(() => {
+      const writeFn = process.stderr.write as unknown as (
+        chunk: string,
+        cb: (err?: Error | null) => void,
+      ) => boolean;
+      writeFn("[shorthand]", (err) => {
+        callbackArg = err ?? null;
+      });
+      return "ok";
+    });
+
+    expect(callbackArg).toBeNull();
+    expect(stderr).toContain("[shorthand]");
+  });
+
+  it("decodes Buffer chunks using the supplied encoding", async () => {
+    const { stderr } = await captureStderr(() => {
+      const buf = Buffer.from("[buffer-utf8]", "utf-8");
+      // Cast to silence overload narrowing; production code calls plain
+      // `process.stderr.write(buf, "utf-8")` shape variants too.
+      (process.stderr.write as unknown as (
+        chunk: Buffer,
+        encoding: BufferEncoding,
+      ) => boolean)(buf, "utf-8");
+      return "ok";
+    });
+
+    expect(stderr).toContain("[buffer-utf8]");
+  });
+
+  it("invokes the callback when supplied via the full (chunk, encoding, callback) signature", async () => {
+    let callbackArg: Error | null | undefined = undefined;
+    const { stderr } = await captureStderr(() => {
+      process.stderr.write("[full-args]", "utf-8", (err) => {
+        callbackArg = err ?? null;
+      });
+      return "ok";
+    });
+
+    expect(callbackArg).toBeNull();
+    expect(stderr).toContain("[full-args]");
+  });
+
+  it("restores process.stderr.write to the original after subject() throws", async () => {
+    const original = process.stderr.write;
+    await expect(
+      captureStderr(() => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    expect(process.stderr.write).toBe(original);
+  });
+});
