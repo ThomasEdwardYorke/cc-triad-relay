@@ -1,10 +1,10 @@
 # `parallel-worktree` v2 — Model B Architecture Design
 
-> **Status**: Phase 2 P2.1 design doc (not yet shipped as a slash command).
-> Phase 2 P2.2-P2.4 (tmux template + session manager + claude-oneshot skill)
+> **Status**: Stage A design doc (not yet shipped as a slash command).
+> Stages B–D (tmux template + session manager + claude-oneshot skill)
 > are prerequisites. v1 (`commands/parallel-worktree.md`) remains in
 > production until v2 is fully implemented.
-> **Owner**: harness core (cc-triad-relay)
+> **Owner**: harness core
 > **Reference**: `docs/maintainer/ROADMAP-model-b.md` Phase 2
 
 ## Why v2
@@ -31,12 +31,12 @@ report back via stream-json without burdening any sibling.
 
 ## Architecture
 
-```
+```text
 +--------------------------------------------------------------+
 | coordinator session (this skill, v2)                         |
 |  - tmux session manager (orchestrates N windows)             |
 |  - progress monitor (reads /tmp/claude-log-<slug>.jsonl)     |
-|  - merge-train integration (post-completion phase 6-8)       |
+|  - merge-train integration (post-completion phase 8)         |
 +-------+----------------------+----------------------+--------+
         |                      |                      |
         v                      v                      v
@@ -44,7 +44,7 @@ report back via stream-json without burdening any sibling.
 | tmux window 1 |      | tmux window 2 |      | tmux window N |
 | claude -n A   |      | claude -n B   |      | claude -n N   |
 | /tdd-implement|      | /tdd-implement|      | /tdd-implement|
-|   Phase 1-5.5 |      |   Phase 1-5.5 |      |   Phase 1-5.5 |
+|   Phase 1-7   |      |   Phase 1-7   |      |   Phase 1-7   |
 +---------------+      +---------------+      +---------------+
         |                      |                      |
         +----- worktree A ----+----- worktree B ----+--- worktree N
@@ -55,12 +55,14 @@ report back via stream-json without burdening any sibling.
 
 | layer            | v1 (Model A)                            | v2 (Model B)                                          |
 |------------------|-----------------------------------------|-------------------------------------------------------|
-| coordinator      | the running claude session              | a tmux session controller, no Claude reasoning loop  |
+| coordinator      | the running claude session              | a tmux session controller (post-completion merge train, no Claude reasoning loop during workers running) |
 | per-worktree     | `Agent`-tool subagent (`harness:worker`)| **independent `claude -n <slug>` process**            |
 | harness inheritance | shared from coordinator context     | each worktree inherits user-level `~/.claude/` overlay |
 | skill access     | restricted (no Skill / no Agent for worker) | full access (skills, agents, MCP) per worktree    |
 | context budget   | shared with coordinator                  | each worktree has its own 1 M context budget          |
 | progress         | TaskList + worker prompt return value    | stream-json log + git commit log per worktree         |
+| phase 5.5 / 6 / 7| coordinator-only, after all workers finish | each worktree runs them inside its own claude session |
+| phase 8 (merge)  | coordinator                              | coordinator (`/harness-merge-train` after all sessions complete) |
 
 ### Inheritance: how each worktree gets the full harness
 
@@ -96,7 +98,7 @@ Spec format (additive over v1):
   "feature_branch": "main",
   "base_dir": "/path/to/main/repo",
   "worktree_parent_dir": "/path/to/main/repo/..",
-  "worktree_prefix": "myproject-wt-",
+  "worktree_prefix": "my-project-wt-",
   "tmux_session_name": "harness-parallel",
   "claude_per_session_options": {
     "model": "claude-opus-4-7",
@@ -106,7 +108,7 @@ Spec format (additive over v1):
   "sub_tasks": [
     {
       "slug": "frontend",
-      "task_id": "T-1",
+      "work_item_label": "frontend-work",
       "title": "...",
       "owned_files": ["frontend/**"],
       "merge_priority": 4
@@ -118,7 +120,9 @@ Spec format (additive over v1):
 The new `tmux_session_name` and `claude_per_session_options` fields
 distinguish v2 from v1. v1 specs without those fields trigger a
 deprecation warning and route to v1's Agent-tool path (back-compat
-fallback during migration).
+fallback during migration). The `work_item_label` field replaces v1's
+`task_id` shape — consumer projects may map their own internal ticket
+IDs to this neutral label at spec-build time.
 
 ## Phase chain
 
@@ -141,7 +145,7 @@ runs the full quality gate chain on its own PR.
 
 Each `claude -n <slug>` writes to `/tmp/claude-log-<slug>.jsonl`
 (stream-json output). The coordinator runs a **session-manager**
-(`session-manager.ts`, P2.3) that aggregates:
+(`session-manager.ts`, Stage C) that aggregates:
 
 - per-window git commit log (which slug landed which commit when)
 - per-window stream-json tool calls (current Phase, last tool used)
@@ -149,7 +153,7 @@ Each `claude -n <slug>` writes to `/tmp/claude-log-<slug>.jsonl`
 
 Aggregator output is rendered to a single coordinator dashboard:
 
-```
+```text
 [harness-parallel] tmux session — 4 windows, 4 sub-tasks
 
   | slug      | branch              | phase | last commit          | status |
@@ -172,16 +176,16 @@ by the existing `/harness-merge-train` skill.
 
 | stage  | timing                       | action                                                                    |
 |--------|------------------------------|---------------------------------------------------------------------------|
-| 1      | P2.2 lands (tmux template)   | v1 unchanged; `parallel-sessions-template.sh` ships in `scripts/`         |
-| 2      | P2.3 lands (session-manager) | v1 unchanged; coordinator can attach session-manager to v1 runs as opt-in |
-| 3      | P2.4 lands (claude-oneshot)  | v1 unchanged; oneshot skill becomes available as primitive                |
-| 4      | P2.1 v2 doc → ship           | v2 ships as `parallel-worktree-v2.md` skill; v1 remains as default        |
-| 5      | P3.1 first real-world use    | first parts-management Week 5-6 CRUD batch uses v2 (4 sub-tasks)          |
-| 6      | P3.2 a/b data confirms       | v2 promoted to default; v1 marked deprecated                              |
-| 7      | P3.4 main merge              | v2 replaces v1 in shipped plugin                                          |
+| 1      | Stage B lands (tmux template)| v1 unchanged; `parallel-sessions-template.sh` ships in `scripts/`         |
+| 2      | Stage C lands (session-manager) | v1 unchanged; coordinator can attach session-manager to v1 runs as opt-in |
+| 3      | Stage D lands (claude-oneshot)  | v1 unchanged; oneshot skill becomes available as primitive             |
+| 4      | Stage A v2 doc → ship           | v2 ships as `parallel-worktree-v2.md` skill; v1 remains as default     |
+| 5      | First real-world pilot          | first multi-task batch from a real-world pilot project uses v2         |
+| 6      | A/B data confirms               | v2 promoted to default; v1 marked deprecated                            |
+| 7      | Main merge                      | v2 replaces v1 in shipped plugin                                        |
 
 This staged migration keeps v1 working through every stage and avoids
-the gen-22 anti-pattern of replacing production code with un-validated
+the anti-pattern of replacing production code with un-validated
 infrastructure.
 
 ## Open design questions
@@ -205,17 +209,21 @@ infrastructure.
   policy? Default: alert only, no auto-restart (Anthropic responsible-AI
   guidance leans toward operator confirmation for autonomous restarts).
 
-## Implementation tasks (Phase 2 breakdown)
+## Implementation stages (Phase 2 breakdown)
 
-| ID    | Deliverable                                                         | Status   |
-|-------|---------------------------------------------------------------------|----------|
-| P2.1  | This design doc                                                     | draft (this PR) |
-| P2.2  | `plugins/harness/scripts/parallel-sessions-template.sh`             | pending  |
-| P2.3  | `plugins/harness/core/src/session-manager.ts` + tests               | pending  |
-| P2.4  | `plugins/harness/commands/claude-oneshot.md`                        | pending  |
-| P2.5  | `plugins/harness/commands/parallel-worktree-v2.md` (replaces v1)    | pending  |
-| P2.6  | content-integrity tests for v2 + migration warning in v1            | pending  |
-| P2.7  | smoke test: 2-window tmux + claude -n + completion detection         | pending  |
+| stage    | deliverable                                                         | status          |
+|----------|---------------------------------------------------------------------|-----------------|
+| Stage A  | This design doc                                                     | draft (this PR) |
+| Stage B  | `plugins/harness/scripts/parallel-sessions-template.sh`             | pending         |
+| Stage C  | `plugins/harness/core/src/session-manager.ts` + tests               | pending         |
+| Stage D  | `plugins/harness/commands/claude-oneshot.md`                        | pending         |
+| Stage E  | `plugins/harness/commands/parallel-worktree-v2.md` (replaces v1)    | pending         |
+| Stage F  | content-integrity tests for v2 + migration warning in v1            | pending         |
+| Stage G  | smoke test: 2-window tmux + claude -n + completion detection         | pending        |
+
+The maintainer-facing roadmap (`docs/maintainer/ROADMAP-model-b.md`) tracks
+the same stages under Phase 2 numbering for cross-reference; the neutral
+labels above are used in this shipped doc to keep the spec generic.
 
 ## References
 
