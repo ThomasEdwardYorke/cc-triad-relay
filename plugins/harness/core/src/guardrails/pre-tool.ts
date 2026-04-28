@@ -13,6 +13,7 @@ import { loadConfigSafe } from "../config.js";
 import { HarnessStore } from "../state/store.js";
 import { defaultStatePath } from "../state/migration.js";
 import { predictBudgetImpact } from "../context-audit/index.js";
+import { sanitizeAdditionalContextLine } from "../hooks/_shared/sanitize.js";
 import { evaluateRules } from "./rules.js";
 import type { HookInput, HookResult, RuleContext } from "../types.js";
 
@@ -113,8 +114,11 @@ async function augmentWithContextAudit(
   ctx: RuleContext,
   input: HookInput,
 ): Promise<HookResult> {
+  // Defensive null-check: older harness configs (pre-`contextBudget` schema)
+  // can leave `cfg` as undefined when partial merges interact with strict
+  // mode validators. The `?.enabled` access keeps the no-op fast-path.
   const cfg = ctx.config.contextBudget;
-  if (!cfg.enabled) return prev;
+  if (!cfg?.enabled) return prev;
   if (input.tool_name !== "Write") return prev;
 
   const filePath = extractStringField(input.tool_input, "file_path");
@@ -144,7 +148,15 @@ async function augmentWithContextAudit(
     cfg.onDemandDirs.length > 0
       ? cfg.onDemandDirs.join(", ")
       : "(no onDemandDirs configured — set harness.config.json.contextBudget.onDemandDirs)";
-  const note = `[context budget] auto-load redirect suggested — writing ${filePath} would push total to ${prediction.predictedTotalBytes} bytes (${overBy} over budget ${prediction.budgetBytes}). Consider relocating to onDemandDirs (${ondemandHint}) and adding a CLAUDE.md / README.md cross-reference instead.`;
+  // Sanitise the note before composing into `additionalContext`: `filePath`
+  // ultimately came from `input.tool_input.file_path`, so a malicious
+  // caller could embed raw `\n` / U+2028 / U+2029 line terminators to
+  // smuggle fake section boundaries downstream. The shared sanitiser
+  // escapes them all to the literal two-character `\\n` form, matching
+  // the same defensive layer used by the Stop hook.
+  const note = sanitizeAdditionalContextLine(
+    `[context budget] auto-load redirect suggested — writing ${filePath} would push total to ${prediction.predictedTotalBytes} bytes (${overBy} over budget ${prediction.budgetBytes}). Consider relocating to onDemandDirs (${ondemandHint}) and adding a CLAUDE.md / README.md cross-reference instead.`,
+  );
 
   // Compose with any pre-existing additionalContext from rules.ts so we
   // never overwrite a guardrail message. The two-character separator is

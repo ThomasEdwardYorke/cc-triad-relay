@@ -41,7 +41,15 @@ export interface ContextAuditSignal {
   detail: string;
 }
 
-/** Aggregate verdict — strictest signal wins (`fail` > `warn` > `pass`, `skip` neutral). */
+/**
+ * Aggregate verdict — strictest signal wins (`fail` > `warn` > `pass`).
+ *
+ * `skip` is **neutral**: it never elevates the aggregate above whatever the
+ * surviving non-skip signals report. A run with all gates `skip`-ed (e.g.
+ * an empty-config consumer) therefore returns `pass`. This is intentional —
+ * the audit must never report `fail` purely because some gates were skipped
+ * (which would conflate "no opinion" with "definitely broken").
+ */
 export type ContextAuditVerdict = "pass" | "warn" | "fail";
 
 export interface ContextAuditResult {
@@ -67,12 +75,26 @@ export interface RunContextAuditOptions {
 }
 
 export interface BudgetPredictionResult {
-  /** True iff `totalBytes - oldFileBytes + newContent.byteLength > budgetBytes`. */
+  /**
+   * True iff the write **worsens** the budget posture: `newBytes >= oldBytes`
+   * and `predictedTotalBytes > budgetBytes`. **Strict-improvement** edits
+   * (`newBytes < oldBytes`) always set `wouldExceed: false`, even when
+   * the project is currently over budget — the redirect suggestion targets
+   * regressions, not refactors that shrink the auto-load surface. A caller
+   * inspecting `marginBytes < 0` will still see the over-budget state in
+   * that case; treat `wouldExceed` as the warning trigger and `marginBytes`
+   * as the raw budget headroom (positive = under, negative = over).
+   */
   wouldExceed: boolean;
   currentTotalBytes: number;
   predictedTotalBytes: number;
   budgetBytes: number;
-  /** Negative when the prediction exceeds the budget. */
+  /**
+   * `budgetBytes - predictedTotalBytes`. Negative when the prediction is
+   * over budget. Independent of `wouldExceed`: a strict-improvement edit
+   * can still leave a negative margin if the project was already over
+   * budget before the edit started.
+   */
   marginBytes: number;
   /** True when `filePath` is under any configured `autoLoadDirs`. */
   targetIsAutoLoad: boolean;
