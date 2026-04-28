@@ -4990,3 +4990,68 @@ describe("docs/maintainer/skill-parallelism.md anchor lock-in", () => {
     expect(content).toMatch(/--parallel(=N|\s*=\s*N)?/);
   });
 });
+
+// =============================================================================
+// Feedback-loop stage 2: agents/codex-sync.md and coderabbit-mimic.md must
+// carry canonical "Caller Scoping Guidance (tool_uses budget)" section so
+// callers (skills + parent claude) consistently apply narrow-scope dispatch
+// discipline. Independent assertions per anchor (D-124 drift guard).
+// =============================================================================
+describe("Caller Scoping Guidance (tool_uses budget) — feedback-loop stage 2 anchor lock-in", () => {
+  const agents: Record<string, string> = {
+    "codex-sync": readAgent("codex-sync"),
+    "coderabbit-mimic": readAgent("coderabbit-mimic"),
+  };
+
+  for (const [agentName, content] of Object.entries(agents)) {
+    describe(`agents/${agentName}.md carries canonical scoping guidance`, () => {
+      it("Caller Scoping Guidance section heading が存在する", () => {
+        expect(content).toMatch(/##\s*Caller\s*Scoping\s*Guidance/);
+      });
+
+      it("tool_uses budget ~30 という empirical 上限を anchor として記述", () => {
+        // Codex CLI の経験的 tool budget を canonical 値として固定
+        expect(content).toMatch(/tool[_\s-]?uses\s*budget|tool[_\s-]?uses[\s\S]{0,80}30/i);
+      });
+
+      it("narrow / medium / wide budget guideline (5 / 15 / avoid) を列挙する", () => {
+        // 3 段の recipe を独立 assertion で固定 (1 つでも消えると個別失敗)
+        expect(content).toMatch(/narrow[\s\S]{0,80}5\s*tool_uses|narrow[\s\S]{0,80}≤\s*5/i);
+        expect(content).toMatch(/medium[\s\S]{0,80}15\s*tool_uses|medium[\s\S]{0,80}≤\s*15/i);
+        expect(content).toMatch(/wide[\s\S]{0,80}(?:avoid|❌|分解|split)/i);
+      });
+
+      it("partial verdict / re-dispatch 方針を明示する (silence = approval 誤読防止)", () => {
+        expect(content).toMatch(/partial\s*verdict|partial[\s-]?verdict/i);
+        expect(content).toMatch(/re-?dispatch|narrower\s*scope|narrow scope|narrower/i);
+      });
+
+      it("anti-pattern (wide-scope dispatch 禁止) を forbidden として明示する", () => {
+        expect(content).toMatch(/anti[-\s]?pattern|forbidden|avoid|❌|禁止|避ける/i);
+        // PR 全体 / 一括 review の具体例で wide scope 失敗を例示
+        expect(content).toMatch(/entire\s*PR|all\s+files|PR\s*全部|一括/i);
+      });
+
+      it("経験的根拠 (early termination empirical observation) を出典として明記する", () => {
+        // 振り返りが改善に feedback されている証跡 (feedback-loop 機構の core idea)。
+        // tracker ID (gen-NN 等) は generality.test.ts B-3f で禁止されるため、
+        // generic な empirical 表現 (multiple sessions / observation 等) を anchor とする。
+        expect(content).toMatch(/empirical|observation|multiple\s*(?:recent\s*)?sessions|recent\s*(?:harness\s*)?sessions/i);
+        expect(content).toMatch(/early[\s-]?termination|truncat|exhaust|tool[_\s-]?budget/i);
+      });
+    });
+  }
+
+  it("両 agent が同じ canonical 文言を持つ (両者 sync 強制)", () => {
+    // canonical phrase を両方が含むことで sync drift を防止
+    const canonicalPhrases = [
+      /Caller\s*Scoping\s*Guidance/,
+      /tool_uses\s*budget/,
+      /≤\s*5\s*tool_uses/,
+    ];
+    for (const phrase of canonicalPhrases) {
+      expect(agents["codex-sync"]).toMatch(phrase);
+      expect(agents["coderabbit-mimic"]).toMatch(phrase);
+    }
+  });
+});

@@ -101,6 +101,43 @@ Fix: run 'claude plugin install codex@openai-codex --scope project'
 - Do not rewrite the intent of the caller (main Claude or the parent agent) based on guesswork
 - If the output contains strings that indicate incompleteness, such as `"Codex task started"`, `"in the background"`, or `"queued"`, treat that as a clear error (these strings should not appear in foreground mode; if they do, it is a sign of a bug)
 
+## Caller Scoping Guidance (tool_uses budget)
+
+Caller-facing guidance for dispatching work without hitting truncation or
+partial-verdict early-termination. Canonical rule used by harness skills
+(`/tdd-implement`, `/codex-team`, `/pseudo-coderabbit-loop`,
+`/parallel-worktree-v2`) when they spawn this agent. Identical wording
+appears in `agents/coderabbit-mimic.md` so the two LLM-driven reviewer
+surfaces stay in sync.
+
+- **Per-dispatch budget**: this agent runs with `maxTurns: 10` (see
+  frontmatter). Codex CLI itself has an **internal tool_uses budget of
+  ~30 tool calls** observed empirically across multiple recent harness
+  sessions. Plan caller prompts to stay well under both ceilings.
+- **Narrow scope > wide scope**: prefer **N narrow dispatches** (one
+  focused question per agent invocation) over **1 wide dispatch** (multiple
+  unrelated questions in one prompt). Recommended budgets:
+  - **Narrow**: 1 file, 1 question, ≤ 5 tool_uses
+  - **Medium**: 1 area, 3-5 sub-questions, ≤ 15 tool_uses
+  - **Wide**: ❌ avoid (split into multiple narrow dispatches)
+- **Partial verdict policy**: when the Codex tool budget approaches
+  exhaustion, the agent's downstream tool (`codex` CLI) MAY truncate the
+  task before reaching the requested deliverable. Callers should detect
+  this by inspecting `tool_uses` count in the agent's `<usage>` block
+  (≥ ~25 with no terminal verdict ≈ likely early termination) and
+  re-dispatch a narrower scope for the missing area instead of treating
+  silence as approval.
+- **Anti-pattern (forbidden)**: dispatching "review the entire PR" or
+  "audit all 5 files at once" in a single invocation regularly exhausts
+  the tool_uses budget before the agent reaches the actual review. Split
+  per-file or per-concern. This pattern is the root cause of recurring
+  Codex review early-termination cascades observed empirically across
+  multiple recent harness sessions.
+
+Empirical observation: broad reviews early-terminate at ≤ 10 tool_uses
+across multiple recent sessions, while narrow reviews (1 file, 1 question)
+consistently complete in 1-5 tool_uses with a full verdict.
+
 ## Output Format
 
 Return Bash stdout verbatim. Do not apply any of the following pre-processing or post-processing:
