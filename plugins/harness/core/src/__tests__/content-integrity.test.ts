@@ -2583,6 +2583,45 @@ describe("session-handoff skill — check v2 3 機能 (Structural / Content / Sy
     expect(topicCoverage).toBeGreaterThanOrEqual(4);
   });
 
+  // S-18 carry-over feedback loop drift guard — 振り返り→改善 自動化機構の最初の signal
+  describe("S-18 持ち越し item 構造的可視化 (feedback-loop signal、universal、Plans/handoff 両 mode)", () => {
+    it("check セクションに S-18 signal が anchor として存在する", () => {
+      const sec = checkSection();
+      // ID anchor の literal 存在 (drift guard、独立 assertion)
+      expect(sec).toMatch(/S-18\b/);
+    });
+
+    it("S-18 が `持ち越し` / carry-over / feedback-loop 概念を明示する", () => {
+      const sec = checkSection();
+      // 用語が複数形のいずれかで含まれる (i18n / 略記耐性)
+      expect(sec).toMatch(/持ち越し|carry[\s-]?over|feedback[\s-]?loop/i);
+    });
+
+    it("S-18 が 7 日 threshold を明示する (古い archive 参照の判定基準)", () => {
+      const sec = checkSection();
+      expect(sec).toMatch(/7\s*日|7\s*days/i);
+    });
+
+    it("S-18 が WARN(3+) / FAIL(5+) の二段 escalate threshold を明示する", () => {
+      const sec = checkSection();
+      // count threshold (3 件 / 5 件) と severity 対応が確認できる
+      expect(sec).toMatch(/3\s*件超|3[\s-]+(?:occurrence|references)/i);
+      expect(sec).toMatch(/5\s*件超|5[\s-]+(?:occurrence|references)/i);
+      expect(sec).toMatch(/WARN.*3.*FAIL.*5|WARN\s*\(3.*FAIL\s*\(5/is);
+    });
+
+    it("S-18 が `session-YYYY-MM-DD-` regex pattern を検出方法として明示する", () => {
+      const sec = checkSection();
+      // backlog item 内の archive reference を抽出する regex 形式が明記されている
+      expect(sec).toMatch(/session-\\?\(\?\\?d\{4\}|session-\\d\{4\}|session-\(\?\?\\d\{4\}|session-\(\\d\{4\}/);
+    });
+
+    it("S-18 が remediation 方針 (root-cause fix) を明示する (item-level patch ではなく構造的 blocker 認識)", () => {
+      const sec = checkSection();
+      expect(sec).toMatch(/root[\s-]?cause|構造的\s*blocker|構造的\s*問題|構造改善/i);
+    });
+  });
+
   it("check セクションが rehydration verdict の 3 段階評価 (PASS/WARN/FAIL or Ready/Partial/Stale) を示す", () => {
     const sec = checkSection();
     // 3-level verdict: PASS/WARN/FAIL or Ready/Partial/Stale 等
