@@ -36,9 +36,10 @@ sibling skill **`/parallel-worktree-v2`** and is available now.
 > - parent claude must stay responsive while workers run.
 >
 > Small parallel batches (2-3 short tasks) continue to fit v1 well.
-> v1 and v2 coexist; pick per batch. Consumer projects that put
-> `claude_per_session_options` into their spec.json can route v1
-> invocations to v2 transparently.
+> v1 and v2 coexist; pick per batch. `/parallel-worktree` (this skill)
+> remains the v1 / Model A entry point and is invoked directly. When you
+> need Model B, invoke `/parallel-worktree-v2` explicitly — there is no
+> transparent v1 → v2 routing.
 >
 > Spec: `commands/parallel-worktree-v2.md`. Architecture detail:
 > `docs/parallel-worktree-v2-design.md`.

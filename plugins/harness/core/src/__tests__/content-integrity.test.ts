@@ -1574,13 +1574,12 @@ describe("plugin.json component 宣言 (Anthropic 公式仕様: 明示宣言で�
     expect(declaredBaseNames).toEqual(COMMAND_NAMES.slice().sort());
   });
 
-  it("各 commands/*.md が必須 frontmatter field を満たす (description-ja を含む)", () => {
-    // CR PR #68 round 1 Major 指摘 (新規 command guard が必須 description-ja を
-    // 見ていない) への対応。frontmatter 規約: name / description / description-ja /
-    // allowed-tools / argument-hint。既存 command の中には description-ja を
-    // 持たないものもあるため、新規 ship する command (parallel-worktree-v2) には
-    // 必ず description-ja を強制する。`legacy_no_description_ja` allowlist で
-    // 既存例外を名前空間ごと管理し、漸進的に解消する。
+  it("各 commands/*.md が必須 frontmatter 5 field をすべて持つ (name / description / description-ja / allowed-tools / argument-hint)", () => {
+    // 全 shipped command は coding guideline に従い 5 field を持たなければならない。
+    // legacy 例外は description-ja 1 field のみ許容 (commit log / git blame で追跡可能、
+    // 漸進的に解消する)。allowed-tools と argument-hint は legacy も含めて全件必須で、
+    // 欠落は CI で即時 fail させる (描いてない field を持つ skill は invocable surface
+    // が不確定のままになるため)。
     const legacyNoDescriptionJa = new Set([
       "branch-merge",
       "coderabbit-review",
@@ -1594,13 +1593,26 @@ describe("plugin.json component 宣言 (Anthropic 公式仕様: 明示宣言で�
       const md = readCommand(cmdName);
       const fm = extractFrontmatter(md);
       const parsed = parseYaml(fm) as Record<string, unknown>;
+      // (1) name: 必ず file 名と一致
       expect(parsed.name, `${cmdName}: name`).toBe(cmdName);
-      expect(typeof parsed.description, `${cmdName}: description`).toBe("string");
-      // description-ja: 新規 ship した command は必須、legacy は許容 (allowlist)
+      // (2) description: 必須、空でない string
+      expect(typeof parsed.description, `${cmdName}: description type`).toBe("string");
+      expect((parsed.description as string).length, `${cmdName}: description length`).toBeGreaterThan(0);
+      // (3) description-ja: 新規 ship 必須、legacy は許容 (allowlist)
       if (!legacyNoDescriptionJa.has(cmdName)) {
-        expect(typeof parsed["description-ja"], `${cmdName}: description-ja required for non-legacy command`).toBe("string");
-        expect((parsed["description-ja"] as string).length).toBeGreaterThan(0);
+        expect(typeof parsed["description-ja"], `${cmdName}: description-ja required for non-legacy`).toBe("string");
+        expect((parsed["description-ja"] as string).length, `${cmdName}: description-ja length`).toBeGreaterThan(0);
       }
+      // (4) allowed-tools: 必須 (legacy も含めて全件)、配列または string
+      expect(parsed["allowed-tools"], `${cmdName}: allowed-tools required`).toBeDefined();
+      const allowedTools = parsed["allowed-tools"];
+      const allowedOk =
+        (Array.isArray(allowedTools) && allowedTools.length > 0) ||
+        (typeof allowedTools === "string" && allowedTools.length > 0);
+      expect(allowedOk, `${cmdName}: allowed-tools must be non-empty array or string`).toBe(true);
+      // (5) argument-hint: 必須 (legacy も含めて全件)、空でない string
+      expect(typeof parsed["argument-hint"], `${cmdName}: argument-hint type`).toBe("string");
+      expect((parsed["argument-hint"] as string).length, `${cmdName}: argument-hint length`).toBeGreaterThan(0);
     }
   });
 
