@@ -2604,9 +2604,13 @@ describe("session-handoff skill — check v2 3 機能 (Structural / Content / Sy
 
     it("S-18 が WARN(3+) / FAIL(5+) の二段 escalate threshold を明示する", () => {
       const sec = checkSection();
-      // count threshold (3 件 / 5 件) と severity 対応が確認できる
-      expect(sec).toMatch(/3\s*件超|3[\s-]+(?:occurrence|references)/i);
-      expect(sec).toMatch(/5\s*件超|5[\s-]+(?:occurrence|references)/i);
+      // count threshold (3 件 / 5 件) と severity 対応が確認できる。
+      // wording 揺れ (超過 / 超 / 以上 / +) と数学記号 (≥ / >=) のいずれかで
+      // 等価表現を許容する (狭すぎる正規表現は spec 改稿時に false fail を起こすため)。
+      const threeOrMore = /3\s*件\s*(?:超過?|以上|\+)|3[\s-]+(?:occurrence|reference)s?|≥\s*3|>=\s*3|count\s*>=?\s*3/i;
+      const fiveOrMore = /5\s*件\s*(?:超過?|以上|\+)|5[\s-]+(?:occurrence|reference)s?|≥\s*5|>=\s*5|count\s*>=?\s*5/i;
+      expect(sec).toMatch(threeOrMore);
+      expect(sec).toMatch(fiveOrMore);
       expect(sec).toMatch(/WARN.*3.*FAIL.*5|WARN\s*\(3.*FAIL\s*\(5/is);
     });
 
