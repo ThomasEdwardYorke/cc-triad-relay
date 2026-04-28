@@ -11,6 +11,19 @@ export { type ImageAspectRatio, type ImageGenerationConfig, type ImageReasoningE
 export type HarnessLanguage = "en" | "ja";
 export type TamperingSeverity = "approve" | "ask" | "deny";
 /**
+ * Indicates whether the project consuming this harness config is a
+ * downstream consumer (the common case: a project that installs harness as
+ * a plugin and uses skills like `/harness-work`, `/coderabbit-review`) or
+ * the harness plugin's **own** repository (the meta-session case: skills
+ * the consumer uses don't apply, since the plugin itself ships them).
+ *
+ * Meta-session detection lets the plugin's own repository opt out of
+ * consumer-only discipline gates without falsely logging a ledger
+ * violation, since those gates fire skills that don't exist when the
+ * plugin is being developed.
+ */
+export type RepoKind = "consumer" | "harness-itself";
+/**
  * Tunables for the codex-sync agent aimed at mitigating mid-response
  * truncation caused by Claude Code's subagent output limit. See
  * `agents/codex-sync.md` for the user-facing remediation path.
@@ -625,6 +638,14 @@ export interface HarnessConfig {
     projectName: string;
     /** Language used for messages when a localized form is available. */
     language: HarnessLanguage;
+    /**
+     * Whether this project is a consumer of the harness plugin or the
+     * plugin's own repository. Defaults to `"consumer"`. Set to
+     * `"harness-itself"` in the plugin repo to suppress consumer-only
+     * discipline-gate skill invocations which would otherwise log spurious
+     * ledger violations.
+     */
+    repoKind: RepoKind;
     /**
      * Directory names that R10 refuses to delete via `rm`/`rmdir`/`unlink`.
      * Empty array disables R10 entirely (default).

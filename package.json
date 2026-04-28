@@ -9,7 +9,8 @@
     "test": "npm test --workspace=plugins/harness/core",
     "test:coverage": "npm run test:coverage --workspace=plugins/harness/core",
     "typecheck": "npm run typecheck --workspace=plugins/harness/core",
-    "smoke": "node tests/e2e/smoke.test.mjs"
+    "smoke": "node tests/e2e/smoke.test.mjs",
+    "smoke:parallel-worktree-v2": "node tests/e2e/parallel-worktree-v2-smoke.test.mjs"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -20,8 +20,37 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      - run: npm install
+      - run: npm ci
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
       - run: npm run smoke
+
+  e2e-parallel-worktree-v2:
+    # Phase 2 Stage G: real tmux + git worktree + mock-claude smoke. Runs on
+    # PRs only (saves CI minutes on push-to-main and frees the merge queue
+    # from a job that needs `tmux`). POSIX-only — native Windows lacks tmux.
+    if: github.event_name == 'pull_request'
+    needs: test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [20]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Install tmux (Ubuntu only — macOS runner has it preinstalled)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y tmux
+      - run: npm ci
+      - run: npm run build
+      - name: parallel-worktree-v2 e2e smoke
+        run: npm run smoke:parallel-worktree-v2
+        env:
+          RUN_E2E: "1"

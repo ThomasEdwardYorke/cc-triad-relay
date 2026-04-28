@@ -190,15 +190,17 @@ the real launch.
 
 ## Phase 1 — tmux session and worktree creation
 
-The coordinator delegates the actual launch to the template script:
+The coordinator delegates the actual launch to the template script. The
+script takes positional args (`start <feature_branch> <slug1> [slug2 ...]`)
+and reads tunables from env vars:
 
 ```bash
+TMUX_SESSION_NAME="${TMUX_SESSION_NAME}" \
+WORKTREE_PARENT_DIR="${WORKTREE_PARENT_DIR}" \
+CLAUDE_MODEL="${MODEL}" \
+CLAUDE_PERMISSION_MODE="${PERM}" \
 bash plugins/harness/scripts/parallel-sessions-template.sh start \
-     "${TMUX_SESSION_NAME}" \
-     --feature-branch "${FEATURE_BRANCH}" \
-     --slugs "${SLUG_LIST}" \
-     --model "${MODEL}" \
-     --permission-mode "${PERM}"
+     "${FEATURE_BRANCH}" "${SLUG_LIST[@]}"
 ```
 
 The script:
@@ -210,6 +212,25 @@ The script:
 
 `claude -n <slug>` sets the interactive session display name only. The
 operator can attach to the tmux session and use the REPL normally.
+
+### tmux env propagation (`-e KEY=VAL`)
+
+By default `tmux new-session` filters out custom env vars on session
+creation, so the per-window `claude` cannot see env the coordinator set.
+The launcher always forwards the harness's well-known log-path env to the
+new tmux session and accepts an operator-defined whitelist for the rest:
+
+| env var                  | propagation                                                                |
+|--------------------------|----------------------------------------------------------------------------|
+| `CLAUDE_ONESHOT_LOG_DIR` | always forwarded when set (session-manager log-path convention)            |
+| `TMUX_PASS_ENV`          | whitespace-separated list of additional env var **names** to forward       |
+
+Both names and values are validated to reject shell metacharacters before
+being interpolated into the tmux command. This mechanism lets operators
+forward a custom log directory or any other path-shaped configuration
+into tmux-managed sessions without relying on `/tmp` defaults, and is
+also what end-to-end tests use to wire isolated sandboxes into per-window
+binaries.
 
 ### tmux pane vs window
 

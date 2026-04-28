@@ -219,7 +219,7 @@ infrastructure.
 | Stage D  | `plugins/harness/commands/claude-oneshot.md`                        | pending         |
 | Stage E  | `plugins/harness/commands/parallel-worktree-v2.md` (replaces v1)    | pending         |
 | Stage F  | content-integrity tests for v2 + migration warning in v1            | pending         |
-| Stage G  | smoke test: 2-window tmux + claude -n + completion detection         | pending        |
+| Stage G  | smoke test: 2-window tmux + claude -n + completion detection         | shipped         |
 
 The maintainer-facing roadmap (`docs/maintainer/ROADMAP-model-b.md`) tracks
 the same stages under Phase 2 numbering for cross-reference; the neutral
