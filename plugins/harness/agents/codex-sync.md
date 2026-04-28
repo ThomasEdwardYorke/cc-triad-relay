@@ -105,38 +105,44 @@ Fix: run 'claude plugin install codex@openai-codex --scope project'
 
 Caller-facing guidance for dispatching work without hitting truncation or
 partial-verdict early-termination. Canonical rule used by harness skills
-(`/tdd-implement`, `/codex-team`, `/pseudo-coderabbit-loop`,
-`/parallel-worktree-v2`) when they spawn this agent. Identical wording
-appears in `agents/coderabbit-mimic.md` so the two LLM-driven reviewer
-surfaces stay in sync.
+(`/tdd-implement`, `/codex-team`, `/pseudo-coderabbit-loop`, and the
+parallel-worktree skill family) when they spawn this agent. Identical
+wording appears in `agents/coderabbit-mimic.md` so the two LLM-driven
+reviewer surfaces stay in sync.
 
-- **Per-dispatch budget**: this agent runs with `maxTurns: 10` (see
-  frontmatter). Codex CLI itself has an **internal tool_uses budget of
-  ~30 tool calls** observed empirically across multiple recent harness
-  sessions. Plan caller prompts to stay well under both ceilings.
-- **Narrow scope > wide scope**: prefer **N narrow dispatches** (one
-  focused question per agent invocation) over **1 wide dispatch** (multiple
-  unrelated questions in one prompt). Recommended budgets:
-  - **Narrow**: 1 file, 1 question, ≤ 5 tool_uses
-  - **Medium**: 1 area, 3-5 sub-questions, ≤ 15 tool_uses
-  - **Wide**: ❌ avoid (split into multiple narrow dispatches)
-- **Partial verdict policy**: when the Codex tool budget approaches
-  exhaustion, the agent's downstream tool (`codex` CLI) MAY truncate the
-  task before reaching the requested deliverable. Callers should detect
-  this by inspecting `tool_uses` count in the agent's `<usage>` block
-  (≥ ~25 with no terminal verdict ≈ likely early termination) and
-  re-dispatch a narrower scope for the missing area instead of treating
-  silence as approval.
-- **Anti-pattern (forbidden)**: dispatching "review the entire PR" or
-  "audit all 5 files at once" in a single invocation regularly exhausts
-  the tool_uses budget before the agent reaches the actual review. Split
-  per-file or per-concern. This pattern is the root cause of recurring
-  Codex review early-termination cascades observed empirically across
-  multiple recent harness sessions.
+Two independent ceilings constrain a dispatch and must not be conflated:
 
-Empirical observation: broad reviews early-terminate at ≤ 10 tool_uses
-across multiple recent sessions, while narrow reviews (1 file, 1 question)
-consistently complete in 1-5 tool_uses with a full verdict.
+- **maxTurns ceiling (this agent)**: `maxTurns: 10` from the frontmatter.
+  Each tool call by this agent counts. Tight cap, kept low to bound
+  parent-context overhead.
+- **Codex CLI tool_uses budget ~30 (downstream)**: Codex CLI itself has
+  an internal tool budget of approximately **30 tool calls per invocation**,
+  observed empirically across multiple recent harness sessions. Wide-scope
+  prompts often exhaust this budget well before reaching the deliverable;
+  empirical observation shows termination as early as around 10 tool_uses
+  for broad audits, and consistently before about 25 once the scope
+  grows beyond a single file.
+
+Pick a scope size that fits both ceilings:
+
+- **Narrow**: 1 file, 1 question, ≤ 5 tool_uses (full verdict consistently observed).
+- **Medium**: 1 area, 3-5 sub-questions, ≤ 15 tool_uses.
+- **Wide**: ❌ avoid (split into multiple narrow dispatches).
+
+**Partial verdict policy**: when downstream `codex` CLI approaches
+exhaustion of its ~30 tool_uses budget, it MAY truncate before reaching
+the requested deliverable. Callers should inspect `tool_uses` in the
+agent's `<usage>` block; a value at or above roughly 25 without a
+terminal verdict is the operational signal that the budget is about to
+run out. Re-dispatch a narrower scope for the missing area; do not treat
+silence as approval (silence ≠ approval).
+
+**Anti-pattern (forbidden)**: dispatching "review the entire PR" or
+"audit all files at once" in a single invocation regularly exhausts the
+tool_uses budget before the agent reaches the actual review. Split
+per-file or per-concern. This pattern is the empirical observation
+behind recurring Codex review early-termination cascades observed across
+multiple recent harness sessions.
 
 ## Output Format
 

@@ -4995,9 +4995,10 @@ describe("docs/maintainer/skill-parallelism.md anchor lock-in", () => {
 // Feedback-loop stage 2: agents/codex-sync.md and coderabbit-mimic.md must
 // carry canonical "Caller Scoping Guidance (tool_uses budget)" section so
 // callers (skills + parent claude) consistently apply narrow-scope dispatch
-// discipline. Independent assertions per anchor (D-124 drift guard).
+// discipline. Each `it` is an independent assertion so a single anchor
+// erosion fails individually rather than masking a broader regression.
 // =============================================================================
-describe("Caller Scoping Guidance (tool_uses budget) — feedback-loop stage 2 anchor lock-in", () => {
+describe("Caller Scoping Guidance (tool_uses budget) — anchor lock-in", () => {
   const agents: Record<string, string> = {
     "codex-sync": readAgent("codex-sync"),
     "coderabbit-mimic": readAgent("coderabbit-mimic"),
@@ -5034,7 +5035,7 @@ describe("Caller Scoping Guidance (tool_uses budget) — feedback-loop stage 2 a
 
       it("経験的根拠 (early termination empirical observation) を出典として明記する", () => {
         // 振り返りが改善に feedback されている証跡 (feedback-loop 機構の core idea)。
-        // tracker ID (gen-NN 等) は generality.test.ts B-3f で禁止されるため、
+        // tracker ID (sprint label 等) は generality blocklist で禁止されるため、
         // generic な empirical 表現 (multiple sessions / observation 等) を anchor とする。
         expect(content).toMatch(/empirical|observation|multiple\s*(?:recent\s*)?sessions|recent\s*(?:harness\s*)?sessions/i);
         expect(content).toMatch(/early[\s-]?termination|truncat|exhaust|tool[_\s-]?budget/i);
@@ -5042,16 +5043,24 @@ describe("Caller Scoping Guidance (tool_uses budget) — feedback-loop stage 2 a
     });
   }
 
-  it("両 agent が同じ canonical 文言を持つ (両者 sync 強制)", () => {
-    // canonical phrase を両方が含むことで sync drift を防止
-    const canonicalPhrases = [
-      /Caller\s*Scoping\s*Guidance/,
-      /tool_uses\s*budget/,
-      /≤\s*5\s*tool_uses/,
+  // Cross-agent canonical parity guard (single direction of drift = single failure).
+  // Both reviewer surfaces must share each load-bearing phrase so the scoping
+  // discipline cannot drift on one side without the other.
+  it("両 agent が同じ load-bearing canonical 文言を持つ (cross-agent parity)", () => {
+    const canonicalPhrases: Array<[RegExp, string]> = [
+      [/##\s*Caller\s*Scoping\s*Guidance/, "section heading"],
+      [/tool_uses\s*budget/, "tool_uses budget terminology"],
+      [/≤\s*5\s*tool_uses/, "narrow budget threshold (≤ 5)"],
+      [/≤\s*15\s*tool_uses/, "medium budget threshold (≤ 15)"],
+      [/partial\s*verdict/i, "partial verdict policy term"],
+      [/silence\s*(?:≠|!=|<>|not\s*=|なる*わけ)|silence[\s\S]{0,20}approval/i, "silence ≠ approval reminder"],
+      [/(?:entire\s*PR|all\s+files|PR\s*全部|一括)/, "wide-scope anti-pattern example"],
+      [/(?:empirical|observation|multiple\s*(?:recent\s*)?sessions)/i, "empirical-evidence phrasing"],
+      [/Codex\s*CLI\s*tool_uses\s*budget\s*~?\s*30|tool_uses\s*budget\s*~?\s*30/, "downstream Codex ~30 ceiling"],
     ];
-    for (const phrase of canonicalPhrases) {
-      expect(agents["codex-sync"]).toMatch(phrase);
-      expect(agents["coderabbit-mimic"]).toMatch(phrase);
+    for (const [phrase, label] of canonicalPhrases) {
+      expect(agents["codex-sync"], `codex-sync.md missing ${label}`).toMatch(phrase);
+      expect(agents["coderabbit-mimic"], `coderabbit-mimic.md missing ${label}`).toMatch(phrase);
     }
   });
 });
