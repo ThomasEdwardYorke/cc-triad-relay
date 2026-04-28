@@ -1,7 +1,8 @@
 /**
  * core/src/__tests__/session-manager.test.ts
  *
- * Stage C: stream-json log + git commit aggregator for parallel-worktree v2.
+ * Tests for the stream-json log + git commit aggregator that drives the
+ * coordinator dashboard for parallel claude session orchestration.
  *
  * Each parallel `claude -p --output-format stream-json` session writes to
  * `<logDir>/claude-log-<slug>.jsonl`. The session-manager parses these
@@ -11,10 +12,14 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+
+const __filename_test = fileURLToPath(import.meta.url);
+const __dirname_test = dirname(__filename_test);
 
 import {
   parseStreamJsonLine,
@@ -553,15 +558,16 @@ describe("escapeCell backtick handling (CR PR #65 Minor)", () => {
   });
 });
 
-describe("comment generality (CR PR #65 Minor)", () => {
-  // This is a doc/comment test, not a runtime test.
-  // The actual fix is manual removal of "Stage C" from L4 comment.
-  // This placeholder confirms the test suite is aware of the finding.
-  it("module comment should not reference project-internal stage names", () => {
-    // NOTE: This is a documentation-level assertion, not runtime-testable.
-    // The real verification is human code review of session-manager.ts L1-25.
-    // Automated check: grep -c "Stage [CG]" session-manager.ts should be 0
-    // after the fix (excluding this test file). Documented here for completeness.
-    expect(true).toBe(true); // placeholder
+describe("module docstring portability (CR PR #65 Minor)", () => {
+  // Comment-level invariant: shipped source files should not reference
+  // project-internal sprint identifiers (Stage <Letter>, gen-N, etc.) per
+  // R2 generality. Enforced as runtime test by reading the file and
+  // grepping for the forbidden pattern.
+  it("session-manager.ts does not contain Stage <letter> sprint labels in docstrings", () => {
+    const src = readFileSync(
+      resolve(__dirname_test, "..", "session-manager.ts"),
+      "utf-8",
+    );
+    expect(src).not.toMatch(/\bStage\s+[A-Z]\b/);
   });
 });

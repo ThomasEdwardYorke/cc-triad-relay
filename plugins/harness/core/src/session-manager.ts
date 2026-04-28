@@ -131,8 +131,8 @@ function parseAssistant(
  * verified against a live `claude -p` capture. Unrecognised lines are
  * silently dropped (returns null), which is intentional for forward-compat
  * but means an undetected schema drift would manifest as a quiet downgrade
- * to "unknown" status. The Stage G end-to-end smoke test (when shipped) is
- * the supplementary detector for that drift.
+ * to "unknown" status. A future end-to-end smoke test against a live
+ * `claude -p` session is the supplementary detector for that drift.
  */
 export function parseStreamJsonLine(
   slug: string,
