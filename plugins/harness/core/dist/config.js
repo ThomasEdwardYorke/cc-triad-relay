@@ -15,6 +15,7 @@ import { HARNESS_IMAGE_DEFAULT_ASPECT, HARNESS_IMAGE_DEFAULT_BACKEND, HARNESS_IM
 export const DEFAULT_CONFIG = {
     projectName: "my-project",
     language: "en",
+    repoKind: "consumer",
     protectedDirectories: [],
     protectedEnvVarNames: [
         "OPENAI_API_KEY",
@@ -208,9 +209,14 @@ function mergeConfig(partial) {
         }
     }
     const mergedWork = validateWorkPipelineCheckPath(validateWorkTaskTracker(baseWork));
+    // repoKind is a top-level scalar with strict enum validation.
+    // Throws on shape error (e.g. non-string, unknown value) so the
+    // misconfiguration surfaces early rather than silently downgrading.
+    const validatedRepoKind = validateRepoKind(partial);
     return {
         ...DEFAULT_CONFIG,
         ...partial,
+        repoKind: validatedRepoKind,
         codex: {
             ...DEFAULT_CONFIG.codex,
             ...(partial.codex ?? {}),
@@ -547,6 +553,27 @@ const VALID_TASK_TRACKER_MODES = [
     "plans",
     "handoff",
 ];
+const VALID_REPO_KINDS = ["consumer", "harness-itself"];
+/**
+ * Guard against `repoKind` being set to a non-string or to a string not in
+ * the allowed enum. `loadConfig()` throws so callers know the harness is
+ * misconfigured (vs. silently falling back to `"consumer"` and producing
+ * confusing meta-session ledger entries). `loadConfigSafe()` catches and
+ * falls back to defaults.
+ */
+function validateRepoKind(partial) {
+    if (!("repoKind" in partial) || partial.repoKind === undefined) {
+        return DEFAULT_CONFIG.repoKind;
+    }
+    const value = partial.repoKind;
+    if (typeof value !== "string") {
+        throw new Error(`harness.config.json: repoKind must be a string (got ${typeof value})`);
+    }
+    if (!VALID_REPO_KINDS.includes(value)) {
+        throw new Error(`harness.config.json: repoKind="${value}" is not allowed; must be one of ${JSON.stringify(VALID_REPO_KINDS)}`);
+    }
+    return value;
+}
 const HANDOFF_PATH_KEYS = [
     "roadmap",
     "backlog",

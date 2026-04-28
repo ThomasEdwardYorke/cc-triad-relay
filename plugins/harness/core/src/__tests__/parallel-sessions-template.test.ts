@@ -32,9 +32,23 @@ function runScript(
   args: string[] = [],
   env: Record<string, string> = {},
 ): { stdout: string; stderr: string; status: number | null } {
+  // Use a minimal env (PATH + LC_ALL + LANG only, plus per-test overrides)
+  // instead of inheriting process.env. Inheriting the runner's environment
+  // lets stray TMUX_PASS_ENV / CLAUDE_ONESHOT_LOG_DIR / CLAUDE_MODEL leak
+  // into assertions about "no -e propagation" or "default model alias",
+  // which makes the suite flaky on developer machines that happen to
+  // export those vars in their interactive shells. The launcher only
+  // depends on PATH for resolving `tmux` / `git` / `bash`, and on the
+  // explicit overrides this helper accepts; everything else must come in
+  // through `env`.
   const r = spawnSync("bash", [SCRIPT_PATH, ...args], {
     encoding: "utf-8",
-    env: { ...process.env, ...env, LC_ALL: "C", LANG: "C" },
+    env: {
+      PATH: process.env.PATH ?? "",
+      LC_ALL: "C",
+      LANG: "C",
+      ...env,
+    },
   });
   return { stdout: r.stdout ?? "", stderr: r.stderr ?? "", status: r.status };
 }
@@ -291,6 +305,177 @@ describe("parallel-sessions-template.sh: input validation (injection prevention)
     const r = runScript(["--dry-run", "attach", "foo;rm"]);
     expect(r.status).not.toBe(0);
     expect(r.stderr).toMatch(/invalid\s+characters|Error/i);
+  });
+});
+
+describe("parallel-sessions-template.sh: tmux env propagation (-e)", () => {
+  // tmux env propagation prerequisite. tmux otherwise filters out custom env
+  // on session creation, so per-window claude (and any e2e smoke mock)
+  // cannot see env vars the coordinator set unless the launcher pipes them
+  // via `tmux new-session -e KEY=VAL`. These tests fix the contract so a
+  // future regression that drops the `-e` propagation fails here, not
+  // silently in production where the symptom is "log file written to /tmp
+  // instead of the configured logDir".
+
+  it("dry-run start propagates CLAUDE_ONESHOT_LOG_DIR via tmux -e", () => {
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      CLAUDE_ONESHOT_LOG_DIR: "/tmp/oneshot-fixture-logs",
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(
+      /-e\s+'?CLAUDE_ONESHOT_LOG_DIR=\/tmp\/oneshot-fixture-logs'?/,
+    );
+  });
+
+  it("dry-run start omits -e when no propagated env is set", () => {
+    // Run the script with a clean env so CLAUDE_ONESHOT_LOG_DIR is not
+    // inherited from the outer test runner; otherwise the assertion is
+    // meaningless on developer machines that happen to have it set.
+    const r = spawnSync(
+      "bash",
+      [SCRIPT_PATH, "--dry-run", "start", "main", "alpha"],
+      {
+        encoding: "utf-8",
+        env: { PATH: process.env.PATH ?? "", LC_ALL: "C", LANG: "C" },
+      },
+    );
+    expect(r.status).toBe(0);
+    const newSessionLine = (r.stdout ?? "")
+      .split("\n")
+      .find((l) => l.includes("new-session"));
+    expect(newSessionLine).toBeDefined();
+    expect(newSessionLine).not.toMatch(/-e\s+'?CLAUDE_ONESHOT_LOG_DIR=/);
+  });
+
+  it("respects TMUX_PASS_ENV whitelist for additional keys", () => {
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      TMUX_PASS_ENV: "MY_EXTRA_KEY",
+      MY_EXTRA_KEY: "myvalue",
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/-e\s+'?MY_EXTRA_KEY=myvalue'?/);
+  });
+
+  it("propagates multiple keys from TMUX_PASS_ENV (whitespace-separated)", () => {
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      TMUX_PASS_ENV: "KEY_A KEY_B",
+      KEY_A: "valueA",
+      KEY_B: "valueB",
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/-e\s+'?KEY_A=valueA'?/);
+    expect(r.stdout).toMatch(/-e\s+'?KEY_B=valueB'?/);
+  });
+
+  it("rejects TMUX_PASS_ENV key with shell metacharacters", () => {
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      TMUX_PASS_ENV: "EVIL;rm",
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/POSIX|Error/i);
+  });
+
+  it("rejects TMUX_PASS_ENV key with hyphen (bash indirect expansion crash)", () => {
+    // Bash 5 raises "bad substitution" on ${!BAD-KEY:-} which would crash
+    // the launcher mid-loop. POSIX shell parameter names disallow hyphen.
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      TMUX_PASS_ENV: "BAD-KEY",
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/POSIX|Error/i);
+  });
+
+  it("rejects TMUX_PASS_ENV key with dot (bash indirect expansion crash)", () => {
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      TMUX_PASS_ENV: "BAD.KEY",
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/POSIX|Error/i);
+  });
+
+  it("rejects TMUX_PASS_ENV key starting with a digit (POSIX violation)", () => {
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      TMUX_PASS_ENV: "1BAD",
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/POSIX|Error/i);
+  });
+
+  it("accepts TMUX_PASS_ENV key with leading underscore (POSIX-valid)", () => {
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      TMUX_PASS_ENV: "_HIDDEN_KEY",
+      _HIDDEN_KEY: "ok",
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/-e\s+'?_HIDDEN_KEY=ok'?/);
+  });
+
+  it("handles unset TMUX_PASS_ENV target key gracefully (no -e emitted)", () => {
+    // TMUX_PASS_ENV declares MY_UNSET_KEY but the env var itself is not set.
+    // resolve_tmux_env_args must not crash and must not emit `-e` for it.
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      TMUX_PASS_ENV: "MY_UNSET_KEY",
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).not.toMatch(/-e\s+'?MY_UNSET_KEY=/);
+  });
+
+  it("propagates whitelisted key when value is empty string (set-but-empty)", () => {
+    // `${!key:-}` + `-n` cannot distinguish "unset" from "set-but-empty",
+    // so an operator who explicitly sets `MY_EMPTY=""` to override an
+    // inherited value (e.g. unset a leaked secret in the child tmux
+    // session) cannot see `-e MY_EMPTY=` propagated. Use `${!key+set}`
+    // form to detect "is set" independent of the value being empty.
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      TMUX_PASS_ENV: "MY_EMPTY",
+      MY_EMPTY: "",
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/-e\s+'?MY_EMPTY='?(?=\s|$)/m);
+  });
+
+  it("propagates CLAUDE_ONESHOT_LOG_DIR even when value is empty string", () => {
+    // Symmetric case for the always-on allowlist key. Setting
+    // CLAUDE_ONESHOT_LOG_DIR="" lets the operator force the child to fall
+    // back to the default `/tmp` rather than inherit a stale dir from the
+    // outer shell. The launcher must propagate the empty value rather than
+    // silently dropping it.
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      CLAUDE_ONESHOT_LOG_DIR: "",
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/-e\s+'?CLAUDE_ONESHOT_LOG_DIR='?(?=\s|$)/m);
+  });
+
+  it("rejects env value containing shell metacharacters", () => {
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      CLAUDE_ONESHOT_LOG_DIR: "/tmp/foo;rm",
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/contains characters outside|Error/i);
+  });
+
+  it("rejects env value containing single quotes (would break -e wrapping)", () => {
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      CLAUDE_ONESHOT_LOG_DIR: "/tmp/'evil'/x",
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/contains characters outside|Error/i);
+  });
+
+  it("accepts path-safe env values (paths, KEY=VAL chains, comma lists)", () => {
+    for (const val of [
+      "/tmp/foo-bar/baz",
+      "/var/log/harness.log",
+      "FOO=1,BAR=2",
+      "a@b.example.com",
+      "v0.4.0+build.123",
+    ]) {
+      const r = runScript(["--dry-run", "start", "main", "alpha"], {
+        CLAUDE_ONESHOT_LOG_DIR: val,
+      });
+      expect(r.status).toBe(0);
+    }
   });
 });
 
