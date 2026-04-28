@@ -1532,6 +1532,7 @@ describe("plugin.json component 宣言 (Anthropic 公式仕様: 明示宣言で�
     "harness-work",
     "new-feature-branch",
     "parallel-worktree",
+    "parallel-worktree-v2",
     "pseudo-coderabbit-loop",
     "session-handoff",
     "tdd-implement",
@@ -4988,5 +4989,116 @@ describe("docs/maintainer/skill-parallelism.md anchor lock-in", () => {
     expect(content).toMatch(/proposal|propose|feature\s+request/i);
     expect(content).toMatch(/parallelism/i);
     expect(content).toMatch(/--parallel(=N|\s*=\s*N)?/);
+  });
+});
+
+// =============================================================================
+// Phase 2 Stage E+F: parallel-worktree-v2 skill anchors + v1 deprecation guard
+// =============================================================================
+//
+// Each `it` is an **independent assertion** (D-124 drift guard pattern).
+// Anchor erosion in any single area triggers a single targeted failure
+// rather than a vague all-encompassing one. Anchors trace primary-source
+// findings (Codex CLI audit 2026-04-28 vs Anthropic Claude Code official
+// docs) so the v2 spec remains compliant when Anthropic spec evolves.
+describe("commands/parallel-worktree-v2.md — Model B v2 skill anchors", () => {
+  const skill = readCommand("parallel-worktree-v2");
+
+  it("v2 skill file が存在し、十分な spec body を持つ (空 stub 防止)", () => {
+    expect(skill.length).toBeGreaterThan(2000);
+  });
+
+  it("frontmatter name=parallel-worktree-v2 を canonical に持つ", () => {
+    const fm = extractFrontmatter(skill);
+    const parsed = parseYaml(fm) as Record<string, unknown>;
+    expect(parsed.name).toBe("parallel-worktree-v2");
+    expect(typeof parsed.description).toBe("string");
+    expect((parsed.description as string).length).toBeGreaterThan(50);
+  });
+
+  it("description が Model B + 独立 claude プロセス + tmux を明示する", () => {
+    const fm = extractFrontmatter(skill);
+    const parsed = parseYaml(fm) as Record<string, unknown>;
+    const desc = parsed.description as string;
+    expect(desc).toMatch(/Model\s*B/);
+    expect(desc).toMatch(/claude/i);
+    expect(desc).toMatch(/tmux|独立|independent/i);
+  });
+
+  it("Stage B/C/D primitive (前提依存) への参照を持つ", () => {
+    // Stage B: tmux session launcher script
+    expect(skill).toMatch(/parallel-sessions-template\.sh/);
+    // Stage C: progress aggregator
+    expect(skill).toMatch(/session-manager\.ts/);
+    // Stage D: claude-oneshot primitive skill
+    expect(skill).toMatch(/claude-oneshot/);
+  });
+
+  it("各 worktree が /tdd-implement Phase 1-7 を内部実行することを明示する", () => {
+    expect(skill).toMatch(/tdd-implement/);
+    // Phase 5.5 = Pseudo CR (per-worktree)
+    expect(skill).toMatch(/Phase\s*5\.5|pseudo-coderabbit/i);
+    // Phase 6 = Real CR (per-worktree)
+    expect(skill).toMatch(/Phase\s*6|coderabbit-review/i);
+    // Phase 7 = Codex adversarial (per-worktree)
+    expect(skill).toMatch(/Phase\s*7|codex-team/i);
+  });
+
+  it("coordinator が Phase 8 で /harness-merge-train を起動することを明示する", () => {
+    expect(skill).toMatch(/harness-merge-train/);
+    expect(skill).toMatch(/Phase\s*8|merge\s*train/i);
+  });
+
+  it("Anthropic 公式仕様準拠: claude -n は display name only / -r/--resume で resume", () => {
+    // claude -n の display-name-only 性質を spec body で記述 (Codex audit
+    // 2026-04-28 確認済、official CLI reference に基づく drift guard)
+    expect(skill).toMatch(/-n[^a-zA-Z0-9].*(?:display|表示|名前|セッション名|session\s*name)/i);
+    // resume 経路を `-r` または `--resume` で記述 (互換: --resume / -r いずれか)
+    expect(skill).toMatch(/-r\b|--resume/);
+  });
+
+  it("Anthropic 公式 stream-json subtype 列挙 (success / error_max_turns 等) を参照", () => {
+    // stream-json 終端判定の正確な subtype を spec body で記述する drift guard。
+    // 全列挙ではなく "success" + 最低 1 つの error subtype を anchor として要求。
+    expect(skill).toMatch(/stream-json/);
+    expect(skill).toMatch(/subtype/i);
+    expect(skill).toMatch(/success/);
+    expect(skill).toMatch(/error_max_turns|error_during_execution|error_max_budget/);
+  });
+
+  it("v1 (Model A) との migration / coexist 関係を明示する", () => {
+    // v1 を deprecate しつつ default として残す移行戦略 (Stage A design doc 整合)
+    expect(skill).toMatch(/v1\b|Model\s*A|parallel-worktree(?!-v2)/);
+    expect(skill).toMatch(/migration|deprecation|coexist|並存|並列|deprecated/i);
+  });
+
+  it("argument-hint がパラメータ列挙を持つ (operator surface の lock-in)", () => {
+    const fm = extractFrontmatter(skill);
+    const parsed = parseYaml(fm) as Record<string, unknown>;
+    if (parsed["argument-hint"] !== undefined) {
+      const hint = parsed["argument-hint"] as string;
+      // tmux / spec / dry-run / attach / status / stop のいずれか subcommand を expose
+      expect(hint).toMatch(/spec|tmux|dry-run|attach|status|stop|profile/i);
+    }
+  });
+});
+
+describe("commands/parallel-worktree.md — v1 deprecation notice (Stage F drift guard)", () => {
+  const v1Skill = readCommand("parallel-worktree");
+
+  it("v1 spec 末尾に v2 への migration / deprecation 注記が存在する", () => {
+    // Stage F の v1 deprecation 警告: v2 が landing したことを v1 reader に
+    // 知らせる anchor。完全削除ではなく default 維持 + forward 注記。
+    expect(v1Skill).toMatch(/parallel-worktree-v2/);
+  });
+
+  it("v1 が deprecation / migration / forward の意図を明示する", () => {
+    expect(v1Skill).toMatch(/deprecated?|migration|移行|recommend|prefer|sunset|並存/i);
+  });
+
+  it("v1 がまだ default として動作することを明示 (突然 deprecate しない)", () => {
+    // 急激な deprecation ではなく "v1 は default のまま、v2 は opt-in" の
+    // 段階的移行を spec body で記述する drift guard。
+    expect(v1Skill).toMatch(/default|現状|v1[\s\S]{0,80}(?:default|production|stable|until)/i);
   });
 });

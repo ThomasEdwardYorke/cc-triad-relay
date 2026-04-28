@@ -19,11 +19,22 @@ argument-hint: "[spec|feature-branch|max-parallel|max-codex-parallel|profile|dry
   - Agent tool 禁止 → 子 agent 起動不可
 - **Phase 5.5 (疑似 CodeRabbit) / Phase 6 (本物 CodeRabbit) / Phase 7 (Codex セカンドオピニオン) は coordinator が worker 完了後に実行する**
 
-### Model B (将来移行予定)
+### Model B (`/parallel-worktree-v2`、ship 済 — 2026-04 Phase 2 Stage E)
 
-Model B は各 worktree で独立 `claude` プロセスを起動し、同一 harness で Phase 1-8 を完全実行する構成。
-`claude --worktree` の `.claude/` 非継承バグ (issue #28041) 解消後、または sibling worktree + `claude -n <slug>` + tmux 管理で実現予定。
-詳細は `docs/maintainer/ROADMAP-model-b.md` を参照 (maintainer-only、plugin 配布対象外)。
+Model B は各 worktree で **独立 `claude` プロセス** を起動し、同一 harness で Phase 1-8 を完全実行する構成。**`/parallel-worktree-v2`** として ship 済 (sibling worktree + `claude -n <slug>` + tmux 管理 + `session-manager.ts` dashboard)。
+
+> ⚠️ **Migration notice (v1 → v2)**
+>
+> 本スキル (`/parallel-worktree`、Model A) は **当面 default として現状維持** (v1 stable / production)。v2 は **opt-in recommended** で、以下のいずれかに該当する場合に推奨:
+> - 3+ 件の sub-task 並列で long-running TDD (各 ~30 min+)
+> - 各 worktree 内で Pseudo CR / Real CR / Codex Phase 7 を **per-worktree** で並列実行したい
+> - parent claude セッションの context budget を sub-tasks で食わせたくない
+>
+> 2-3 件の小規模並列 / 短時間タスクは v1 (本スキル) で十分。
+>
+> A/B 比較データ (Phase 3 P3.2) 確認後に v2 を recommend default に昇格、本スキルは deprecated 扱い ("legacy" として残存) に移行する想定。**v1 と v2 は当面並存**、consumer project が `claude_per_session_options` field を spec.json に持つかで自動 routing する fallback も提供する。
+>
+> 詳細: `commands/parallel-worktree-v2.md` (skill spec) / `docs/parallel-worktree-v2-design.md` (architecture) / `docs/maintainer/ROADMAP-model-b.md` Phase 2/3。
 
 ---
 
