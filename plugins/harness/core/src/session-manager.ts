@@ -109,6 +109,26 @@ function parseAssistant(
   return null;
 }
 
+/**
+ * Parse a single stream-json line into a SessionEvent.
+ *
+ * Expected line shape (Anthropic Claude Code stream-json output, per
+ * `claude -p --output-format stream-json` documentation):
+ *   { "type": "assistant", "message": { "content": [<block>...] }, "timestamp": "..." }
+ *   { "type": "result" | "completion", ... }
+ *
+ * Recognised block shapes:
+ *   tool_use:  { "type": "tool_use", "name": "<tool>", "input": {...} }
+ *   text:      { "type": "text", "text": "..." }
+ *
+ * NOTE: This contract is **assumption-based** at module-write time
+ * (2026-04-28) — modelled on the documented stream-json schema rather than
+ * verified against a live `claude -p` capture. Unrecognised lines are
+ * silently dropped (returns null), which is intentional for forward-compat
+ * but means an undetected schema drift would manifest as a quiet downgrade
+ * to "unknown" status. The Stage G end-to-end smoke test (when shipped) is
+ * the supplementary detector for that drift.
+ */
 export function parseStreamJsonLine(
   slug: string,
   line: string,
@@ -247,6 +267,14 @@ export function buildSessionSummary(
   };
 }
 
+// GFM table cells treat `|` as the column separator and `\n` as a row break.
+// Even when a value is wrapped in backticks (inline code), some renderers
+// still split on `|`, so we escape both unconditionally before interpolating
+// commit messages / branch names / phase markers into the table.
+function escapeCell(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
 export function renderDashboard(summaries: SessionSummary[]): string {
   if (summaries.length === 0) {
     return "no sessions";
@@ -254,12 +282,12 @@ export function renderDashboard(summaries: SessionSummary[]): string {
   const header =
     "| slug | branch | phase | last commit | status |\n| --- | --- | --- | --- | --- |";
   const rows = summaries.map((s) => {
-    const branch = s.branch ?? "—";
-    const phase = s.phase ?? "—";
+    const branch = s.branch ? escapeCell(s.branch) : "—";
+    const phase = s.phase ? escapeCell(s.phase) : "—";
     const commit = s.lastCommit
-      ? `${s.lastCommit.hash.slice(0, 7)} \`${s.lastCommit.message}\` (${s.lastCommit.relativeTime})`
+      ? `${s.lastCommit.hash.slice(0, 7)} \`${escapeCell(s.lastCommit.message)}\` (${escapeCell(s.lastCommit.relativeTime)})`
       : "—";
-    return `| ${s.slug} | ${branch} | ${phase} | ${commit} | ${s.status} |`;
+    return `| ${escapeCell(s.slug)} | ${branch} | ${phase} | ${commit} | ${s.status} |`;
   });
   return [header, ...rows].join("\n");
 }

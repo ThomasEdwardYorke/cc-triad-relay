@@ -374,6 +374,59 @@ describe("renderDashboard", () => {
     expect(md).toMatch(/no\s+sessions|empty|0\s+sessions/i);
   });
 
+  it("escapes pipe characters in commit messages so GFM table cells stay intact", () => {
+    const summaries: SessionSummary[] = [
+      {
+        slug: "weird",
+        branch: "feature/foo|bar",
+        phase: "Phase 5 | extra",
+        lastCommit: {
+          hash: "abcdef0",
+          message: "feat: support || operator",
+          relativeTime: "1 minute ago",
+        },
+        status: "running",
+        events: [],
+      },
+    ];
+    const md = renderDashboard(summaries);
+    // each row should still have exactly 6 leading-pipe boundaries
+    // (5 columns + leading + trailing pipe = 6 pipes per row), plus any
+    // escaped `\|` from interpolated values. Verify by ensuring every
+    // raw `|` in dynamic content is preceded by `\`.
+    const rows = md.split("\n").slice(2); // skip header + separator
+    for (const row of rows) {
+      // Strip out escaped pipes; remaining pipes are real cell separators only.
+      const stripped = row.replace(/\\\|/g, "");
+      const cellCount = stripped.split("|").length - 1;
+      expect(cellCount).toBe(6);
+    }
+    // Also confirm the escaped form is present (sanity).
+    expect(md).toMatch(/\\\|/);
+  });
+
+  it("collapses newlines in cell values (commit messages with bodies)", () => {
+    const summaries: SessionSummary[] = [
+      {
+        slug: "multi",
+        branch: "main",
+        phase: "Phase 5",
+        lastCommit: {
+          hash: "0123456",
+          message: "feat: x\n\nlong body line",
+          relativeTime: "2 minutes ago",
+        },
+        status: "running",
+        events: [],
+      },
+    ];
+    const md = renderDashboard(summaries);
+    // the row containing commit message should not have an embedded newline
+    const lines = md.split("\n");
+    // header (1) + separator (2) + 1 row = 3 lines total
+    expect(lines).toHaveLength(3);
+  });
+
   it("renders dashes for missing fields (null branch / lastCommit / phase)", () => {
     const summary: SessionSummary = {
       slug: "lone",
