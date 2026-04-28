@@ -67,11 +67,18 @@ describe("context-audit generic script artefact", () => {
     expect(existsSync(SCRIPT_PATH)).toBe(true);
   });
 
-  it("is executable (mode bit 0o111)", () => {
-    const mode = statSync(SCRIPT_PATH).mode;
-    // At least one of user/group/other execute bits must be set.
-    expect((mode & 0o111) !== 0).toBe(true);
-  });
+  it.skipIf(process.platform === "win32")(
+    "is executable on POSIX (mode bit 0o111)",
+    () => {
+      // Windows file systems do not record Unix permission bits — git for
+      // Windows preserves the executable flag in the index but not on the
+      // checked-out file mode. The skill's runtime contract is "shell can
+      // execute it on POSIX hosts"; CI matrices that include Windows skip
+      // this assertion.
+      const mode = statSync(SCRIPT_PATH).mode;
+      expect((mode & 0o111) !== 0).toBe(true);
+    },
+  );
 
   it("does not embed `parts-management`-specific literals (must be generic)", () => {
     const body = readFileSync(SCRIPT_PATH, "utf-8");

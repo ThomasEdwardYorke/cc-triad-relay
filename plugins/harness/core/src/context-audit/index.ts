@@ -111,14 +111,22 @@ export interface PredictBudgetImpactOptions {
 // Path helpers
 // ============================================================
 
-/** Normalise the file path for safe directory containment checks. */
+/**
+ * Normalise the file path for safe directory containment checks.
+ *
+ * Returns a project-relative POSIX-style path. On Windows the underlying
+ * `path.relative()` returns backslash-separated segments; we explicitly
+ * convert to forward slashes so the downstream `startsWith(\`${dir}/\`)`
+ * prefix check produces a uniform answer across operating systems.
+ */
 function normaliseRelative(filePath: string, projectRoot: string): string | null {
   const root = resolve(projectRoot);
   // `..` segments and absolute paths outside `projectRoot` are rejected.
   const candidate = isAbsolute(filePath) ? filePath : resolve(root, filePath);
   const rel = relative(root, candidate);
   if (rel.startsWith("..") || isAbsolute(rel)) return null;
-  return rel;
+  // POSIX-normalise so prefix checks are platform-uniform on Windows.
+  return rel.replace(/\\/g, "/");
 }
 
 /**
@@ -176,7 +184,9 @@ async function walk(
     if (entry.isDirectory()) {
       await walk(abs, projectRoot, out);
     } else if (entry.isFile() && entry.name.endsWith(".md")) {
-      out.push(relative(projectRoot, abs));
+      // POSIX-normalise so consumers (dead-link checker, debug output) see
+      // platform-uniform paths on Windows / macOS / Linux.
+      out.push(relative(projectRoot, abs).replace(/\\/g, "/"));
     }
   }
 }
@@ -307,7 +317,9 @@ async function checkDeadLinks(
       // Resolve relative to the current file's directory.
       const fileDir = dirname(resolve(projectRoot, rel));
       const targetAbs = resolve(fileDir, linkPath);
-      const targetRel = relative(projectRoot, targetAbs);
+      // POSIX-normalise the relative path for platform-uniform prefix
+      // checks (Windows would otherwise hand us backslash separators).
+      const targetRel = relative(projectRoot, targetAbs).replace(/\\/g, "/");
       if (targetRel.startsWith("..") || isAbsolute(targetRel)) continue; // outside project
       // Only check links that point under any watched dir — keeps narrative
       // prose noise out of the gate.
