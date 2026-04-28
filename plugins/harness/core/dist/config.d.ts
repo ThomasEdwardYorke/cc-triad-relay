@@ -448,6 +448,63 @@ export interface PostToolUseFailureConfig {
     correctiveHints: boolean;
 }
 /**
+ * Context budget audit configuration.
+ *
+ * Optional, opt-in subsystem that watches how much auto-loaded
+ * `.claude/rules/` (or any consumer-configured directory) content is
+ * shipped into the Claude Code context budget on every session start.
+ *
+ * - **Audit**: a 3-gate check (size budget, dead-link reachability, committed
+ *   entry-point reachability) implemented in `core/src/context-audit/`.
+ * - **Stop hook integration**: when `enabled: true`, the Stop hook injects
+ *   a FAIL marker into `additionalContext` so the next session start surfaces
+ *   re-bloat early.
+ * - **PreToolUse integration**: when a Write tool targets a file under
+ *   `autoLoadDirs`, the PreToolUse hook predicts whether the write would
+ *   exceed `budgetBytes`. Excess prediction triggers a soft suggestion to
+ *   re-route the content into `onDemandDirs` instead — never blocks.
+ *
+ * When `enabled: false` (default), every integration point is a no-op so
+ * existing projects opting out incur zero behavioural cost.
+ */
+export interface ContextBudgetConfig {
+    /**
+     * Master switch. Default `false` (opt-in). When false, Stop / PreToolUse
+     * integration points become no-ops and the historical baseline is preserved.
+     */
+    enabled: boolean;
+    /**
+     * Auto-load total byte budget. Default `35000` (matches the parts-management
+     * precedent recorded in `harness-model-b-design-decisions.md` D-145).
+     * Range: 1024 - 524288.
+     */
+    budgetBytes: number;
+    /**
+     * Directories whose `.md` content gets prefix auto-loaded by Claude Code
+     * on session start. Sizes are summed against `budgetBytes`. Default
+     * `[".claude/rules"]`. Path-traversal entries (`..` or absolute) are
+     * rejected at audit time.
+     */
+    autoLoadDirs: string[];
+    /**
+     * Directories where on-demand rules can be re-housed when the auto-load
+     * budget is exceeded. Used in the redirect suggestion that the PreToolUse
+     * hook surfaces. Default `["docs/ai-rules"]`.
+     */
+    onDemandDirs: string[];
+    /**
+     * Committed entry-point files (root-level docs Claude is guaranteed to see).
+     * Must reference at least one entry in `onDemandDirs` for the entry-point
+     * gate to PASS. Default `["CLAUDE.md", "README.md"]`.
+     */
+    entryPointFiles: string[];
+    /**
+     * Optional index file path (relative to project root). When non-empty,
+     * the audit verifies the file exists. Default `""` (check disabled).
+     */
+    indexFile: string;
+}
+/**
  * ConfigChange hook configuration.
  *
  * Official spec (https://code.claude.com/docs/en/hooks): fires when a
@@ -676,6 +733,12 @@ export interface HarnessConfig {
     postToolUseFailure: PostToolUseFailureConfig;
     configChange: ConfigChangeConfig;
     subagentStart: SubagentStartConfig;
+    /**
+     * Optional context-budget audit knobs. Always populated post-merge —
+     * `DEFAULT_CONFIG.contextBudget` ships with `enabled: false` so consumers
+     * incur zero behavioural cost until they opt in.
+     */
+    contextBudget: ContextBudgetConfig;
     /**
      * Image-generation skill registry. Always populated post-merge —
      * `DEFAULT_CONFIG.imageGeneration` ships full defaults so callers do
