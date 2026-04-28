@@ -109,6 +109,17 @@ export declare const MAX_SIGNAL_DETAIL_CHARS = 200;
  */
 export declare function sanitizeAndClampDetail(raw: string): string;
 /**
+ * Public re-export of the internal `normaliseRelative` helper so consumers
+ * (e.g. the PreToolUse augmentation in `guardrails/pre-tool.ts`) can apply
+ * the exact same normalisation as the audit engine itself. Keeping a single
+ * source of truth prevents the warning path and the audit verdict from
+ * diverging when one side is updated and the other is not.
+ *
+ * Returns a project-relative POSIX-style path, or `null` when the resolved
+ * candidate lives outside `projectRoot`.
+ */
+export declare function normaliseProjectRelative(filePath: string, projectRoot: string): string | null;
+/**
  * Resolve whether a (project-relative or absolute) `filePath` is contained in
  * any of the configured `autoLoadDirs`. Path-traversal entries (`..`) and
  * paths outside the project root are treated as non-matches.

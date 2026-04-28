@@ -173,6 +173,23 @@ function normaliseRelative(filePath: string, projectRoot: string): string | null
 }
 
 /**
+ * Public re-export of the internal `normaliseRelative` helper so consumers
+ * (e.g. the PreToolUse augmentation in `guardrails/pre-tool.ts`) can apply
+ * the exact same normalisation as the audit engine itself. Keeping a single
+ * source of truth prevents the warning path and the audit verdict from
+ * diverging when one side is updated and the other is not.
+ *
+ * Returns a project-relative POSIX-style path, or `null` when the resolved
+ * candidate lives outside `projectRoot`.
+ */
+export function normaliseProjectRelative(
+  filePath: string,
+  projectRoot: string,
+): string | null {
+  return normaliseRelative(filePath, projectRoot);
+}
+
+/**
  * Resolve whether a (project-relative or absolute) `filePath` is contained in
  * any of the configured `autoLoadDirs`. Path-traversal entries (`..`) and
  * paths outside the project root are treated as non-matches.
@@ -329,17 +346,35 @@ async function checkDeadLinks(
   projectRoot: string,
   autoLoadDirs: string[],
   onDemandDirs: string[],
+  entryPointFiles: string[] = [],
 ): Promise<DeadLinkGateOutcome> {
-  const scanFiles = await collectMarkdownFiles(projectRoot, [
+  const dirScanFiles = await collectMarkdownFiles(projectRoot, [
     ...autoLoadDirs,
     ...onDemandDirs,
   ]);
+  // Entry-point files (e.g. `CLAUDE.md` / `README.md`) are also scanned for
+  // dead links so that a `[on-demand](./docs/ai-rules/missing.md)` reference
+  // in CLAUDE.md is caught here. Without this, the entry-point gate would
+  // substring-match `docs/ai-rules` and report PASS even though the
+  // cross-reference points at a missing file.
+  const entryAdditions: string[] = [];
+  const entrySeen = new Set<string>();
+  for (const epRel of entryPointFiles) {
+    const epNorm = normaliseRelative(epRel, projectRoot);
+    if (epNorm === null) continue;
+    if (entrySeen.has(epNorm)) continue;
+    entrySeen.add(epNorm);
+    if (existsSync(resolve(projectRoot, epNorm))) {
+      entryAdditions.push(epNorm);
+    }
+  }
+  const scanFiles = Array.from(new Set([...dirScanFiles, ...entryAdditions]));
   if (scanFiles.length === 0) {
     return {
       signal: buildSignal(
         "dead-link",
         "skip",
-        "no auto-load / on-demand .md files to scan",
+        "no auto-load / on-demand / entry-point .md files to scan",
       ),
       deadLinks: [],
     };
@@ -529,6 +564,7 @@ export async function runContextAudit(
     projectRoot,
     config.autoLoadDirs,
     config.onDemandDirs,
+    config.entryPointFiles,
   ).catch(
     (err): DeadLinkGateOutcome => ({
       signal: buildSignal(

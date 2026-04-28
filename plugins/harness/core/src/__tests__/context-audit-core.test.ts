@@ -132,7 +132,7 @@ describe("computeExitCode", () => {
     ).toBe(0);
   });
 
-  it("bit-OR maps to parts-management precedent", () => {
+  it("bit-OR maps fail signals to the documented exit-code mask (1=size, 2=dead-link, 4=entry-point)", () => {
     const sigs: ContextAuditSignal[] = [
       { id: "size", status: "fail", detail: "over by 100 bytes" },
       { id: "dead-link", status: "fail", detail: "1 dead link" },
@@ -240,6 +240,28 @@ describe("runContextAudit", () => {
     expect(result.exitCode & 4).toBe(4); // entry-point bit set
     const epSignal = result.signals.find((s) => s.id === "entry-point");
     expect(epSignal?.status).toBe("fail");
+  });
+
+  it("dead-link gate flags broken markdown link inside entry-point files", async () => {
+    // Without scanning entry-point files, a `CLAUDE.md` reference like
+    // `[on-demand](./docs/ai-rules/missing.md)` would substring-match
+    // `docs/ai-rules` and pass the entry-point gate while the dead-link
+    // gate (only scanning autoLoadDirs / onDemandDirs) wouldn't notice
+    // the missing target. Verify the engine now catches this.
+    const root = makeProject({
+      onDemand: { "real.md": "# real\n" },
+      entryPoint: {
+        name: "CLAUDE.md",
+        content: "[broken](./docs/ai-rules/missing.md)\n",
+      },
+    });
+    const result = await runContextAudit({
+      projectRoot: root,
+      config: defaultConfig(),
+    });
+    expect(result.verdict).toBe("fail");
+    expect(result.exitCode & 2).toBe(2); // dead-link bit
+    expect(result.deadLinks.some((d) => d.includes("missing.md"))).toBe(true);
   });
 
   it("returns FAIL when a cross-reference points at a missing file", async () => {

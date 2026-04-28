@@ -1,1 +1,1 @@
-{"version":3,"file":"pre-tool.d.ts","sourceRoot":"","sources":["../../src/guardrails/pre-tool.ts"],"names":[],"mappings":"AAAA;;;;;;;;GAQG;AAUH,OAAO,KAAK,EAAE,SAAS,EAAE,UAAU,EAAe,MAAM,aAAa,CAAC;AAoEtE,wBAAsB,eAAe,CAAC,KAAK,EAAE,SAAS,GAAG,OAAO,CAAC,UAAU,CAAC,CAY3E"}
+{"version":3,"file":"pre-tool.d.ts","sourceRoot":"","sources":["../../src/guardrails/pre-tool.ts"],"names":[],"mappings":"AAAA;;;;;;;;GAQG;AAYH,OAAO,KAAK,EAAE,SAAS,EAAE,UAAU,EAAe,MAAM,aAAa,CAAC;AAoEtE,wBAAsB,eAAe,CAAC,KAAK,EAAE,SAAS,GAAG,OAAO,CAAC,UAAU,CAAC,CAY3E"}
