@@ -124,23 +124,91 @@ Model B (各 worktree で独立 claude プロセス + 同一ハーネス) へ進
 
 ---
 
-## Phase 3: 実戦投入 + 定量評価
+## Phase 3: 実戦投入 + 定量評価 (詳細プラン)
 
-### 対象
+> **着手前提**: Phase 2 全 Stage (B/C/D/E/F/G) が main に merge 済。Phase 0/1 は完了済 (gen-19)。
+> **branch 戦略**: 現状 main に進行中 (`feature/model-b-evolution` ブランチは廃止 — gen-22 part 2 時点で main HEAD `d7ea190` まで進行)。Phase 3 は main から `docs/phase-3-results-*` / `feature/phase-3-pain-point-*` 系の short-lived branch で進める。
 
-| # | 内容 |
+### P3.1 — Real-world pilot (parts-management Week 5-6 CRUD)
+
+**目的**: Phase 2 で完成した Model B (parallel-worktree v2 + tmux template + session-manager + claude-oneshot) を実戦投入し、現実の multi-task 開発で痛み点を発見する。
+
+**Scope** (test-bed = parts-management、4 sub-tasks 並列):
+1. Project CRUD (POST/GET/PATCH/DELETE `/api/projects`、版管理 + 親子工事リネージ)
+2. ProjectPart CRUD (枝番分岐 `derived_from_project_part_id` 込み、楽観ロック)
+3. 場所マスタ CRUD (棟・エリア・棚)
+4. 検索 API (pg_trgm GIN、全文検索 + 場所絞込)
+
+**手順**:
+1. parts-management 側 maintainer が `/parallel-worktree-v2 <spec.json>` を起動 (4 sub-task spec)。
+2. 各 worktree で independent `claude -n <slug>` が立ち上がり、内部で `/tdd-implement` v2 を完全実行 (TDD Red→Green + Codex 並列検証 + Pseudo CR + Real CR + Codex Phase 7)。
+3. coordinator は session-manager.ts dashboard で 4 sub-task の進捗を 1 view で監視。
+4. 全 sub-task が Phase 8 (merge ready) に到達したら、coordinator が `/harness-merge-train` で sequential squash merge。
+5. 完了後にメトリクス収集 (P3.2 へ)。
+
+**完了条件**:
+- [ ] 4 endpoint 全件 squash merged (`feature/new-partslist` 統合 branch に lands)
+- [ ] Real CR Strong Clear (3 段判定: APPROVED state OR unresolved=0 / rate-limited marker 不在) 全件
+- [ ] Codex Phase 7 SHIP 全件
+- [ ] pytest coverage 80% 維持 (CI 強制)
+- [ ] 4 sub-task 並列稼働中の wallclock を session-manager.ts ログから測定
+
+### P3.2 — A/B 比較メトリクス収集
+
+**比較対象**: Model A (v1 `/parallel-worktree`) vs Model B (v2 `/parallel-worktree-v2`)。
+
+P3.1 を Model B で実施した結果を保存し、対照実験として **同じ 4 sub-task を Model A で fresh worktree から再実装** (or 既存 Model A のログを retrospective に集計)。新規実装が現実的でない場合、過去 sessions で実施済みの parallel-worktree v1 採用 PR (例: PR #X..#Y) を対照群として比較する。
+
+**メトリクス**:
+| 指標 | 測定 |
 |---|---|
-| P3.1 | parts-management Week 5-6 CRUD 4 endpoint を `/parallel-worktree v2` で実装 |
-| P3.2 | Model A vs Model B の time / cost / quality データ収集 |
-| P3.3 | B-manual 痛み点改善 (session 監視 / conflict 検出 / rollback) |
-| P3.4 | `feature/model-b-evolution` → `main` merge PR 作成 |
+| **wallclock time** | PR open → squash merge までの median / max。`gh pr list --json closedAt,createdAt,number` 集計 |
+| **API token cost** | Anthropic dashboard (per-session) + Codex usage log の per-task 集計 |
+| **quality: Real CR rounds** | Real CR 各 PR の総 review round 数 (`gh pr view --json reviews` で comments 数えで近似) |
+| **quality: Codex Phase 7 FIX_FIRST** | Phase 7 で SHIP に至るまでの round 数 |
+| **quality: post-merge hot-fix** | merge 後 1 週間以内に同 endpoint へ patch PR が出た件数 |
+| **operator load** | human intervention (review reply / merge trigger / conflict resolution) の回数 |
+
+**集計 tooling**:
+- `bin/harness phase-3-metrics --pr-range <from>..<to>` のような CLI を新設して標準化 (Phase 3 期間中に実装)
+- 中間出力: JSON (`docs/maintainer/phase-3-metrics.json`)、最終 report は markdown
+
+**成果物**: `docs/maintainer/phase-3-results-<YYYY-MM-DD>.md` (期間: P3.1 完了から 1 週間後)
+
+### P3.3 — B-manual 痛み点改善 (反復、優先度順)
+
+P3.1 で発見した痛み点をカテゴリ別に対処。期待される候補と着手優先度:
+
+| 優先度 | 痛み点 | 改善案 |
+|---|---|---|
+| High | session 長時間 silent (claude が hung、log 更新なし) | session-manager.ts に `last-event-timestamp > 10min` の WARN、`> 30min` の FAIL を追加。tmux pane name を `<slug>-IDLE-<min>` に動的更新 |
+| High | 4 worktree 間の dynamic conflict (同 file 編集を merge train で発見) | `detectOverlap()` の動的版を `harness-merge-train` 内に組込: 各 PR squash 直前に `git merge-base` 比較で残 PR との overlap 再評価 |
+| Med | crash 時 rollback 手順不明 | `parallel-sessions-template.sh stop --rollback` で worktree 削除 + branch 削除 + tmux session kill を 1 command に統合 |
+| Med | tmux 学習コスト (operator が tmux 不慣れ) | `docs/operator/tmux-quickref.md` 新設 (10 行 cheatsheet)。`/parallel-worktree-v2 attach <slug>` で session-manager.ts 内に inline help 表示 |
+| Low | session-manager dashboard refresh が手動 | `bin/harness session-manager watch` で auto-refresh (Monitor tool 経由 or `watch -n 5`) |
+
+各痛み点は個別 PR として main に merge する (1 痛み点 = 1 PR)。
+
+### P3.4 — Phase 3 完了 + v0.5.0 release
+
+P3.1-P3.3 完了後、Phase 2/3 累計成果を含めて `v0.5.0` release。
+
+**release checklist**:
+- [ ] CHANGELOG.md に Phase 2 (B/C/D/E/F/G) + Phase 3 (P3.1 results / P3.3 改善) の bullets 追加
+- [ ] `plugins/harness/.claude-plugin/plugin.json` version `0.4.0-rc.1` → `0.5.0`
+- [ ] `.claude-plugin/marketplace.json` 同
+- [ ] `package.json` workspace versions 同
+- [ ] `git tag v0.5.0` + push
+- [ ] GitHub Release: P3.2 比較データ + P3.3 改善 highlights を notes に
+- [ ] upstream consumer (parts-management) の harness.config.json で Model B が default workflow になる
 
 ### Phase 3 完了条件
 
-- [ ] 1 週間で CRUD 4 endpoint 完成
-- [ ] Model A vs B 定量比較データ出力
-- [ ] main merge PR approved + merged
-- [ ] upstream (他プロジェクトも使える状態) にリリース可能
+- [ ] P3.1 4 endpoint 全件 main merged + Strong Clear + Codex SHIP
+- [ ] P3.2 比較メトリクス出力 (`docs/maintainer/phase-3-results-<YYYY-MM-DD>.md`)
+- [ ] P3.3 痛み点 High 優先度 2 件解消
+- [ ] P3.4 v0.5.0 tag + Release published
+- [ ] upstream consumers (≥ 1) で Model B default 採用済
 
 ---
 

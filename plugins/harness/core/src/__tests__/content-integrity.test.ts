@@ -223,8 +223,17 @@ describe("pseudo-coderabbit-loop command の profile 読取り fallback", () => 
 describe("tdd-implement command の profile 引数伝播", () => {
   const content = readCommand("tdd-implement");
 
-  it("argument-hint に --profile= allowlist を含む", () => {
-    expect(content).toMatch(/argument-hint[\s\S]{0,200}?--profile=\(?chill\|assertive\|strict/);
+  // argument-hint は strict format `[word|word|...]` (token のみ) なので、`--profile=...` の
+  // allowlist は frontmatter ではなく spec 本文側に記述する。token 存在 + body allowlist の 2 段でチェック。
+  it("argument-hint frontmatter に profile token を含む (strict format)", () => {
+    const fm = extractFrontmatter(content);
+    const hint = /^argument-hint:\s*"(\[[\w-]+(?:\|[\w-]+)*\](?:\s+\[[\w-]+(?:\|[\w-]+)*\])*)"$/m.exec(fm)?.[1];
+    expect(hint).toBeDefined();
+    expect(hint).toContain("profile");
+  });
+
+  it("spec 本文に --profile= allowlist `chill|assertive|strict` を持つ", () => {
+    expect(content).toMatch(/--profile=\(?chill\|assertive\|strict/);
   });
 
   it("Phase 5.5 の /pseudo-coderabbit-loop 呼出で受け取った $PROFILE を直列化する", () => {
@@ -1610,9 +1619,17 @@ describe("plugin.json component 宣言 (Anthropic 公式仕様: 明示宣言で�
         (Array.isArray(allowedTools) && allowedTools.length > 0) ||
         (typeof allowedTools === "string" && allowedTools.length > 0);
       expect(allowedOk, `${cmdName}: allowed-tools must be non-empty array or string`).toBe(true);
-      // (5) argument-hint: 必須 (legacy も含めて全件)、空でない string
+      // (5) argument-hint: 必須 (legacy も含めて全件)、strict 形式
+      // - 1 group: [word], [word|word|...]
+      // - multi-group (subcommand + options 等): [word|word] [word|word|...]
+      // (CR PR #68 Major: shape を固定して invocation surface drift を CI で検知。
+      // free-form `<...>` や `(no arguments — ...)` を rejected する一方、
+      // multi-group bracket sequence は許容して subcommand+options API を表現可能に)
       expect(typeof parsed["argument-hint"], `${cmdName}: argument-hint type`).toBe("string");
-      expect((parsed["argument-hint"] as string).length, `${cmdName}: argument-hint length`).toBeGreaterThan(0);
+      expect(
+        parsed["argument-hint"],
+        `${cmdName}: argument-hint must match strict [word(|word)*]([space][word(|word)*])* format`,
+      ).toMatch(/^\[[\w-]+(?:\|[\w-]+)*\](?:\s+\[[\w-]+(?:\|[\w-]+)*\])*$/);
     }
   });
 
@@ -2624,6 +2641,51 @@ describe("session-handoff skill — check v2 3 機能 (Structural / Content / Sy
       /pointer|link|参照|path/i,
     ].filter((re) => re.test(sec)).length;
     expect(topicCoverage).toBeGreaterThanOrEqual(4);
+  });
+
+  // S-18 carry-over feedback loop drift guard — 振り返り→改善 自動化機構の最初の signal
+  describe("S-18 持ち越し item 構造的可視化 (feedback-loop signal、universal、Plans/handoff 両 mode)", () => {
+    it("check セクションに S-18 signal が anchor として存在する", () => {
+      const sec = checkSection();
+      // ID anchor の literal 存在 (drift guard、独立 assertion)
+      expect(sec).toMatch(/S-18\b/);
+    });
+
+    it("S-18 が `持ち越し` / carry-over / feedback-loop 概念を明示する", () => {
+      const sec = checkSection();
+      // 用語が複数形のいずれかで含まれる (i18n / 略記耐性)
+      expect(sec).toMatch(/持ち越し|carry[\s-]?over|feedback[\s-]?loop/i);
+    });
+
+    it("S-18 が 7 日 threshold を明示する (古い archive 参照の判定基準)", () => {
+      const sec = checkSection();
+      expect(sec).toMatch(/7\s*日|7\s*days/i);
+    });
+
+    it("S-18 が WARN(3+) / FAIL(5+) の二段 escalate threshold を明示する", () => {
+      const sec = checkSection();
+      // count threshold (3 件 / 5 件) と severity 対応が確認できる。
+      // wording 揺れ (超過 / 超 / 以上 / +) と数学記号 (≥ / >=) のいずれかで
+      // 等価表現を許容する (狭すぎる正規表現は spec 改稿時に false fail を起こすため)。
+      // CR Minor (PR #67 round 2): `count >=` 判定で `count >` も通る regex
+      // を strict `>=` のみに修正 (`>=?` の `?` quantifier を除去)。
+      const threeOrMore = /3\s*件\s*(?:超過?|以上|\+)|3[\s-]+(?:occurrence|reference)s?|≥\s*3|>=\s*3|count\s*>=\s*3/i;
+      const fiveOrMore = /5\s*件\s*(?:超過?|以上|\+)|5[\s-]+(?:occurrence|reference)s?|≥\s*5|>=\s*5|count\s*>=\s*5/i;
+      expect(sec).toMatch(threeOrMore);
+      expect(sec).toMatch(fiveOrMore);
+      expect(sec).toMatch(/WARN.*3.*FAIL.*5|WARN\s*\(3.*FAIL\s*\(5/is);
+    });
+
+    it("S-18 が `session-YYYY-MM-DD-` regex pattern を検出方法として明示する", () => {
+      const sec = checkSection();
+      // backlog item 内の archive reference を抽出する regex 形式が明記されている
+      expect(sec).toMatch(/session-\\?\(\?\\?d\{4\}|session-\\d\{4\}|session-\(\?\?\\d\{4\}|session-\(\\d\{4\}/);
+    });
+
+    it("S-18 が remediation 方針 (root-cause fix) を明示する (item-level patch ではなく構造的 blocker 認識)", () => {
+      const sec = checkSection();
+      expect(sec).toMatch(/root[\s-]?cause|構造的\s*blocker|構造的\s*問題|構造改善/i);
+    });
   });
 
   it("check セクションが rehydration verdict の 3 段階評価 (PASS/WARN/FAIL or Ready/Partial/Stale) を示す", () => {
@@ -5158,5 +5220,79 @@ describe("commands/parallel-worktree.md — v1 migration notice (time-stable, no
     expect(v1Skill).not.toMatch(/Phase\s*3\s*P3\.\d/);
     expect(v1Skill).not.toMatch(/ROADMAP-model-b/);
     expect(v1Skill).not.toMatch(/半年後|1\s*年後/);
+  });
+});
+
+// =============================================================================
+// Feedback-loop stage 2: agents/codex-sync.md and coderabbit-mimic.md must
+// carry canonical "Caller Scoping Guidance (tool_uses budget)" section so
+// callers (skills + parent claude) consistently apply narrow-scope dispatch
+// discipline. Each `it` is an independent assertion so a single anchor
+// erosion fails individually rather than masking a broader regression.
+// =============================================================================
+describe("Caller Scoping Guidance (tool_uses budget) — anchor lock-in", () => {
+  const agents: Record<string, string> = {
+    "codex-sync": readAgent("codex-sync"),
+    "coderabbit-mimic": readAgent("coderabbit-mimic"),
+  };
+
+  for (const [agentName, content] of Object.entries(agents)) {
+    describe(`agents/${agentName}.md carries canonical scoping guidance`, () => {
+      it("Caller Scoping Guidance section heading が存在する", () => {
+        expect(content).toMatch(/##\s*Caller\s*Scoping\s*Guidance/);
+      });
+
+      it("tool_uses budget ~30 という empirical 上限を anchor として記述", () => {
+        // Codex CLI の経験的 tool budget を canonical 値として固定
+        expect(content).toMatch(/tool[_\s-]?uses\s*budget|tool[_\s-]?uses[\s\S]{0,80}30/i);
+      });
+
+      it("narrow / medium / wide budget guideline (5 / 15 / avoid) を列挙する", () => {
+        // 3 段の recipe を独立 assertion で固定 (1 つでも消えると個別失敗)
+        expect(content).toMatch(/narrow[\s\S]{0,80}5\s*tool_uses|narrow[\s\S]{0,80}≤\s*5/i);
+        expect(content).toMatch(/medium[\s\S]{0,80}15\s*tool_uses|medium[\s\S]{0,80}≤\s*15/i);
+        expect(content).toMatch(/wide[\s\S]{0,80}(?:avoid|❌|分解|split)/i);
+      });
+
+      it("partial verdict / re-dispatch 方針を明示する (silence = approval 誤読防止)", () => {
+        expect(content).toMatch(/partial\s*verdict|partial[\s-]?verdict/i);
+        expect(content).toMatch(/re-?dispatch|narrower\s*scope|narrow scope|narrower/i);
+      });
+
+      it("anti-pattern (wide-scope dispatch 禁止) を forbidden として明示する", () => {
+        expect(content).toMatch(/anti[-\s]?pattern|forbidden|avoid|❌|禁止|避ける/i);
+        // PR 全体 / 一括 review の具体例で wide scope 失敗を例示
+        expect(content).toMatch(/entire\s*PR|all\s+files|PR\s*全部|一括/i);
+      });
+
+      it("経験的根拠 (early termination empirical observation) を出典として明記する", () => {
+        // 振り返りが改善に feedback されている証跡 (feedback-loop 機構の core idea)。
+        // tracker ID (sprint label 等) は generality blocklist で禁止されるため、
+        // generic な empirical 表現 (multiple sessions / observation 等) を anchor とする。
+        expect(content).toMatch(/empirical|observation|multiple\s*(?:recent\s*)?sessions|recent\s*(?:harness\s*)?sessions/i);
+        expect(content).toMatch(/early[\s-]?termination|truncat|exhaust|tool[_\s-]?budget/i);
+      });
+    });
+  }
+
+  // Cross-agent canonical parity guard (single direction of drift = single failure).
+  // Both reviewer surfaces must share each load-bearing phrase so the scoping
+  // discipline cannot drift on one side without the other.
+  it("両 agent が同じ load-bearing canonical 文言を持つ (cross-agent parity)", () => {
+    const canonicalPhrases: Array<[RegExp, string]> = [
+      [/##\s*Caller\s*Scoping\s*Guidance/, "section heading"],
+      [/tool_uses\s*budget/, "tool_uses budget terminology"],
+      [/≤\s*5\s*tool_uses/, "narrow budget threshold (≤ 5)"],
+      [/≤\s*15\s*tool_uses/, "medium budget threshold (≤ 15)"],
+      [/partial\s*verdict/i, "partial verdict policy term"],
+      [/silence\s*(?:≠|!=|<>|not\s*=|なる*わけ)|silence[\s\S]{0,20}approval/i, "silence ≠ approval reminder"],
+      [/(?:entire\s*PR|all\s+files|PR\s*全部|一括)/, "wide-scope anti-pattern example"],
+      [/(?:empirical|observation|multiple\s*(?:recent\s*)?sessions)/i, "empirical-evidence phrasing"],
+      [/Codex\s*CLI\s*tool_uses\s*budget\s*~?\s*30|tool_uses\s*budget\s*~?\s*30/, "downstream Codex ~30 ceiling"],
+    ];
+    for (const [phrase, label] of canonicalPhrases) {
+      expect(agents["codex-sync"], `codex-sync.md missing ${label}`).toMatch(phrase);
+      expect(agents["coderabbit-mimic"], `coderabbit-mimic.md missing ${label}`).toMatch(phrase);
+    }
   });
 });

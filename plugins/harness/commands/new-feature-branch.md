@@ -2,7 +2,7 @@
 name: new-feature-branch
 description: "Create a new feature branch from `dev`, after verifying that `main` and `dev` are in a healthy relationship. Use when the user asks to start a new piece of work or requests a branch."
 allowed-tools: ["Read", "Bash"]
-argument-hint: "<branch-name>"
+argument-hint: "[branch-name]"
 ---
 
 # `/new-feature-branch` — open a new feature branch correctly

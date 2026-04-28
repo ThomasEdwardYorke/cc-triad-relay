@@ -2,7 +2,7 @@
 name: coderabbit-review
 description: "Watch for CodeRabbit reviews on a GitHub PR in the background and respond to the findings automatically. Use after pushing a PR when the user asks to handle the CodeRabbit review."
 allowed-tools: ["Read", "Grep", "Glob", "Bash", "Edit", "Write"]
-argument-hint: "<pr-number>"
+argument-hint: "[pr-number]"
 ---
 
 # `/coderabbit-review` — CodeRabbit review loop (background watch + auto response)
