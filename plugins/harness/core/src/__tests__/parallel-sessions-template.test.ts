@@ -173,6 +173,98 @@ describe("parallel-sessions-template.sh: generic spec hygiene", () => {
   });
 });
 
+describe("parallel-sessions-template.sh: input validation (injection prevention)", () => {
+  it("rejects slug containing shell metacharacters", () => {
+    const r = runScript(["--dry-run", "start", "main", "foo;rm"]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/invalid\s+characters|Error/i);
+  });
+
+  it("rejects slug containing single-quote (would break out of '$slug' wrapper)", () => {
+    const r = runScript(["--dry-run", "start", "main", "foo'bar"]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/invalid\s+characters|Error/i);
+  });
+
+  it("rejects slug containing whitespace", () => {
+    const r = runScript(["--dry-run", "start", "main", "foo bar"]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/invalid\s+characters|Error/i);
+  });
+
+  it("rejects feature branch containing .. (git ref invalid)", () => {
+    const r = runScript(["--dry-run", "start", "feat..branch", "alpha"]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/contains\s+'\.\.'|Error/i);
+  });
+
+  it("rejects feature branch starting with - (git ref invalid)", () => {
+    const r = runScript(["--dry-run", "start", "-evil", "alpha"]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/must\s+not\s+start\s+with|Error/i);
+  });
+
+  it("rejects feature branch containing shell metacharacters", () => {
+    const r = runScript(["--dry-run", "start", "feat;rm", "alpha"]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/invalid\s+characters|Error/i);
+  });
+
+  it("rejects CLAUDE_MODEL containing shell metacharacters", () => {
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      CLAUDE_MODEL: "gpt-4; rm -rf /",
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/invalid\s+characters|Error|CLAUDE_MODEL/i);
+  });
+
+  it("rejects CLAUDE_MODEL containing command substitution", () => {
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      CLAUDE_MODEL: "$(touch /tmp/pwned)",
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/invalid\s+characters|Error|CLAUDE_MODEL/i);
+  });
+
+  it("rejects unknown CLAUDE_PERMISSION_MODE", () => {
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      CLAUDE_PERMISSION_MODE: "wildmode",
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/invalid\s+CLAUDE_PERMISSION_MODE|Error/i);
+  });
+
+  it("rejects CLAUDE_PERMISSION_MODE with shell metacharacters", () => {
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      CLAUDE_PERMISSION_MODE: "auto; touch /tmp/pwned",
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/invalid\s+CLAUDE_PERMISSION_MODE|Error/i);
+  });
+
+  it("accepts each documented CLAUDE_PERMISSION_MODE value", () => {
+    for (const mode of [
+      "acceptEdits",
+      "auto",
+      "bypassPermissions",
+      "default",
+      "dontAsk",
+      "plan",
+    ]) {
+      const r = runScript(["--dry-run", "start", "main", "alpha"], {
+        CLAUDE_PERMISSION_MODE: mode,
+      });
+      expect(r.status).toBe(0);
+    }
+  });
+
+  it("attach subcommand validates slug input", () => {
+    const r = runScript(["--dry-run", "attach", "foo;rm"]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/invalid\s+characters|Error/i);
+  });
+});
+
 describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => {
   it("dry-run stop prints the kill-session command without executing", () => {
     const r = runScript(["--dry-run", "stop"]);

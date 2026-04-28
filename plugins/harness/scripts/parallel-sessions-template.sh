@@ -16,6 +16,50 @@ set -euo pipefail
 
 DRY_RUN=0
 
+# --- Input validation (injection prevention) -------------------------------
+# All values that flow into `bash -c "$*"` (via emit) or into tmux command
+# strings MUST pass through one of these validators. They reject any value
+# containing shell metacharacters, command separators, or quote escapes that
+# could break out of the surrounding context.
+
+validate_identifier() {
+  # alphanumeric + underscore + hyphen + dot only.
+  # Used for: slug, CLAUDE_MODEL alias.
+  local name="$1"
+  local val="$2"
+  if [[ ! "$val" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+    echo "Error: $name '$val' contains invalid characters (allowed: a-z A-Z 0-9 . _ -)" >&2
+    exit 2
+  fi
+}
+
+validate_branch_name() {
+  # git ref-name subset: alphanumeric + . _ - / only, no `..`, no leading -.
+  local val="$1"
+  if [[ ! "$val" =~ ^[a-zA-Z0-9._/-]+$ ]]; then
+    echo "Error: feature branch '$val' contains invalid characters (allowed: a-z A-Z 0-9 . _ - /)" >&2
+    exit 2
+  fi
+  if [[ "$val" == *..* ]]; then
+    echo "Error: feature branch '$val' contains '..' (invalid in git ref)" >&2
+    exit 2
+  fi
+  if [[ "$val" == -* ]]; then
+    echo "Error: feature branch '$val' must not start with '-'" >&2
+    exit 2
+  fi
+}
+
+validate_permission_mode() {
+  case "$1" in
+    acceptEdits|auto|bypassPermissions|default|dontAsk|plan) ;;
+    *)
+      echo "Error: invalid CLAUDE_PERMISSION_MODE '$1' (expected: acceptEdits / auto / bypassPermissions / default / dontAsk / plan)" >&2
+      exit 2
+      ;;
+  esac
+}
+
 usage() {
   cat <<'USAGE'
 parallel-sessions-template.sh — tmux-based parallel-session launcher
@@ -94,6 +138,7 @@ cmd_start() {
     exit 2
   fi
   local feat="$1"
+  validate_branch_name "$feat"
   shift
   local session parent prefix claude perm
   session="$(resolve_session_name)"
@@ -101,14 +146,17 @@ cmd_start() {
   prefix="$(resolve_worktree_prefix)"
   claude="$(resolve_claude_bin)"
   perm="${CLAUDE_PERMISSION_MODE:-acceptEdits}"
+  validate_permission_mode "$perm"
   local model_flag=""
   if [[ -n "${CLAUDE_MODEL:-}" ]]; then
+    validate_identifier "CLAUDE_MODEL" "$CLAUDE_MODEL"
     model_flag="--model $CLAUDE_MODEL"
   fi
 
   emit "tmux new-session -d -s '$session' -n coordinator"
   local slug wt branch
   for slug in "$@"; do
+    validate_identifier "slug" "$slug"
     wt="${parent}/${prefix}${slug}"
     branch="feature/${feat}-${slug}"
     emit "git worktree add '$wt' -b '$branch' '$feat'"
@@ -136,8 +184,18 @@ cmd_attach() {
     exit 2
   fi
   local slug="$1"
+  validate_identifier "slug" "$slug"
   local session="${2:-$(resolve_session_name)}"
-  emit "tmux attach -t '$session' \\; select-window -t '$slug'"
+  # `tmux attach` blocks until the user detaches, so chaining
+  # `tmux attach ... \; select-window ...` would only run select-window
+  # after the user exits. Use `select-window` first (or `switch-client`
+  # if already inside a tmux session) so the target window is active
+  # before the attach happens.
+  if [[ -n "${TMUX:-}" ]]; then
+    emit "tmux switch-client -t '$session:$slug'"
+  else
+    emit "tmux select-window -t '$session:$slug' && tmux attach -t '$session'"
+  fi
 }
 
 main() {
