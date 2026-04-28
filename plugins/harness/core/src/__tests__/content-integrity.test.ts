@@ -1574,6 +1574,36 @@ describe("plugin.json component 宣言 (Anthropic 公式仕様: 明示宣言で�
     expect(declaredBaseNames).toEqual(COMMAND_NAMES.slice().sort());
   });
 
+  it("各 commands/*.md が必須 frontmatter field を満たす (description-ja を含む)", () => {
+    // CR PR #68 round 1 Major 指摘 (新規 command guard が必須 description-ja を
+    // 見ていない) への対応。frontmatter 規約: name / description / description-ja /
+    // allowed-tools / argument-hint。既存 command の中には description-ja を
+    // 持たないものもあるため、新規 ship する command (parallel-worktree-v2) には
+    // 必ず description-ja を強制する。`legacy_no_description_ja` allowlist で
+    // 既存例外を名前空間ごと管理し、漸進的に解消する。
+    const legacyNoDescriptionJa = new Set([
+      "branch-merge",
+      "coderabbit-review",
+      "codex-team",
+      "harness-setup",
+      "new-feature-branch",
+      "parallel-worktree",
+      "tdd-implement",
+    ]);
+    for (const cmdName of EXPECTED_COMMANDS) {
+      const md = readCommand(cmdName);
+      const fm = extractFrontmatter(md);
+      const parsed = parseYaml(fm) as Record<string, unknown>;
+      expect(parsed.name, `${cmdName}: name`).toBe(cmdName);
+      expect(typeof parsed.description, `${cmdName}: description`).toBe("string");
+      // description-ja: 新規 ship した command は必須、legacy は許容 (allowlist)
+      if (!legacyNoDescriptionJa.has(cmdName)) {
+        expect(typeof parsed["description-ja"], `${cmdName}: description-ja required for non-legacy command`).toBe("string");
+        expect((parsed["description-ja"] as string).length).toBeGreaterThan(0);
+      }
+    }
+  });
+
   it("agents 配列で全 agent md を explicit に宣言している", () => {
     const rawAgents = pluginJson["agents"];
     if (!Array.isArray(rawAgents)) {
@@ -3046,9 +3076,9 @@ describe("release guard — version consistency (Phase μ)", () => {
   const SEMVER_VERSION_REGEX =
     /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
-  const EXPECTED_VERSION = "0.4.0-rc.1";
-  const EXPECTED_PREV_VERSION = "0.3.3";
-  const EXPECTED_RELEASE_DATE = "2026-04-24";
+  const EXPECTED_VERSION = "0.4.0-rc.2";
+  const EXPECTED_PREV_VERSION = "0.4.0-rc.1";
+  const EXPECTED_RELEASE_DATE = "2026-04-28";
 
   if (!SEMVER_VERSION_REGEX.test(EXPECTED_VERSION)) {
     throw new Error(
@@ -5008,12 +5038,15 @@ describe("commands/parallel-worktree-v2.md — Model B v2 skill anchors", () => 
     expect(skill.length).toBeGreaterThan(2000);
   });
 
-  it("frontmatter name=parallel-worktree-v2 を canonical に持つ", () => {
+  it("frontmatter name=parallel-worktree-v2 + description / description-ja の両方を持つ", () => {
     const fm = extractFrontmatter(skill);
     const parsed = parseYaml(fm) as Record<string, unknown>;
     expect(parsed.name).toBe("parallel-worktree-v2");
     expect(typeof parsed.description).toBe("string");
     expect((parsed.description as string).length).toBeGreaterThan(50);
+    // shipped commands manifest 規約: description-ja で日本語ローカライズを分離
+    expect(typeof parsed["description-ja"]).toBe("string");
+    expect((parsed["description-ja"] as string).length).toBeGreaterThan(20);
   });
 
   it("description が Model B + 独立 claude プロセス + tmux を明示する", () => {
@@ -5022,15 +5055,14 @@ describe("commands/parallel-worktree-v2.md — Model B v2 skill anchors", () => 
     const desc = parsed.description as string;
     expect(desc).toMatch(/Model\s*B/);
     expect(desc).toMatch(/claude/i);
-    expect(desc).toMatch(/tmux|独立|independent/i);
+    expect(desc).toMatch(/tmux|independent/i);
   });
 
-  it("Stage B/C/D primitive (前提依存) への参照を持つ", () => {
-    // Stage B: tmux session launcher script
+  it("companion primitive (parallel-sessions-template / session-manager / claude-oneshot) への参照を持つ", () => {
+    // Phase 2 で実装した三 primitive への dependency を spec body で記録する。
+    // Stage B/C/D 等の rollout 用 label は使わず、ファイル path の literal anchor のみ。
     expect(skill).toMatch(/parallel-sessions-template\.sh/);
-    // Stage C: progress aggregator
-    expect(skill).toMatch(/session-manager\.ts/);
-    // Stage D: claude-oneshot primitive skill
+    expect(skill).toMatch(/session-manager(?:\.ts)?/);
     expect(skill).toMatch(/claude-oneshot/);
   });
 
@@ -5050,26 +5082,32 @@ describe("commands/parallel-worktree-v2.md — Model B v2 skill anchors", () => 
   });
 
   it("Anthropic 公式仕様準拠: claude -n は display name only / -r/--resume で resume", () => {
-    // claude -n の display-name-only 性質を spec body で記述 (Codex audit
-    // 2026-04-28 確認済、official CLI reference に基づく drift guard)
+    // claude -n の display-name-only 性質を spec body で記述する drift guard。
     expect(skill).toMatch(/-n[^a-zA-Z0-9].*(?:display|表示|名前|セッション名|session\s*name)/i);
-    // resume 経路を `-r` または `--resume` で記述 (互換: --resume / -r いずれか)
+    // resume 経路を `-r` または `--resume` で記述。
     expect(skill).toMatch(/-r\b|--resume/);
   });
 
-  it("Anthropic 公式 stream-json subtype 列挙 (success / error_max_turns 等) を参照", () => {
-    // stream-json 終端判定の正確な subtype を spec body で記述する drift guard。
-    // 全列挙ではなく "success" + 最低 1 つの error subtype を anchor として要求。
+  it("interactive と headless の signal 経路を明示する (interactive=tmux capture / git log、headless=stream-json)", () => {
+    // CR PR #68 round 1 Critical 指摘: interactive `claude -n` は stream-json を
+    // 出さない。spec body で interactive と headless の経路を区別する drift guard。
+    expect(skill).toMatch(/tmux\s*capture-pane|git\s*(?:commit\s*)?log|interactive/i);
+    // headless 経路 (claude-oneshot 経由) で stream-json が取得できることを記述
     expect(skill).toMatch(/stream-json/);
-    expect(skill).toMatch(/subtype/i);
-    expect(skill).toMatch(/success/);
-    expect(skill).toMatch(/error_max_turns|error_during_execution|error_max_budget/);
+    expect(skill).toMatch(/-p\b|--print|headless|claude-oneshot/);
   });
 
-  it("v1 (Model A) との migration / coexist 関係を明示する", () => {
-    // v1 を deprecate しつつ default として残す移行戦略 (Stage A design doc 整合)
-    expect(skill).toMatch(/v1\b|Model\s*A|parallel-worktree(?!-v2)/);
-    expect(skill).toMatch(/migration|deprecation|coexist|並存|並列|deprecated/i);
+  it("v1 (Model A) との coexist 関係を user-facing な永続表現で明示する (rollout date / Stage label を含まない)", () => {
+    // v1 が default として残ることを user-facing 表現で記述 (CR Major 指摘対応:
+    // Stage E / Phase 3 / 半年後 等の rollout-history / tracker を shipped spec
+    // に持ち込まない、time-stable wording のみ許容)。
+    expect(skill).toMatch(/Model\s*A|legacy|parallel-worktree(?!-v2)|v1\b/);
+    expect(skill).toMatch(/coexist|opt-in|default|並存|recommended/i);
+    // forbidden: rollout-date / stage-label / sprint タグが shipped spec に
+    // leak していないこと (independent assertion で個別 fail させる)。
+    expect(skill).not.toMatch(/Phase\s*3\s*P3\.\d/);
+    expect(skill).not.toMatch(/半年後|1\s*年後/);
+    expect(skill).not.toMatch(/ROADMAP-model-b/);
   });
 
   it("argument-hint がパラメータ列挙を持つ (operator surface の lock-in)", () => {
@@ -5077,28 +5115,36 @@ describe("commands/parallel-worktree-v2.md — Model B v2 skill anchors", () => 
     const parsed = parseYaml(fm) as Record<string, unknown>;
     if (parsed["argument-hint"] !== undefined) {
       const hint = parsed["argument-hint"] as string;
-      // tmux / spec / dry-run / attach / status / stop のいずれか subcommand を expose
       expect(hint).toMatch(/spec|tmux|dry-run|attach|status|stop|profile/i);
     }
   });
 });
 
-describe("commands/parallel-worktree.md — v1 deprecation notice (Stage F drift guard)", () => {
+describe("commands/parallel-worktree.md — v1 migration notice (time-stable, no rollout/tracker leaks)", () => {
   const v1Skill = readCommand("parallel-worktree");
 
-  it("v1 spec 末尾に v2 への migration / deprecation 注記が存在する", () => {
-    // Stage F の v1 deprecation 警告: v2 が landing したことを v1 reader に
-    // 知らせる anchor。完全削除ではなく default 維持 + forward 注記。
+  it("v1 spec 内に v2 sibling skill (`parallel-worktree-v2`) への forward link が存在する", () => {
     expect(v1Skill).toMatch(/parallel-worktree-v2/);
   });
 
-  it("v1 が deprecation / migration / forward の意図を明示する", () => {
-    expect(v1Skill).toMatch(/deprecated?|migration|移行|recommend|prefer|sunset|並存/i);
+  it("v1 が migration / coexist の意図を user-facing な表現で明示する", () => {
+    expect(v1Skill).toMatch(/coexist|opt-in|migration|recommend|prefer|並存|並列|deprecated?/i);
   });
 
   it("v1 がまだ default として動作することを明示 (突然 deprecate しない)", () => {
-    // 急激な deprecation ではなく "v1 は default のまま、v2 は opt-in" の
-    // 段階的移行を spec body で記述する drift guard。
-    expect(v1Skill).toMatch(/default|現状|v1[\s\S]{0,80}(?:default|production|stable|until)/i);
+    expect(v1Skill).toMatch(/default|現状|remains?[\s\S]{0,80}default|v1[\s\S]{0,80}(?:default|production|stable|until)/i);
+  });
+
+  it("v1 migration notice に sprint-label / maintainer-only 参照が leak していない", () => {
+    // CR PR #68 round 1 Major 指摘 (parallel-worktree.md:37) 対応:
+    // 「Phase 2 Stage E」「Phase 3 P3.2」「ROADMAP-model-b.md」「半年後 / 1 年後」等の
+    // tracker / rollout 参照を shipped skill から外す time-stable wording 規律。
+    // 注: ## スキル更新履歴 section の date entry (`v2.0 (2026-04-21)` 等) は
+    // 通常の changelog で legitimate なので、ここでは sprint label / roadmap
+    // 参照のみを禁止 (date そのものは許容)。
+    expect(v1Skill).not.toMatch(/Phase\s*2\s*Stage\s*[A-Z]/);
+    expect(v1Skill).not.toMatch(/Phase\s*3\s*P3\.\d/);
+    expect(v1Skill).not.toMatch(/ROADMAP-model-b/);
+    expect(v1Skill).not.toMatch(/半年後|1\s*年後/);
   });
 });
