@@ -1,6 +1,6 @@
 ---
 name: harness-self-improve
-description: "Session 末尾の振り返りから改善 backlog item を自動抽出する skill。handoff archive の Open issues / Anti-pattern observations / 規律違反 ledger を読み、shipped spec に reflect すべき改善点をまとめて backlog 更新 + 改善 PR helper の起票案を提案する。長期 session で蓄積した学びを harness 進化に feedback ループする目的。"
+description: "Retrospective-driven harness backlog extraction from session-handoff archives. Reads Open issues / Anti-pattern observations / discipline-violation ledger entries from archive files and proposes shipped-spec backlog items + improvement-PR drafts. Goal: feed long-session learnings back into harness evolution. Read-only by default; `format=apply` writes to backlog files only (no git commit / push)."
 description-ja: "session 末尾の振り返りから改善 backlog を抽出し、harness 自己改善 PR の起票案を提案する skill。"
 allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "TaskCreate", "TaskUpdate", "TaskList"]
 argument-hint: "[archive-file|since-date|since-session|format|dry-run]"
@@ -45,11 +45,11 @@ default は **直近 1 session archive**。
 # default (most recent archive)
 /harness-self-improve
 
-# explicit file
-/harness-self-improve archive-file=.docs/handoff/archive/session-2026-04-28-gen25-*.md
+# explicit file (use generic placeholders for slug / date)
+/harness-self-improve archive-file=.docs/handoff/archive/session-<DATE>-<SLUG>.md
 
 # since date (multiple archives)
-/harness-self-improve since-date=2026-04-25
+/harness-self-improve since-date=<YYYY-MM-DD>
 ```
 
 ### Step 2: 学習 section の抽出
@@ -58,11 +58,11 @@ default は **直近 1 session archive**。
 
 | 抽出対象 section | regex anchor |
 |---|---|
-| Open issues / 残件 | `^##\s*(?:Open\s+issues|残件)` |
+| Open issues / 残件 | `^##\s*(?:Open\s+issues\|残件)` |
 | Anti-pattern observations | `^##\s*Anti[\s-]?pattern\s+observations` |
 | 規律違反 ledger 追記 | `^##\s*規律違反\s*ledger` |
-| Codex audit findings | `^###?\s*Codex\s+(?:audit|review)` |
-| Recommended remediation | `^##\s*Recommended\s+(?:Remediation|改善)` |
+| Codex audit findings | `^###?\s*Codex\s+(?:audit\|review)` |
+| Recommended remediation | `^##\s*Recommended\s+(?:Remediation\|改善)` |
 
 各 section の bullet list / numbered list を抽出して candidate item として
 parse する。
@@ -73,7 +73,7 @@ parse する。
 
 ```yaml
 candidate:
-  origin_archive: session-2026-04-28-gen25-*.md
+  origin_archive: session-<DATE>-<SLUG>.md
   category: open-issue | anti-pattern | discipline-violation | audit-finding
   severity: critical | high | medium | low | info
   scope: plugin-spec | consumer-flow | docs | tests | infrastructure
@@ -122,18 +122,18 @@ PR draft は以下の形式:
 <R1-R3 generality / D-NN integrity / 既存 invariant への影響>
 ```
 
-実 PR 起票は coordinator の judgment + ユーザー確認の両 gate を通してから
-実施 (本 skill は draft のみ提供、auto push は禁止)。
+**重要 (scope 厳格分離)**: 本 skill は **draft 生成 + backlog file 書込み (opt-in、`format=apply`) のみ**。実 PR 起票 (`git add` / `git commit` / `git push` / `gh pr create`) は本 skill の scope 外であり、coordinator が judgment + ユーザー確認の両 gate を通した後、別途明示的に実行する責務。本 skill から自動 commit / push / PR 起票することは禁止 (anti-pattern として後述)。
 
 ## Output
 
 skill 完了時に以下を返す:
 
 1. **Backlog candidate count**: 抽出した item 数 + severity breakdown
-2. **Backlog reflection diff**: `<project>-backlog.md` への追記 diff
-   (dry-run なら 出力のみ、`format=apply` で commit + push)
+2. **Backlog reflection diff**: `<project>-backlog.md` への追記 diff。
+   - `dry-run` (default): 出力のみ、書込み一切なし
+   - `format=apply`: backlog file への書込みのみ (coordinator が `git status` で確認 → `git add` / `git commit` / `git push` を別途明示実行する前提、本 skill から自動 commit / push しない)
 3. **PR draft list**: 起票 draft text (TaskList で各 draft を 1 task に
-   登録、coordinator が後日着手)
+   登録、coordinator が後日着手)。**draft はテキスト出力のみで、`gh pr create` 実行は coordinator の責務**。
 4. **Skipped items**: scope 外 / consumer-only / 既存 backlog 重複 等で
    除外した item の rationale
 

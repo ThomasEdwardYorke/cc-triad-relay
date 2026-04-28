@@ -116,11 +116,14 @@ plugins/harness/
 │   ├── harness-release.md
 │   ├── harness-setup.md
 │   ├── branch-merge.md
+│   ├── claude-oneshot.md
 │   ├── new-feature-branch.md
 │   ├── coderabbit-review.md
 │   ├── codex-team.md
 │   ├── harness-merge-train.md
+│   ├── harness-self-improve.md
 │   ├── parallel-worktree.md
+│   ├── parallel-worktree-v2.md
 │   ├── pseudo-coderabbit-loop.md
 │   ├── session-handoff.md
 │   └── tdd-implement.md
