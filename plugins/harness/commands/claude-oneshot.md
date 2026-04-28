@@ -82,7 +82,7 @@ The wrapper is intentionally thin: it does not enforce TDD, Phase 5.5/6/7 qualit
 
 - `core/src/session-manager.ts` — consumer of the per-slug log files
 - `scripts/parallel-sessions-template.sh` — alternative tmux-based launcher
-- `commands/parallel-worktree-v2.md` — *planned* coordinator that fans out N `/claude-oneshot` invocations . Until Stage E lands, this skill is callable directly by any orchestrator that wants the per-slug log path contract.
+- `commands/parallel-worktree-v2.md` — *planned* coordinator that fans out N `/claude-oneshot` invocations. Until that coordinator lands, this skill is callable directly by any orchestrator that wants the per-slug log path contract.
 
 ## Notes
 

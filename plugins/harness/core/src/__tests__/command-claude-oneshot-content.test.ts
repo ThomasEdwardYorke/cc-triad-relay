@@ -12,7 +12,7 @@
  * 対応する harness rule:
  *   - generality.test.ts blocklist (B-1 〜 B-3g)
  *   - CONTRIBUTING.md §1.2 (internal tracker ID 持ち込み禁止)
- *   - parallel-worktree-v2-design.md (Stage D の primitive 契約)
+ *   - parallel-worktree-v2-design.md (downstream coordinator primitive 契約)
  */
 
 import { describe, it, expect } from "vitest";
@@ -125,15 +125,15 @@ describe("claude-oneshot skill: per-slug log file contract", () => {
 describe("claude-oneshot skill: integration cross-links", () => {
   const content = readCommand("claude-oneshot");
 
-  it("cross-links to session-manager (Stage C consumer)", () => {
+  it("cross-links to session-manager (log file consumer)", () => {
     expect(content).toMatch(/session-manager(?:\.ts)?/);
   });
 
-  it("cross-links to parallel-worktree v2 (Stage E coordinator)", () => {
+  it("cross-links to parallel-worktree v2 (downstream coordinator)", () => {
     expect(content).toMatch(/parallel-worktree-?v?2|parallel-worktree.*v2/i);
   });
 
-  it("cross-links to parallel-sessions-template.sh (Stage B alternative)", () => {
+  it("cross-links to parallel-sessions-template.sh (tmux-based launcher alternative)", () => {
     expect(content).toMatch(/parallel-sessions-template\.sh/);
   });
 });
