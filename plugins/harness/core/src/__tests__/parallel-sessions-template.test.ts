@@ -1,7 +1,7 @@
 /**
  * core/src/__tests__/parallel-sessions-template.test.ts
  *
- * Stage B: `scripts/parallel-sessions-template.sh` の shell-exec contract test.
+ * Shell-exec contract test for `scripts/parallel-sessions-template.sh`.
  *
  * 目的:
  *   tmux-based 並列 session launcher の bash template が

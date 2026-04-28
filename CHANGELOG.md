@@ -5,6 +5,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0-rc.2] - 2026-04-28
+
+### Added
+
+- **`/parallel-worktree-v2` — Model B parallel TDD orchestrator skill (new sibling to legacy `/parallel-worktree`)**. Each sub-task runs in an independent top-level `claude` process inside a dedicated tmux window so per-worktree skill access (Pseudo CR / Real CR / Codex Phase 7) is preserved without coordinator context contention. English-first spec body with `description-ja` for the Japanese summary; v1 (Model A) remains the default and v2 is opt-in recommended for 3+ parallel long-running tasks. Companion primitives (`scripts/parallel-sessions-template.sh`, `core/src/session-manager.ts`, `commands/claude-oneshot.md`) referenced as runtime dependencies. Anthropic CLI compliance documented: `claude -n` is interactive display name only; stream-json signal flows through the headless `claude-oneshot` primitive while interactive sessions use tmux `capture-pane` + git-log polling. content-integrity drift guards (10 v2 anchors + 4 v1 migration-notice anchors + EXPECTED_COMMANDS / plugin.json / marketplace.json / harness-setup.md updated to 15 commands = 5 verb + 10 workflow). Test count: 4368 → 4407 (+39).
+- **Caller Scoping Guidance section (`agents/codex-sync.md` and `agents/coderabbit-mimic.md`)** — canonical `tool_uses budget` rule preventing recurring early-termination cascades (Narrow ≤ 5 / Medium ≤ 15 / Wide ❌). Both reviewer-surface agents carry the same canonical anchors for symmetry; coderabbit-mimic.md keeps a compact one-paragraph form to honour the 500-line skill discipline. 13 content-integrity drift guards added.
+
+### Fixed
+
+- **`session-handoff` skill S-18 threshold wording** — `commands/session-handoff.md` row for S-18 had `3 件超過` / `5 件超過` which contradicted the `WARN (3+) / FAIL (5+)` severity column (`超過` strictly means "more than"). Reworded to `3 件以上 (count >= 3)` / `5 件以上 (count >= 5)` so the description matches the test boundary. content-integrity test regex for the threshold wording broadened to accept `件超 / 件以上 / 件+ / ≥ / >= / count >=` equivalence so future spec wording adjustments do not produce false fails.
+
+## [Unreleased — pre-rc.2 staging area]
+
 ### Added
 
 - **`/coderabbit-review` — explicit completion signals (commit_status + APPROVED), 2-stage Clear (Stop polling / Merge ready), auto `@coderabbitai resolve` injection** — addresses the "CodeRabbit never says 'cleared'" pain that drove a 6-round review loop on the prior merge-train PR. Codex (Researcher Q1-Q4) + LIVE observation on the prior PR confirmed two CR-side signals harness was previously ignoring: (a) per-commit `commit_status` (`pending` → `success` "Review completed") fires for every push as an explicit per-round completion marker, and (b) `request_changes_workflow: true` in `.coderabbit.yaml` makes CR auto-emit `state: APPROVED` reviews when actionable=0 + `pre_merge_checks` pass. This change wires both into the skill so callers stop polling deterministically and merge with explicit Strong Clear instead of relying on the implicit Soft Clear (unresolved=0) heuristic.
@@ -184,8 +197,9 @@ Additional hardening driven by Codex second-opinion (pre-merge) review:
 - Added explicit guidance on log sensitivity in `docs/en/security.md`.
 - `.gitignore` template excludes `.claude/logs/`, `.claude/state/`, `.claude/worktrees/`.
 
-[Unreleased]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.4.0-rc.1...HEAD
-[0.4.0-rc.1]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.3.3...v0.4.0-rc.1
+[Unreleased]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.4.0-rc.2...HEAD
+[0.4.0-rc.2]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.4.0-rc.1...v0.4.0-rc.2
+[0.4.0-rc.1]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.4.0-rc.1
 [0.3.3]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.3.3
 [0.3.2]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.3.2
 [0.3.1]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.3.1

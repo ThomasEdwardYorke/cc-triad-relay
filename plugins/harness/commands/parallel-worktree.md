@@ -1,6 +1,7 @@
 ---
 name: parallel-worktree
 description: "複数サブタスクを git worktree 並列で開発するオーケストレータスキル (Model A: 単一 Claude + Agent-tool subagent)。coordinator が worktree 生成 / worker dispatch / 担当表同期 / マージ順序 / コンフリクト解消を orchestrate する。各 worker は TDD + Codex Phase 4-5 を実行し、Phase 5.5-7 は coordinator が取りまとめて実行する。単一リポジトリ (worktree なし) でもサブタスク数 1 の縮退モードとして利用可。Use when implementing 2+ independent sub-tasks in parallel with maximum quality."
+description-ja: "Model A: 単一 Claude + Agent-tool で git worktree 並列の TDD 開発を orchestrate する。複数サブタスクを高品質に並列実装。"
 allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput"]
 argument-hint: "[spec|feature-branch|max-parallel|max-codex-parallel|profile|dry-run|no-commit]"
 ---
@@ -19,11 +20,30 @@ argument-hint: "[spec|feature-branch|max-parallel|max-codex-parallel|profile|dry
   - Agent tool 禁止 → 子 agent 起動不可
 - **Phase 5.5 (疑似 CodeRabbit) / Phase 6 (本物 CodeRabbit) / Phase 7 (Codex セカンドオピニオン) は coordinator が worker 完了後に実行する**
 
-### Model B (将来移行予定)
+### Model B (`/parallel-worktree-v2`)
 
-Model B は各 worktree で独立 `claude` プロセスを起動し、同一 harness で Phase 1-8 を完全実行する構成。
-`claude --worktree` の `.claude/` 非継承バグ (issue #28041) 解消後、または sibling worktree + `claude -n <slug>` + tmux 管理で実現予定。
-詳細は `docs/maintainer/ROADMAP-model-b.md` を参照 (maintainer-only、plugin 配布対象外)。
+Model B is the alternative orchestrator that runs an **independent
+top-level `claude` process** per worktree (sibling worktree + `claude -n <slug>` +
+tmux + companion `session-manager` aggregator). It is shipped as the
+sibling skill **`/parallel-worktree-v2`** and is available now.
+
+> **Migration notice (v1 ↔ v2)**
+>
+> `/parallel-worktree` (this skill, Model A) **remains the default**.
+> `/parallel-worktree-v2` is **opt-in recommended** when any of the
+> following applies:
+> - 3+ parallel sub-tasks with long-running TDD per task,
+> - need per-worktree Pseudo CR / Real CR / Codex Phase 7 execution,
+> - parent claude must stay responsive while workers run.
+>
+> Small parallel batches (2-3 short tasks) continue to fit v1 well.
+> v1 and v2 coexist; pick per batch. `/parallel-worktree` (this skill)
+> remains the v1 / Model A entry point and is invoked directly. When you
+> need Model B, invoke `/parallel-worktree-v2` explicitly — there is no
+> transparent v1 → v2 routing.
+>
+> Spec: `commands/parallel-worktree-v2.md`. Architecture detail:
+> `docs/parallel-worktree-v2-design.md`.
 
 ---
 

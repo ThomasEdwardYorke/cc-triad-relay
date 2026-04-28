@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { dirname, resolve, posix as pathPosix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
@@ -223,8 +223,17 @@ describe("pseudo-coderabbit-loop command の profile 読取り fallback", () => 
 describe("tdd-implement command の profile 引数伝播", () => {
   const content = readCommand("tdd-implement");
 
-  it("argument-hint に --profile= allowlist を含む", () => {
-    expect(content).toMatch(/argument-hint[\s\S]{0,200}?--profile=\(?chill\|assertive\|strict/);
+  // argument-hint は strict format `[word|word|...]` (token のみ) なので、`--profile=...` の
+  // allowlist は frontmatter ではなく spec 本文側に記述する。token 存在 + body allowlist の 2 段でチェック。
+  it("argument-hint frontmatter に profile token を含む (strict format)", () => {
+    const fm = extractFrontmatter(content);
+    const hint = /^argument-hint:\s*"(\[[\w-]+(?:\|[\w-]+)*\](?:\s+\[[\w-]+(?:\|[\w-]+)*\])*)"$/m.exec(fm)?.[1];
+    expect(hint).toBeDefined();
+    expect(hint).toContain("profile");
+  });
+
+  it("spec 本文に --profile= allowlist `chill|assertive|strict` を持つ", () => {
+    expect(content).toMatch(/--profile=\(?chill\|assertive\|strict/);
   });
 
   it("Phase 5.5 の /pseudo-coderabbit-loop 呼出で受け取った $PROFILE を直列化する", () => {
@@ -762,7 +771,7 @@ describe("disable-model-invocation for side-effecting workflows (Anthropic skill
  * Anthropic Claude Code slash command frontmatter の field 順序は公式 spec で
  * 定義されていない (community convention、公式 docs reference:
  * https://code.claude.com/docs/en/slash-commands#frontmatter-reference)。
- * 本 plugin の 14 commands は一貫した canonical order を採用しており、
+ * 本 plugin の 15 commands は一貫した canonical order を採用しており、
  * drift を CI で阻止する regression guard。
  *
  * canonical order:
@@ -797,7 +806,7 @@ describe("slash command frontmatter — canonical field order (community convent
    * されることを前提とする。multiline YAML block scalar (`|` / `>` style)
    * を field value に使うと、continuation 行の text が `key:` パターンに
    * match して false positive になる (例: 値内の "name: foo" が新 key と
-   * 誤判定される)。現状の 14 commands は全 field が inline で対応済だが、
+   * 誤判定される)。現状の 15 commands は全 field が inline で対応済だが、
    * 将来 multiline 記述が必要になった場合は本 helper を `parseYaml(...)`
    * + `Object.keys()` 経由に書き換える (yaml library は import 済)。
    *
@@ -828,7 +837,7 @@ describe("slash command frontmatter — canonical field order (community convent
       // extractTopLevelKeys は inline single-line frontmatter 前提のため、
       // multiline block scalar (`description: |` / `description: >` のような
       // YAML block scalar style) が混入すると continuation 行の text が新 key
-      // と誤判定される false positive 経路を持つ。本 sanity test は 14 commands
+      // と誤判定される false positive 経路を持つ。本 sanity test は 15 commands
       // 全件で block scalar marker が値部分に出現しないことを assert し、
       // helper の前提を CI で固定する。drift があれば即時検知され、
       // helper を parseYaml ベースに refactor すべき signal となる。
@@ -856,7 +865,7 @@ describe("slash command frontmatter — canonical field order (community convent
    * `extractTopLevelKeys` は CANONICAL_FIELD_ORDER でない key を先に filter
    * で捨てる設計のため、subsequence 判定では検知できない (false negative
    * 経路)。新規 field 追加時に CANONICAL_FIELD_ORDER list を更新する強制力
-   * を CI で持つため、別 it.each で全 14 commands に対し未知 top-level key
+   * を CI で持つため、別 it.each で全 15 commands に対し未知 top-level key
    * が出現しないことを assert する。drift があれば即時 fail し、
    * CANONICAL_FIELD_ORDER 更新の signal となる。
    */
@@ -1522,6 +1531,7 @@ describe("plugin.json component 宣言 (Anthropic 公式仕様: 明示宣言で�
   // symmetric deletions from both fs and manifest).
   const EXPECTED_COMMANDS = [
     "branch-merge",
+    "claude-oneshot",
     "coderabbit-review",
     "codex-team",
     "harness-merge-train",
@@ -1532,6 +1542,7 @@ describe("plugin.json component 宣言 (Anthropic 公式仕様: 明示宣言で�
     "harness-work",
     "new-feature-branch",
     "parallel-worktree",
+    "parallel-worktree-v2",
     "pseudo-coderabbit-loop",
     "session-handoff",
     "tdd-implement",
@@ -1571,6 +1582,60 @@ describe("plugin.json component 宣言 (Anthropic 公式仕様: 明示宣言で�
     expect(declaredBaseNames).toEqual(EXPECTED_COMMANDS.slice().sort());
     // 補助 check: filesystem 走査結果とも一致 (どちらかが古くなっていないか)。
     expect(declaredBaseNames).toEqual(COMMAND_NAMES.slice().sort());
+  });
+
+  it("各 commands/*.md が必須 frontmatter 5 field をすべて持つ (name / description / description-ja / allowed-tools / argument-hint)", () => {
+    // 全 shipped command は coding guideline に従い 5 field を持たなければならない。
+    // legacy 例外は description-ja 1 field のみ許容 (commit log / git blame で追跡可能、
+    // 漸進的に解消する)。allowed-tools と argument-hint は legacy も含めて全件必須で、
+    // 欠落は CI で即時 fail させる (描いてない field を持つ skill は invocable surface
+    // が不確定のままになるため)。
+    // Legacy allowlist for `description-ja` (1 field only). Kept tight: any
+    // command **touched in this PR** must be removed from the allowlist so the
+    // 5-field rule lands progressively. parallel-worktree.md was updated in
+    // Phase 2 Stage E+F (v2 sibling skill addition + v1 migration notice), so
+    // it must declare description-ja and is no longer allowlisted.
+    const legacyNoDescriptionJa = new Set([
+      "branch-merge",
+      "coderabbit-review",
+      "codex-team",
+      "harness-setup",
+      "new-feature-branch",
+      "tdd-implement",
+    ]);
+    for (const cmdName of EXPECTED_COMMANDS) {
+      const md = readCommand(cmdName);
+      const fm = extractFrontmatter(md);
+      const parsed = parseYaml(fm) as Record<string, unknown>;
+      // (1) name: 必ず file 名と一致
+      expect(parsed.name, `${cmdName}: name`).toBe(cmdName);
+      // (2) description: 必須、空でない string
+      expect(typeof parsed.description, `${cmdName}: description type`).toBe("string");
+      expect((parsed.description as string).length, `${cmdName}: description length`).toBeGreaterThan(0);
+      // (3) description-ja: 新規 ship 必須、legacy は許容 (allowlist)
+      if (!legacyNoDescriptionJa.has(cmdName)) {
+        expect(typeof parsed["description-ja"], `${cmdName}: description-ja required for non-legacy`).toBe("string");
+        expect((parsed["description-ja"] as string).length, `${cmdName}: description-ja length`).toBeGreaterThan(0);
+      }
+      // (4) allowed-tools: 必須 (legacy も含めて全件)、配列または string
+      expect(parsed["allowed-tools"], `${cmdName}: allowed-tools required`).toBeDefined();
+      const allowedTools = parsed["allowed-tools"];
+      const allowedOk =
+        (Array.isArray(allowedTools) && allowedTools.length > 0) ||
+        (typeof allowedTools === "string" && allowedTools.length > 0);
+      expect(allowedOk, `${cmdName}: allowed-tools must be non-empty array or string`).toBe(true);
+      // (5) argument-hint: 必須 (legacy も含めて全件)、strict 形式
+      // - 1 group: [word], [word|word|...]
+      // - multi-group (subcommand + options 等): [word|word] [word|word|...]
+      // (CR PR #68 Major: shape を固定して invocation surface drift を CI で検知。
+      // free-form `<...>` や `(no arguments — ...)` を rejected する一方、
+      // multi-group bracket sequence は許容して subcommand+options API を表現可能に)
+      expect(typeof parsed["argument-hint"], `${cmdName}: argument-hint type`).toBe("string");
+      expect(
+        parsed["argument-hint"],
+        `${cmdName}: argument-hint must match strict [word(|word)*]([space][word(|word)*])* format`,
+      ).toMatch(/^\[[\w-]+(?:\|[\w-]+)*\](?:\s+\[[\w-]+(?:\|[\w-]+)*\])*$/);
+    }
   });
 
   it("agents 配列で全 agent md を explicit に宣言している", () => {
@@ -3090,9 +3155,9 @@ describe("release guard — version consistency (Phase μ)", () => {
   const SEMVER_VERSION_REGEX =
     /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
-  const EXPECTED_VERSION = "0.4.0-rc.1";
-  const EXPECTED_PREV_VERSION = "0.3.3";
-  const EXPECTED_RELEASE_DATE = "2026-04-24";
+  const EXPECTED_VERSION = "0.4.0-rc.2";
+  const EXPECTED_PREV_VERSION = "0.4.0-rc.1";
+  const EXPECTED_RELEASE_DATE = "2026-04-28";
 
   if (!SEMVER_VERSION_REGEX.test(EXPECTED_VERSION)) {
     throw new Error(
@@ -5033,6 +5098,176 @@ describe("docs/maintainer/skill-parallelism.md anchor lock-in", () => {
     expect(content).toMatch(/proposal|propose|feature\s+request/i);
     expect(content).toMatch(/parallelism/i);
     expect(content).toMatch(/--parallel(=N|\s*=\s*N)?/);
+  });
+});
+
+// =============================================================================
+// Phase 2 Stage E+F: parallel-worktree-v2 skill anchors + v1 deprecation guard
+// =============================================================================
+//
+// Each `it` is an **independent assertion** (D-124 drift guard pattern).
+// Anchor erosion in any single area triggers a single targeted failure
+// rather than a vague all-encompassing one. Anchors trace primary-source
+// findings (Codex CLI audit 2026-04-28 vs Anthropic Claude Code official
+// docs) so the v2 spec remains compliant when Anthropic spec evolves.
+describe("commands/parallel-worktree-v2.md — Model B v2 skill anchors", () => {
+  const skill = readCommand("parallel-worktree-v2");
+
+  it("v2 skill file が存在し、十分な spec body を持つ (空 stub 防止)", () => {
+    expect(skill.length).toBeGreaterThan(2000);
+  });
+
+  it("frontmatter name=parallel-worktree-v2 + description / description-ja の両方を持つ", () => {
+    const fm = extractFrontmatter(skill);
+    const parsed = parseYaml(fm) as Record<string, unknown>;
+    expect(parsed.name).toBe("parallel-worktree-v2");
+    expect(typeof parsed.description).toBe("string");
+    expect((parsed.description as string).length).toBeGreaterThan(50);
+    // shipped commands manifest 規約: description-ja で日本語ローカライズを分離
+    expect(typeof parsed["description-ja"]).toBe("string");
+    expect((parsed["description-ja"] as string).length).toBeGreaterThan(20);
+  });
+
+  it("description が Model B + 独立 claude プロセス + tmux を明示する", () => {
+    const fm = extractFrontmatter(skill);
+    const parsed = parseYaml(fm) as Record<string, unknown>;
+    const desc = parsed.description as string;
+    expect(desc).toMatch(/Model\s*B/);
+    expect(desc).toMatch(/claude/i);
+    expect(desc).toMatch(/tmux|independent/i);
+  });
+
+  it("companion primitive (parallel-sessions-template / session-manager / claude-oneshot) への参照を持つ", () => {
+    // Phase 2 で実装した三 primitive への dependency を spec body で記録する。
+    // Stage B/C/D 等の rollout 用 label は使わず、ファイル path の literal anchor のみ。
+    expect(skill).toMatch(/parallel-sessions-template\.sh/);
+    expect(skill).toMatch(/session-manager(?:\.ts)?/);
+    expect(skill).toMatch(/claude-oneshot/);
+  });
+
+  // Forward-reference protection (CR PR #68 round 4 Major):
+  // The string-reference assertions above pass even if the referenced
+  // primitive file is deleted or never shipped. Adding physical-existence
+  // assertions catches that drift at CI time.
+  //
+  // Coverage policy (per PR ship sequence):
+  //   - parallel-sessions-template.sh ships in this PR's parent feature
+  //     branch via git tracked files, so its physical existence is asserted
+  //     directly here.
+  //   - session-manager.ts (Stage C) and claude-oneshot.md (Stage D) ship
+  //     in independent sibling PRs (#65 / #63) that merge ahead of this PR.
+  //     The post-merge follow-up adds existsSync assertions for both. Until
+  //     those PRs land in main, the v2 skill spec body anchor regex above
+  //     plus the in-tree script anchor below provide partial coverage.
+  it("primitive file plugins/harness/scripts/parallel-sessions-template.sh が物理存在する", () => {
+    expect(existsSync(resolve(PLUGIN_ROOT, "scripts/parallel-sessions-template.sh"))).toBe(true);
+  });
+
+  it("各 worktree が /tdd-implement Phase 1-7 を内部実行することを明示する", () => {
+    expect(skill).toMatch(/tdd-implement/);
+    // Phase 5.5 = Pseudo CR (per-worktree)
+    expect(skill).toMatch(/Phase\s*5\.5|pseudo-coderabbit/i);
+    // Phase 6 = Real CR (per-worktree)
+    expect(skill).toMatch(/Phase\s*6|coderabbit-review/i);
+    // Phase 7 = Codex adversarial (per-worktree)
+    expect(skill).toMatch(/Phase\s*7|codex-team/i);
+  });
+
+  it("coordinator が Phase 8 で /harness-merge-train を起動することを明示する", () => {
+    expect(skill).toMatch(/harness-merge-train/);
+    expect(skill).toMatch(/Phase\s*8|merge\s*train/i);
+  });
+
+  it("Anthropic 公式仕様準拠: claude -n は display name only / -r/--resume で resume", () => {
+    // claude -n の display-name-only 性質を spec body で記述する drift guard。
+    expect(skill).toMatch(/-n[^a-zA-Z0-9].*(?:display|表示|名前|セッション名|session\s*name)/i);
+    // resume 経路を `-r` または `--resume` で記述。
+    expect(skill).toMatch(/-r\b|--resume/);
+  });
+
+  it("interactive と headless の signal 経路を明示する (interactive=tmux capture / git log、headless=stream-json)", () => {
+    // CR PR #68 round 1 Critical 指摘: interactive `claude -n` は stream-json を
+    // 出さない。spec body で interactive と headless の経路を区別する drift guard。
+    expect(skill).toMatch(/tmux\s*capture-pane|git\s*(?:commit\s*)?log|interactive/i);
+    // headless 経路 (claude-oneshot 経由) で stream-json が取得できることを記述
+    expect(skill).toMatch(/stream-json/);
+    expect(skill).toMatch(/-p\b|--print|headless|claude-oneshot/);
+  });
+
+  it("v1 (Model A) との coexist 関係を user-facing な永続表現で明示する (rollout date / Stage label を含まない)", () => {
+    // v1 が default として残ることを user-facing 表現で記述 (CR Major 指摘対応:
+    // Stage E / Phase 3 / 半年後 等の rollout-history / tracker を shipped spec
+    // に持ち込まない、time-stable wording のみ許容)。
+    expect(skill).toMatch(/Model\s*A|legacy|parallel-worktree(?!-v2)|v1\b/);
+    expect(skill).toMatch(/coexist|opt-in|default|並存|recommended/i);
+    // forbidden: rollout-date / stage-label / sprint タグが shipped spec に
+    // leak していないこと (independent assertion で個別 fail させる)。
+    expect(skill).not.toMatch(/Phase\s*3\s*P3\.\d/);
+    expect(skill).not.toMatch(/半年後|1\s*年後/);
+    expect(skill).not.toMatch(/ROADMAP-model-b/);
+  });
+
+  it("argument-hint がパラメータ列挙を持つ (operator surface の lock-in)", () => {
+    const fm = extractFrontmatter(skill);
+    const parsed = parseYaml(fm) as Record<string, unknown>;
+    if (parsed["argument-hint"] !== undefined) {
+      const hint = parsed["argument-hint"] as string;
+      expect(hint).toMatch(/spec|tmux|dry-run|attach|status|stop|profile/i);
+    }
+  });
+});
+
+describe("commands/parallel-worktree.md — v1 migration notice (time-stable, no rollout/tracker leaks)", () => {
+  const v1Skill = readCommand("parallel-worktree");
+
+  // CR PR #68 round 4 Major (content-integrity.test.ts:5210) 対応:
+  // file 全体に対する keyword guard だと、migration notice section が消えても
+  // 別の説明文 ("並列実行モデル" 章等) で pass しえる。Model B subsection を
+  // 切り出して narrow scope で keyword を要求する drift guard に強化。
+  function extractModelBSection(skill: string): string {
+    // "### Model B" から次の "##" (level 2 heading) または "---" 区切りまで
+    const start = skill.indexOf("### Model B");
+    if (start < 0) return "";
+    const remainder = skill.slice(start);
+    // section terminate: 次の `\n## ` or `\n---\n`
+    const matchHeading = remainder.search(/\n## /);
+    const matchDivider = remainder.search(/\n---\n/);
+    const end = [matchHeading, matchDivider]
+      .filter((idx) => idx > 0)
+      .reduce((a, b) => Math.min(a, b), Infinity);
+    return Number.isFinite(end) ? remainder.slice(0, end) : remainder;
+  }
+  const modelBSection = extractModelBSection(v1Skill);
+
+  it("Model B subsection (`### Model B`) が file 内に物理存在する", () => {
+    // narrow guard の前提: section が存在しないと keyword check が空文字に対して
+    // 走る → false-pass を即時 fail させる
+    expect(modelBSection.length).toBeGreaterThan(100);
+  });
+
+  it("Model B subsection 内に v2 sibling skill (`parallel-worktree-v2`) への forward link が存在する", () => {
+    expect(modelBSection).toMatch(/parallel-worktree-v2/);
+  });
+
+  it("Model B subsection が migration / coexist の意図を user-facing な表現で明示する", () => {
+    expect(modelBSection).toMatch(/coexist|opt-in|migration|recommend|prefer|並存|並列|deprecated?/i);
+  });
+
+  it("Model B subsection が v1 がまだ default として動作することを明示する (突然 deprecate しない)", () => {
+    expect(modelBSection).toMatch(/default|現状|remains?[\s\S]{0,80}default|v1[\s\S]{0,80}(?:default|production|stable|until)/i);
+  });
+
+  it("v1 spec 全体に sprint-label / maintainer-only 参照が leak していない", () => {
+    // CR PR #68 round 1 Major 指摘 (parallel-worktree.md:37) 対応 (file 全体):
+    // 「Phase 2 Stage E」「Phase 3 P3.2」「ROADMAP-model-b.md」「半年後 / 1 年後」等の
+    // tracker / rollout 参照を shipped skill から外す time-stable wording 規律。
+    // 注: ## スキル更新履歴 section の date entry (`v2.0 (2026-04-21)` 等) は
+    // 通常の changelog で legitimate なので、ここでは sprint label / roadmap
+    // 参照のみを禁止 (date そのものは許容)。
+    expect(v1Skill).not.toMatch(/Phase\s*2\s*Stage\s*[A-Z]/);
+    expect(v1Skill).not.toMatch(/Phase\s*3\s*P3\.\d/);
+    expect(v1Skill).not.toMatch(/ROADMAP-model-b/);
+    expect(v1Skill).not.toMatch(/半年後|1\s*年後/);
   });
 });
 

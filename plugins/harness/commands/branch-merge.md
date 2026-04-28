@@ -2,7 +2,7 @@
 name: branch-merge
 description: "Merge a feature branch through dev into main, running the project's test suite at every stage. Use when a PR review is clean or the user asks to merge / ship / reflect to main."
 allowed-tools: ["Read", "Bash"]
-argument-hint: "(no arguments — operates on the current feature branch)"
+argument-hint: "[no-arguments]"
 disable-model-invocation: true
 ---
 
