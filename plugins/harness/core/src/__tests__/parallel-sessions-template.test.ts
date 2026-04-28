@@ -32,9 +32,23 @@ function runScript(
   args: string[] = [],
   env: Record<string, string> = {},
 ): { stdout: string; stderr: string; status: number | null } {
+  // Use a minimal env (PATH + LC_ALL + LANG only, plus per-test overrides)
+  // instead of inheriting process.env. Inheriting the runner's environment
+  // lets stray TMUX_PASS_ENV / CLAUDE_ONESHOT_LOG_DIR / CLAUDE_MODEL leak
+  // into assertions about "no -e propagation" or "default model alias",
+  // which makes the suite flaky on developer machines that happen to
+  // export those vars in their interactive shells. The launcher only
+  // depends on PATH for resolving `tmux` / `git` / `bash`, and on the
+  // explicit overrides this helper accepts; everything else must come in
+  // through `env`.
   const r = spawnSync("bash", [SCRIPT_PATH, ...args], {
     encoding: "utf-8",
-    env: { ...process.env, ...env, LC_ALL: "C", LANG: "C" },
+    env: {
+      PATH: process.env.PATH ?? "",
+      LC_ALL: "C",
+      LANG: "C",
+      ...env,
+    },
   });
   return { stdout: r.stdout ?? "", stderr: r.stderr ?? "", status: r.status };
 }
@@ -404,6 +418,33 @@ describe("parallel-sessions-template.sh: tmux env propagation (-e)", () => {
     });
     expect(r.status).toBe(0);
     expect(r.stdout).not.toMatch(/-e\s+'?MY_UNSET_KEY=/);
+  });
+
+  it("propagates whitelisted key when value is empty string (set-but-empty)", () => {
+    // `${!key:-}` + `-n` cannot distinguish "unset" from "set-but-empty",
+    // so an operator who explicitly sets `MY_EMPTY=""` to override an
+    // inherited value (e.g. unset a leaked secret in the child tmux
+    // session) cannot see `-e MY_EMPTY=` propagated. Use `${!key+set}`
+    // form to detect "is set" independent of the value being empty.
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      TMUX_PASS_ENV: "MY_EMPTY",
+      MY_EMPTY: "",
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/-e\s+'?MY_EMPTY='?(?=\s|$)/m);
+  });
+
+  it("propagates CLAUDE_ONESHOT_LOG_DIR even when value is empty string", () => {
+    // Symmetric case for the always-on allowlist key. Setting
+    // CLAUDE_ONESHOT_LOG_DIR="" lets the operator force the child to fall
+    // back to the default `/tmp` rather than inherit a stale dir from the
+    // outer shell. The launcher must propagate the empty value rather than
+    // silently dropping it.
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      CLAUDE_ONESHOT_LOG_DIR: "",
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/-e\s+'?CLAUDE_ONESHOT_LOG_DIR='?(?=\s|$)/m);
   });
 
   it("rejects env value containing shell metacharacters", () => {

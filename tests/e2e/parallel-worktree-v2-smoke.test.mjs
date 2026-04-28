@@ -8,8 +8,8 @@
  *
  *   1. parallel-sessions-template.sh `start` creates N tmux windows + N git
  *      worktrees + N independent mock-claude processes.
- *   2. Each mock-claude streams 8 stream-json events to
- *      `<logDir>/claude-log-<slug>.jsonl`.
+ *   2. Each mock-claude streams 9 stream-json events (8 assistant +
+ *      1 result) to `<logDir>/claude-log-<slug>.jsonl`.
  *   3. session-manager.buildSessionSummary picks up phase markers + tool_use
  *      events and infers status === "ship" for every slug before the polling
  *      deadline.
@@ -71,33 +71,16 @@ if (whichTmux.status !== 0) skip("tmux not on PATH");
 const whichBash = spawnSync("which", ["bash"], { encoding: "utf-8" });
 if (whichBash.status !== 0) skip("bash not on PATH");
 
-// ─── pre-flight: artefacts must exist ──────────────────────────────────────
-
-if (!existsSync(launcher)) {
-  fail(`launcher script missing: ${launcher}`);
-}
-if (!existsSync(mockClaude)) {
-  fail(`mock claude fixture missing: ${mockClaude}`);
-}
-if (!existsSync(distSm)) {
-  // build is a prerequisite (CI runs `npm run build` before smoke); be
-  // forgiving for dev convenience.
-  process.stdout.write(
-    "session-manager.js missing under core/dist; running `npm run build`...\n",
-  );
-  const build = spawnSync("npm", ["run", "build"], {
-    cwd: repoRoot,
-    encoding: "utf-8",
-    stdio: "inherit",
-  });
-  if (build.status !== 0) fail(`npm run build failed (status ${build.status})`);
-  if (!existsSync(distSm)) fail(`session-manager.js still missing after build`);
-}
-
-// mock-claude must be executable; some checkouts strip the +x bit.
-chmodSync(mockClaude, 0o755);
-
-// ─── sandbox setup ─────────────────────────────────────────────────────────
+// ─── sandbox + cleanup helpers (must be initialized before pre-flight) ─────
+//
+// The pre-flight artefact checks call `fail()`, and `fail()` calls
+// `runCleanup()`, which dereferences `cleanups`, `cleanedUp`, and
+// `sandbox`. If those bindings are still in the temporal dead zone when
+// pre-flight fires, the resulting ReferenceError eclipses the real
+// "launcher script missing" / "session-manager.js still missing" message
+// and the test runner reports a misleading failure. Initialise the
+// sandbox and cleanup machinery first so any subsequent fail() call gets
+// surfaced verbatim with a tidy cleanup tail.
 
 const runId = `${process.pid}-${Date.now().toString(36)}`;
 const sandbox = mkdtempSync(join(tmpdir(), `harness-stage-g-${runId}-`));
@@ -140,6 +123,32 @@ function fail(msg) {
   runCleanup();
   process.exit(1);
 }
+
+// ─── pre-flight: artefacts must exist ──────────────────────────────────────
+
+if (!existsSync(launcher)) {
+  fail(`launcher script missing: ${launcher}`);
+}
+if (!existsSync(mockClaude)) {
+  fail(`mock claude fixture missing: ${mockClaude}`);
+}
+if (!existsSync(distSm)) {
+  // build is a prerequisite (CI runs `npm run build` before smoke); be
+  // forgiving for dev convenience.
+  process.stdout.write(
+    "session-manager.js missing under core/dist; running `npm run build`...\n",
+  );
+  const build = spawnSync("npm", ["run", "build"], {
+    cwd: repoRoot,
+    encoding: "utf-8",
+    stdio: "inherit",
+  });
+  if (build.status !== 0) fail(`npm run build failed (status ${build.status})`);
+  if (!existsSync(distSm)) fail(`session-manager.js still missing after build`);
+}
+
+// mock-claude must be executable; some checkouts strip the +x bit.
+chmodSync(mockClaude, 0o755);
 
 // ─── main flow ─────────────────────────────────────────────────────────────
 
@@ -189,17 +198,30 @@ async function main() {
   };
   delete env.TMUX;
   delete env.TMUX_PANE;
+  // Prevent caller-shell leak: if the developer happens to have
+  // TMUX_PASS_ENV set in their interactive session, the launcher would
+  // forward whatever extra env vars they listed and the smoke's `-e KEY=`
+  // assertions would no longer correspond to a deterministic, isolated
+  // contract. Strip it so the test sees only the keys we explicitly
+  // construct above.
+  delete env.TMUX_PASS_ENV;
 
+  // 30s hard timeout so a hung tmux server (e.g. a pre-existing socket
+  // the runner cannot kill) cannot block the suite indefinitely; the
+  // launcher itself is meant to return within ~1s for the dry-run plan
+  // and ~5-10s when actually creating two worktrees.
   const launchRes = spawnSync(
     "bash",
     [launcher, "start", featureBranch, ...slugs],
-    { cwd: fakeRepo, env, encoding: "utf-8" },
+    { cwd: fakeRepo, env, encoding: "utf-8", timeout: 30_000 },
   );
-  if (launchRes.status !== 0) {
+  if (launchRes.error || launchRes.signal || launchRes.status !== 0) {
     fail(
-      `launcher failed (status ${launchRes.status})\n` +
-        `stdout:\n${launchRes.stdout}\n` +
-        `stderr:\n${launchRes.stderr}`,
+      `launcher failed: ` +
+        `status=${launchRes.status}, signal=${launchRes.signal ?? "none"}, ` +
+        `error=${launchRes.error?.message ?? "none"}\n` +
+        `stdout:\n${launchRes.stdout ?? ""}\n` +
+        `stderr:\n${launchRes.stderr ?? ""}`,
     );
   }
 
@@ -241,11 +263,12 @@ async function main() {
   }
 
   for (const s of lastSummaries) {
-    // mock-claude emits 8 events; allow up to 2 lost to file-flush race
-    // (tmux pane lifetime can clip the final write on very slow CI runners).
-    if (s.events.length < 6) {
+    // mock-claude emits 9 events (8 assistant + 1 result); allow up to 2
+    // lost to file-flush race (tmux pane lifetime can clip the final
+    // writes on very slow CI runners).
+    if (s.events.length < 7) {
       fail(
-        `${s.slug}: expected >=6 events (8 emitted, race tolerance 2), got ${s.events.length}`,
+        `${s.slug}: expected >=7 events (9 emitted, race tolerance 2), got ${s.events.length}`,
       );
     }
     const phaseMarkers = s.events.filter((e) => e.type === "phase_marker");

@@ -45,9 +45,30 @@ while [[ $# -gt 0 ]]; do
       ;;
     --model|--permission-mode)
       # Accept and ignore (real claude CLI consumes; mock does not need them).
-      shift 2 || true
+      # A previous `shift 2 || true` pattern swallowed the failure when the
+      # option was supplied without a value, leaving the outer
+      # `while [[ $# -gt 0 ]]` loop spinning on the same `$1` forever. Check
+      # `$#` explicitly (mirroring the `-n` branch) so a missing value exits
+      # with a clear error instead of silently hanging the e2e smoke under
+      # the smoke-test polling deadline.
+      if [[ $# -lt 2 ]]; then
+        echo "mock-claude: $1 requires a value" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    -*)
+      # Unknown option (anything starting with `-` that did not match
+      # the explicit cases above). Real claude CLI rejects unknown
+      # options; mirror that here so a CLI contract change in the
+      # launcher (e.g. a new `--print` flag) shows up as a clear smoke
+      # failure instead of being silently swallowed.
+      echo "mock-claude: unknown option: $1" >&2
+      exit 2
       ;;
     *)
+      # Plain positional argument (no leading `-`). Drop and continue;
+      # the real CLI ignores extra positionals when -n is supplied.
       shift
       ;;
   esac
@@ -55,6 +76,27 @@ done
 
 if [[ -z "$SLUG" ]]; then
   echo "mock-claude: missing required -n <slug>" >&2
+  exit 2
+fi
+
+# SLUG flows directly into LOG_FILE (${LOG_DIR}/claude-log-${SLUG}.jsonl) so
+# any value that contains a path separator or `..` could escape LOG_DIR and
+# overwrite arbitrary files. Mirror parallel-sessions-template.sh
+# `validate_identifier` (which accepts dots so callers can use slugs like
+# `api.v2`) but additionally reject `..` (parent-directory escape) and a
+# leading `.` (hidden-file alias) — the launcher tolerates those patterns
+# in its own validator but they would still escape the LOG_DIR boundary if
+# interpolated into LOG_FILE.
+if [[ ! "$SLUG" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "mock-claude: invalid -n <slug>='$SLUG' (must match [A-Za-z0-9._-]+)" >&2
+  exit 2
+fi
+if [[ "$SLUG" == *..* ]]; then
+  echo "mock-claude: invalid -n <slug>='$SLUG' (must not contain '..')" >&2
+  exit 2
+fi
+if [[ "$SLUG" == .* ]]; then
+  echo "mock-claude: invalid -n <slug>='$SLUG' (must not start with '.')" >&2
   exit 2
 fi
 

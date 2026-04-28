@@ -198,13 +198,21 @@ resolve_tmux_env_args() {
     keys+=("$key")
   done
   for key in "${keys[@]}"; do
-    # Single read of the indirect-expanded value, then validate, then append.
-    # Reading twice (`${!key:-}` here and again on the append line) would
-    # widen a theoretical TOCTOU window and obscure the audit trail; this
-    # form keeps validation and use of the value adjacent.
-    local val="${!key:-}"
-    if [[ -n "$val" ]]; then
-      validate_env_value "$key" "$val"
+    # Detect "is set" independent of value emptiness.
+    # `${!key:-}` collapses unset and empty-string into the same observable
+    # state, so an operator who explicitly sets `MY_VAR=""` to override an
+    # inherited (e.g. leaked) value cannot propagate that intent through to
+    # the child tmux session. `${!key+set}` returns the literal `set` only
+    # when the variable is set, which lets us forward `-e KEY=` for the
+    # set-but-empty case while still skipping unset keys.
+    if [[ "${!key+set}" == "set" ]]; then
+      local val="${!key}"
+      # Only run the path-safe regex when there is a value to validate.
+      # Empty string is intentionally allowed and produces `-e KEY=` so
+      # that `unset(KEY)` semantics survive the launcher → tmux boundary.
+      if [[ -n "$val" ]]; then
+        validate_env_value "$key" "$val"
+      fi
       args+=" -e '${key}=${val}'"
     fi
   done
