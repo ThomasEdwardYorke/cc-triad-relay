@@ -90,6 +90,25 @@ export interface PredictBudgetImpactOptions {
     newContent: string;
 }
 /**
+ * Maximum visible length of a `ContextAuditSignal.detail` string. Chosen so
+ * the assembled `additionalContext` from a worst-case 3-FAIL audit stays
+ * comfortably below the Anthropic hooks `additionalContext` size guidance.
+ */
+export declare const MAX_SIGNAL_DETAIL_CHARS = 200;
+/**
+ * Enforce the `ContextAuditSignal.detail` contract (sanitised + ≤ 200 chars).
+ *
+ * 1. Replace CR / LF / U+2028 / U+2029 with the literal two-character `\\n`
+ *    so a smuggled newline cannot forge a fake section boundary in
+ *    `additionalContext`.
+ * 2. Clamp to `MAX_SIGNAL_DETAIL_CHARS` code points (truncation marker keeps
+ *    the visible boundary explicit so consumers can detect the cap).
+ *
+ * All public signal constructors in this module route their `detail` text
+ * through this helper. Callers that mutate the field directly should not exist.
+ */
+export declare function sanitizeAndClampDetail(raw: string): string;
+/**
  * Resolve whether a (project-relative or absolute) `filePath` is contained in
  * any of the configured `autoLoadDirs`. Path-traversal entries (`..`) and
  * paths outside the project root are treated as non-matches.

@@ -210,7 +210,12 @@ describe("runContextAudit", () => {
       onDemand: { "ondemand-a.md": "# OD\n" },
       entryPoint: {
         name: "CLAUDE.md",
-        content: "See [on-demand rules](./docs/ai-rules/README.md).\n",
+        // The fixture deliberately points at the file that the `onDemand`
+        // bucket actually creates (`ondemand-a.md`) so the dead-link gate
+        // does not flag the entry-point reference as a missing file. Pointing
+        // at a non-existent README would cause the dead-link gate to FAIL
+        // before the entry-point gate even gets a chance to PASS.
+        content: "See [on-demand rules](./docs/ai-rules/ondemand-a.md).\n",
       },
     });
     const result = await runContextAudit({
@@ -240,7 +245,13 @@ describe("runContextAudit", () => {
   it("returns FAIL when a cross-reference points at a missing file", async () => {
     const root = makeProject({
       rules: {
-        "with-deadlink.md": "see [missing](./.claude/rules/does-not-exist.md)\n",
+        // `with-deadlink.md` lives at `.claude/rules/with-deadlink.md` so the
+        // sibling-relative form `./does-not-exist.md` resolves to
+        // `.claude/rules/does-not-exist.md` — the file we want to verify
+        // cannot be found. Earlier the fixture used `./.claude/rules/...`
+        // which (correctly) resolved to `.claude/rules/.claude/rules/...`,
+        // a different missing path that obscured the intent of the test.
+        "with-deadlink.md": "see [missing](./does-not-exist.md)\n",
       },
       onDemand: { "x.md": "# x\n" },
       entryPoint: {

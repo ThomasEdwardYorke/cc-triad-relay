@@ -129,7 +129,7 @@ export async function handleStop(
           .join(" | ");
         sections.push(
           sanitizeAdditionalContextLine(
-            `[context budget] FAIL — ${failed}. Run: bash plugins/harness/scripts/context-audit.sh — or move auto-load content into onDemandDirs (${ctxBudget.onDemandDirs.join(", ")})`,
+            `[context budget] FAIL — ${failed}. Run: /context-audit (or /context-audit --strict for CI gating) — or move auto-load content into onDemandDirs (${ctxBudget.onDemandDirs.join(", ")})`,
           ),
         );
       } else if (audit.verdict === "warn") {

@@ -108,6 +108,49 @@ export interface PredictBudgetImpactOptions {
 }
 
 // ============================================================
+// Detail-string contract enforcement
+// ============================================================
+
+/**
+ * Maximum visible length of a `ContextAuditSignal.detail` string. Chosen so
+ * the assembled `additionalContext` from a worst-case 3-FAIL audit stays
+ * comfortably below the Anthropic hooks `additionalContext` size guidance.
+ */
+export const MAX_SIGNAL_DETAIL_CHARS = 200;
+
+/**
+ * Enforce the `ContextAuditSignal.detail` contract (sanitised + ≤ 200 chars).
+ *
+ * 1. Replace CR / LF / U+2028 / U+2029 with the literal two-character `\\n`
+ *    so a smuggled newline cannot forge a fake section boundary in
+ *    `additionalContext`.
+ * 2. Clamp to `MAX_SIGNAL_DETAIL_CHARS` code points (truncation marker keeps
+ *    the visible boundary explicit so consumers can detect the cap).
+ *
+ * All public signal constructors in this module route their `detail` text
+ * through this helper. Callers that mutate the field directly should not exist.
+ */
+export function sanitizeAndClampDetail(raw: string): string {
+  const sanitised = raw.replace(/\r\n|[\n\r\u2028\u2029]/g, "\\n");
+  if (sanitised.length <= MAX_SIGNAL_DETAIL_CHARS) return sanitised;
+  return sanitised.slice(0, MAX_SIGNAL_DETAIL_CHARS - 1) + "…";
+}
+
+/**
+ * Builder for `ContextAuditSignal` that always applies
+ * `sanitizeAndClampDetail` to the `detail` argument. Use this everywhere
+ * a signal is constructed inside the engine so the contract is enforced
+ * by the implementation rather than just documented in the type.
+ */
+function buildSignal(
+  id: ContextAuditSignalId,
+  status: ContextAuditSignalStatus,
+  detail: string,
+): ContextAuditSignal {
+  return { id, status, detail: sanitizeAndClampDetail(detail) };
+}
+
+// ============================================================
 // Path helpers
 // ============================================================
 
@@ -152,20 +195,32 @@ export function isAutoLoadTarget(
   return false;
 }
 
-/** Collect every `.md` file under each `dir` (relative paths from projectRoot). */
+/**
+ * Collect every `.md` file under each `dir` (relative paths from projectRoot).
+ *
+ * Deduplicates: if the consumer configures `autoLoadDirs` containing
+ * overlapping entries (`["docs", "docs/rules"]`) or repeats the same path,
+ * each `.md` file is included exactly once. Without dedup the same bytes
+ * would be summed twice in `checkSize` and double-counted in
+ * `predictBudgetImpact`, producing inflated FAIL verdicts.
+ */
 async function collectMarkdownFiles(
   projectRoot: string,
   dirs: string[],
 ): Promise<string[]> {
-  const collected: string[] = [];
+  const seen = new Set<string>();
   for (const dir of dirs) {
     const dirRel = normaliseRelative(dir, projectRoot);
     if (dirRel === null) continue;
     const absDir = resolve(projectRoot, dirRel);
     if (!existsSync(absDir)) continue;
-    await walk(absDir, projectRoot, collected);
+    const collectedFromDir: string[] = [];
+    await walk(absDir, projectRoot, collectedFromDir);
+    for (const rel of collectedFromDir) {
+      seen.add(rel);
+    }
   }
-  return collected;
+  return Array.from(seen);
 }
 
 async function walk(
@@ -219,32 +274,32 @@ async function checkSize(
   const over = Math.max(0, total - budgetBytes);
   if (autoLoadDirs.length === 0) {
     return {
-      signal: {
-        id: "size",
-        status: "skip",
-        detail: "no autoLoadDirs configured — size gate skipped",
-      },
+      signal: buildSignal(
+        "size",
+        "skip",
+        "no autoLoadDirs configured — size gate skipped",
+      ),
       totalBytes: 0,
       overBytes: 0,
     };
   }
   if (over > 0) {
     return {
-      signal: {
-        id: "size",
-        status: "fail",
-        detail: `auto-load total ${total} bytes exceeds budget ${budgetBytes} by ${over} bytes`,
-      },
+      signal: buildSignal(
+        "size",
+        "fail",
+        `auto-load total ${total} bytes exceeds budget ${budgetBytes} by ${over} bytes`,
+      ),
       totalBytes: total,
       overBytes: over,
     };
   }
   return {
-    signal: {
-      id: "size",
-      status: "pass",
-      detail: `auto-load total ${total} bytes (budget ${budgetBytes})`,
-    },
+    signal: buildSignal(
+      "size",
+      "pass",
+      `auto-load total ${total} bytes (budget ${budgetBytes})`,
+    ),
     totalBytes: total,
     overBytes: 0,
   };
@@ -281,11 +336,11 @@ async function checkDeadLinks(
   ]);
   if (scanFiles.length === 0) {
     return {
-      signal: {
-        id: "dead-link",
-        status: "skip",
-        detail: "no auto-load / on-demand .md files to scan",
-      },
+      signal: buildSignal(
+        "dead-link",
+        "skip",
+        "no auto-load / on-demand .md files to scan",
+      ),
       deadLinks: [],
     };
   }
@@ -296,8 +351,9 @@ async function checkDeadLinks(
 
   // Markdown link `[label](path)` where path is `./...` / `../...` / bare
   // relative. Anchors (`#section`) and absolute URLs are excluded by the
-  // regex (`[^)#]+` between `(` and `)` or `#`).
-  // 文字列改行 / バックスラッシュ含む不正パスは regex 範囲外で潰し、resolve() に渡さない。
+  // regex (`[^)#]+` between `(` and `)` or `#`). Paths containing line
+  // terminators or backslashes are excluded from the capture so
+  // pathological inputs never flow into `resolve()`.
   const linkPattern =
     /\[[^\]]+\]\(\s*([^)\s#]+\.md)(?:#[^)]*)?\s*\)/g;
 
@@ -334,20 +390,16 @@ async function checkDeadLinks(
   }
   if (deadLinks.length === 0) {
     return {
-      signal: {
-        id: "dead-link",
-        status: "pass",
-        detail: "no dead links detected",
-      },
+      signal: buildSignal("dead-link", "pass", "no dead links detected"),
       deadLinks: [],
     };
   }
   return {
-    signal: {
-      id: "dead-link",
-      status: "fail",
-      detail: `${deadLinks.length} dead link(s) detected`,
-    },
+    signal: buildSignal(
+      "dead-link",
+      "fail",
+      `${deadLinks.length} dead link(s) detected`,
+    ),
     deadLinks,
   };
 }
@@ -369,21 +421,21 @@ async function checkEntryPoint(
 ): Promise<EntryPointGateOutcome> {
   if (entryPointFiles.length === 0) {
     return {
-      signal: {
-        id: "entry-point",
-        status: "skip",
-        detail: "no entryPointFiles configured — gate skipped",
-      },
+      signal: buildSignal(
+        "entry-point",
+        "skip",
+        "no entryPointFiles configured — gate skipped",
+      ),
       entryPointSources: [],
     };
   }
   if (onDemandDirs.length === 0) {
     return {
-      signal: {
-        id: "entry-point",
-        status: "skip",
-        detail: "no onDemandDirs configured — entry-point gate skipped",
-      },
+      signal: buildSignal(
+        "entry-point",
+        "skip",
+        "no onDemandDirs configured — entry-point gate skipped",
+      ),
       entryPointSources: [],
     };
   }
@@ -422,30 +474,30 @@ async function checkEntryPoint(
 
   if (sources.length === 0) {
     return {
-      signal: {
-        id: "entry-point",
-        status: "fail",
-        detail: `no entryPointFile (${entryPointFiles.join(", ")}) references any onDemandDirs path`,
-      },
+      signal: buildSignal(
+        "entry-point",
+        "fail",
+        `no entryPointFile (${entryPointFiles.join(", ")}) references any onDemandDirs path`,
+      ),
       entryPointSources: [],
     };
   }
   if (indexMissing) {
     return {
-      signal: {
-        id: "entry-point",
-        status: "warn",
-        detail: `entry-point ok (${sources.join(", ")}) but indexFile missing: ${indexFile}`,
-      },
+      signal: buildSignal(
+        "entry-point",
+        "warn",
+        `entry-point ok (${sources.join(", ")}) but indexFile missing: ${indexFile}`,
+      ),
       entryPointSources: sources,
     };
   }
   return {
-    signal: {
-      id: "entry-point",
-      status: "pass",
-      detail: `entry-point references: ${sources.join(", ")}`,
-    },
+    signal: buildSignal(
+      "entry-point",
+      "pass",
+      `entry-point references: ${sources.join(", ")}`,
+    ),
     entryPointSources: sources,
   };
 }
@@ -464,11 +516,11 @@ export async function runContextAudit(
     config.budgetBytes,
   ).catch(
     (err): SizeGateOutcome => ({
-      signal: {
-        id: "size",
-        status: "skip",
-        detail: `size gate threw: ${err instanceof Error ? err.message : String(err)}`,
-      },
+      signal: buildSignal(
+        "size",
+        "skip",
+        `size gate threw: ${err instanceof Error ? err.message : String(err)}`,
+      ),
       totalBytes: 0,
       overBytes: 0,
     }),
@@ -479,11 +531,11 @@ export async function runContextAudit(
     config.onDemandDirs,
   ).catch(
     (err): DeadLinkGateOutcome => ({
-      signal: {
-        id: "dead-link",
-        status: "skip",
-        detail: `dead-link gate threw: ${err instanceof Error ? err.message : String(err)}`,
-      },
+      signal: buildSignal(
+        "dead-link",
+        "skip",
+        `dead-link gate threw: ${err instanceof Error ? err.message : String(err)}`,
+      ),
       deadLinks: [],
     }),
   );
@@ -494,11 +546,11 @@ export async function runContextAudit(
     config.indexFile,
   ).catch(
     (err): EntryPointGateOutcome => ({
-      signal: {
-        id: "entry-point",
-        status: "skip",
-        detail: `entry-point gate threw: ${err instanceof Error ? err.message : String(err)}`,
-      },
+      signal: buildSignal(
+        "entry-point",
+        "skip",
+        `entry-point gate threw: ${err instanceof Error ? err.message : String(err)}`,
+      ),
       entryPointSources: [],
     }),
   );

@@ -89,7 +89,7 @@ export async function handleStop(input) {
                     .filter((s) => s.status === "fail")
                     .map((s) => `${s.id}: ${s.detail}`)
                     .join(" | ");
-                sections.push(sanitizeAdditionalContextLine(`[context budget] FAIL — ${failed}. Run: bash plugins/harness/scripts/context-audit.sh — or move auto-load content into onDemandDirs (${ctxBudget.onDemandDirs.join(", ")})`));
+                sections.push(sanitizeAdditionalContextLine(`[context budget] FAIL — ${failed}. Run: /context-audit (or /context-audit --strict for CI gating) — or move auto-load content into onDemandDirs (${ctxBudget.onDemandDirs.join(", ")})`));
             }
             else if (audit.verdict === "warn") {
                 const warns = audit.signals

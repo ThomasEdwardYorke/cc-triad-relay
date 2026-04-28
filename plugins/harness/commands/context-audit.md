@@ -61,7 +61,7 @@ itself can still be invoked manually for diagnostics.
 
 ## Output format
 
-```
+```text
 ── Auto-loaded rules size ──
   total: 32,963 bytes (budget: 35,000 bytes)
   PASS: under budget

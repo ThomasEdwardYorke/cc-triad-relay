@@ -9,6 +9,7 @@
  */
 
 import { existsSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
 import { loadConfigSafe } from "../config.js";
 import { HarnessStore } from "../state/store.js";
 import { defaultStatePath } from "../state/migration.js";
@@ -121,9 +122,24 @@ async function augmentWithContextAudit(
   if (!cfg?.enabled) return prev;
   if (input.tool_name !== "Write") return prev;
 
-  const filePath = extractStringField(input.tool_input, "file_path");
+  const rawFilePath = extractStringField(input.tool_input, "file_path");
   const content = extractStringField(input.tool_input, "content");
-  if (filePath === undefined || content === undefined) return prev;
+  if (rawFilePath === undefined || content === undefined) return prev;
+
+  // Normalise `tool_input.file_path` to a project-relative POSIX path before
+  // handing it to the audit engine. Without this Windows callers would pass
+  // an absolute `D:\repo\.claude\rules\foo.md` whose backslash separators
+  // break the autoLoadDirs prefix check, leaving the redirect suggestion
+  // silently no-op. The engine itself also normalises internally, but
+  // canonical input here keeps the warning messages consistent across
+  // platforms (`filePath` is interpolated into the user-visible note).
+  const normalisedFilePath = normaliseToolFilePath(
+    rawFilePath,
+    ctx.projectRoot,
+  );
+  // Paths outside the project root are not auto-load targets — short-circuit.
+  if (normalisedFilePath === null) return prev;
+  const filePath = normalisedFilePath;
 
   let prediction: Awaited<ReturnType<typeof predictBudgetImpact>>;
   try {
@@ -178,4 +194,26 @@ function extractStringField(
 ): string | undefined {
   const v = input[key];
   return typeof v === "string" ? v : undefined;
+}
+
+/**
+ * Normalise a `tool_input.file_path` into a project-relative POSIX-style
+ * path. Returns `null` when the resolved path lives outside `projectRoot`
+ * (so the caller can short-circuit and avoid auditing third-party files).
+ *
+ * Behaviours:
+ *   - Absolute paths: kept as-is for the resolve step
+ *   - Relative paths: resolved against `projectRoot`
+ *   - Backslashes: replaced with `/` so the engine's prefix checks are
+ *     platform-uniform on Windows
+ */
+function normaliseToolFilePath(
+  filePath: string,
+  projectRoot: string,
+): string | null {
+  const root = resolve(projectRoot);
+  const candidate = isAbsolute(filePath) ? filePath : resolve(root, filePath);
+  const rel = relative(root, candidate);
+  if (rel.startsWith("..") || isAbsolute(rel)) return null;
+  return rel.replace(/\\/g, "/");
 }

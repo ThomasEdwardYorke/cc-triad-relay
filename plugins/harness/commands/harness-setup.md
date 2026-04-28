@@ -85,10 +85,12 @@ And that the skills exist (5 verb skills plus 13 workflow skills):
   - `commands/pseudo-coderabbit-loop.md`
   - `commands/session-handoff.md`
   - `commands/tdd-implement.md`
+  - `commands/context-audit.md`
 
-And that the following additional agent exists:
+And that the following additional agents exist:
 
 - `agents/coderabbit-mimic.md`
+- `agents/context-audit-agent.md`
 
 Report each file as OK / MISSING. Exit non-zero if any are missing.
 
@@ -108,7 +110,8 @@ plugins/harness/
 │   ├── scaffolder.md
 │   ├── security-auditor.md
 │   ├── codex-sync.md
-│   └── coderabbit-mimic.md
+│   ├── coderabbit-mimic.md
+│   └── context-audit-agent.md
 ├── commands/
 │   ├── harness-plan.md
 │   ├── harness-work.md
@@ -120,6 +123,7 @@ plugins/harness/
 │   ├── new-feature-branch.md
 │   ├── coderabbit-review.md
 │   ├── codex-team.md
+│   ├── context-audit.md
 │   ├── harness-merge-train.md
 │   ├── harness-self-improve.md
 │   ├── parallel-worktree.md

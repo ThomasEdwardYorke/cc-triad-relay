@@ -41,17 +41,37 @@ for arg in "$@"; do
   esac
 done
 
-REPO_ROOT="$(pwd)"
+# Resolve the harness config and treat ITS parent directory as the project
+# root. Earlier the script used `pwd` directly, which silently audited the
+# wrong subtree when run from a sub-directory of a repo (the `harness.config.json`
+# at the repo root would be missed). Walking up from `pwd` to the first
+# directory that contains `harness.config.json` keeps the contract
+# predictable: invoke from anywhere in the tree, audit the same project.
 if [ -z "$CONFIG_PATH" ]; then
-  if [ -f "$REPO_ROOT/harness.config.json" ]; then
-    CONFIG_PATH="$REPO_ROOT/harness.config.json"
-  fi
+  search_dir="$(pwd)"
+  while [ "$search_dir" != "/" ] && [ -n "$search_dir" ]; do
+    if [ -f "$search_dir/harness.config.json" ]; then
+      CONFIG_PATH="$search_dir/harness.config.json"
+      break
+    fi
+    parent="$(dirname "$search_dir")"
+    if [ "$parent" = "$search_dir" ]; then
+      break
+    fi
+    search_dir="$parent"
+  done
 fi
 
 if [ -z "$CONFIG_PATH" ] || [ ! -f "$CONFIG_PATH" ]; then
   echo "[context-audit] no harness.config.json — SKIP (verdict=skip exitCode=0)"
   exit 0
 fi
+
+# `runContextAudit` treats `projectRoot` as the absolute path that auto-load
+# / on-demand directories are resolved against. Anchor on the config file's
+# directory so a `--config=path/to/elsewhere/harness.config.json` invocation
+# audits THAT project, not the cwd.
+PROJECT_ROOT="$(cd "$(dirname "$CONFIG_PATH")" && pwd)"
 
 # Locate the compiled context-audit engine. The shipped layout puts this
 # script at `plugins/harness/scripts/context-audit.sh` and the engine at
@@ -80,6 +100,7 @@ const configPath = process.argv[2];
 const quiet = process.argv[3] === "1";
 const strict = process.argv[4] === "1";
 const corePath = process.argv[5];
+const projectRoot = process.argv[6];
 
 const raw = readFileSync(configPath, "utf-8");
 let parsed;
@@ -88,7 +109,11 @@ try { parsed = JSON.parse(raw); } catch (e) {
   process.exit(8);
 }
 const cfg = parsed?.contextBudget;
-if (!cfg || cfg.enabled === false) {
+// Match the hook-side opt-in semantic: only fire when the consumer has
+// **explicitly** set `enabled: true`. An empty `contextBudget: {}` block is
+// treated as disabled, so accidental shape additions never silently start
+// emitting audits.
+if (cfg?.enabled !== true) {
   console.log("[context-audit] contextBudget disabled or absent — SKIP (exitCode=0)");
   process.exit(0);
 }
@@ -101,7 +126,7 @@ const merged = {
   indexFile: typeof cfg.indexFile === "string" ? cfg.indexFile : "",
 };
 const mod = await import(pathToFileURL(resolve(corePath)).href);
-const result = await mod.runContextAudit({ projectRoot: process.cwd(), config: merged });
+const result = await mod.runContextAudit({ projectRoot, config: merged });
 
 if (!quiet) {
   console.log(`── Auto-loaded rules size ──`);
@@ -138,4 +163,4 @@ TMP_DIR=$(mktemp -d -t harness-context-audit-XXXXXX)
 TMP_NODE="$TMP_DIR/run.mjs"
 trap 'rm -rf "$TMP_DIR"' EXIT
 printf '%s\n' "$NODE_SCRIPT" >"$TMP_NODE"
-node "$TMP_NODE" "$CONFIG_PATH" "$QUIET" "$STRICT" "$CORE_DIST"
+node "$TMP_NODE" "$CONFIG_PATH" "$QUIET" "$STRICT" "$CORE_DIST" "$PROJECT_ROOT"
