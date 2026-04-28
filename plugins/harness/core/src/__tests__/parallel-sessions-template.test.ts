@@ -180,10 +180,39 @@ describe("parallel-sessions-template.sh: input validation (injection prevention)
     expect(r.stderr).toMatch(/invalid\s+characters|Error/i);
   });
 
-  it("rejects slug containing single-quote (would break out of '$slug' wrapper)", () => {
-    const r = runScript(["--dry-run", "start", "main", "foo'bar"]);
-    expect(r.status).not.toBe(0);
-    expect(r.stderr).toMatch(/invalid\s+characters|Error/i);
+  // Skipped on Windows: MSYS2 / Git Bash performs quote-removal on argv
+  // passed from native Windows apps (Node.js spawnSync) into the POSIX
+  // context, so a literal single-quote in argv is stripped before the bash
+  // script receives it (foo'bar -> foobar). Other metacharacters (";",
+  // whitespace) survive because they are not POSIX quoting-context toggles.
+  // The character-class correctness of validate_identifier is verified
+  // separately by the Windows-safe regex-contract test below (file-content
+  // based, no spawn). Refs: msys2/msys2-runtime quote-removal, Cygwin
+  // runtime POSIX semantics.
+  it.skipIf(process.platform === "win32")(
+    "rejects slug containing single-quote (would break out of '$slug' wrapper)",
+    () => {
+      const r = runScript(["--dry-run", "start", "main", "foo'bar"]);
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toMatch(/invalid\s+characters|Error/i);
+    },
+  );
+
+  it("validate_identifier regex character class denies single-quote (Windows-safe contract)", () => {
+    const content = readFileSync(SCRIPT_PATH, "utf-8");
+    // Match the validate_identifier regex character class:
+    //   [[ ! "$val" =~ ^[<charset>]+$ ]]
+    const validatorMatch = content.match(
+      /validate_identifier\(\)\s*\{[\s\S]*?\[\[\s*!\s*"\$val"\s*=~\s*\^\[([^\]]+)\]\+\$\s*\]\]/,
+    );
+    expect(validatorMatch).not.toBeNull();
+    const charClass = validatorMatch![1];
+    // Single-quote (U+0027) MUST NOT be in the allowed character class
+    expect(charClass).not.toContain("'");
+    // Baseline: a-z / A-Z / 0-9 must be allowed
+    expect(charClass).toContain("a-z");
+    expect(charClass).toContain("A-Z");
+    expect(charClass).toContain("0-9");
   });
 
   it("rejects slug containing whitespace", () => {
