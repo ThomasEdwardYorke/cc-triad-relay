@@ -1495,4 +1495,80 @@ describe("loadConfig / loadConfigSafe", () => {
       expect(cfg.work.qualityGates.enforceTddImplement).toBe(true);
     });
   });
+
+  describe("repoKind config field (Track 5B / D-129 meta-session auto-detection)", () => {
+    // repoKind = "consumer" | "harness-itself"
+    // - consumer (default): a project that installs harness as a plugin and
+    //   uses skills like /harness-work, /coderabbit-review etc.
+    // - harness-itself: the harness plugin's own repository, where
+    //   consumer-side skills don't apply (e.g., Plans.md doesn't exist,
+    //   /harness-work dispatches to skills the plugin itself ships). The
+    //   meta-session running in this repo can opt out of consumer-only
+    //   discipline gates without ledger violation.
+
+    it("default repoKind is 'consumer'", () => {
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.repoKind).toBe("consumer");
+    });
+
+    it("DEFAULT_CONFIG.repoKind is 'consumer'", () => {
+      expect(DEFAULT_CONFIG.repoKind).toBe("consumer");
+    });
+
+    it("accepts explicit repoKind: 'consumer' from JSON", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({ repoKind: "consumer" }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.repoKind).toBe("consumer");
+    });
+
+    it("accepts repoKind: 'harness-itself' from JSON", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({ repoKind: "harness-itself" }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.repoKind).toBe("harness-itself");
+    });
+
+    it("rejects invalid repoKind value", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({ repoKind: "invalid-value" }),
+      );
+      expect(() => loadConfig(projectRoot)).toThrow(/repoKind/);
+    });
+
+    it("rejects non-string repoKind type", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({ repoKind: 42 }),
+      );
+      expect(() => loadConfig(projectRoot)).toThrow(/repoKind/);
+    });
+
+    it("loadConfigSafe returns defaults on invalid repoKind (graceful degradation)", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({ repoKind: "garbage" }),
+      );
+      const cfg = loadConfigSafe(projectRoot);
+      expect(cfg.repoKind).toBe("consumer");
+    });
+
+    it("preserves other fields when only repoKind is overridden", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({ repoKind: "harness-itself" }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.repoKind).toBe("harness-itself");
+      // Defaults for other top-level fields remain intact.
+      expect(cfg.projectName).toBe(DEFAULT_CONFIG.projectName);
+      expect(cfg.language).toBe(DEFAULT_CONFIG.language);
+      expect(cfg.work.taskTrackerMode).toBe(DEFAULT_CONFIG.work.taskTrackerMode);
+    });
+  });
 });
