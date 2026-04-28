@@ -82,6 +82,11 @@ function parseAssistant(
 ): SessionEvent | null {
   const blocks = obj.message?.content;
   if (!Array.isArray(blocks)) return null;
+  // Early-return on first matching block: tool_use OR phase_marker.
+  // This intentional simplification keeps parseAssistant pure and testable.
+  // Aggregation across multiple SessionEvents is delegated to the caller
+  // (e.g., buildSessionSummary via PROGRESS event sequence), not within a
+  // single assistant message.
   for (const block of blocks) {
     if (block.type === "tool_use" && typeof block.name === "string") {
       return {

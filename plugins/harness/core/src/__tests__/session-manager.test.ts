@@ -467,3 +467,35 @@ describe("public API surface (export contract)", () => {
     expect(s.slug).toBe("x");
   });
 });
+
+describe("parseAssistant early-return behavior (CR PR #65 Minor)", () => {
+  it("returns early on first matching block when multiple blocks present", () => {
+    // Document the parseAssistant early-return behavior: when content
+    // contains multiple blocks (e.g., both tool_use and text with Phase marker),
+    // the function returns on the first match (tool_use takes precedence).
+    // Aggregation across multiple events is delegated to the caller
+    // (buildSessionSummary via PROGRESS event sequence), not within a single message.
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            name: "TaskUpdate",
+            input: { task_id: "T-001", status: "in_progress" },
+          },
+          {
+            type: "text",
+            text: "Phase 5 GREEN — all tests pass",
+          },
+        ],
+      },
+      timestamp: "2026-04-28T11:00:00Z",
+    });
+    const ev = parseStreamJsonLine("alpha", line);
+    expect(ev).not.toBeNull();
+    // Early return: tool_use matched first, so Phase marker is not detected in this event.
+    expect(ev!.type).toBe("tool_use");
+    expect((ev!.payload as { tool: string }).tool).toBe("TaskUpdate");
+  });
+});
