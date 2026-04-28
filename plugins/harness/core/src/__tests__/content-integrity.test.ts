@@ -5035,3 +5035,77 @@ describe("docs/maintainer/skill-parallelism.md anchor lock-in", () => {
     expect(content).toMatch(/--parallel(=N|\s*=\s*N)?/);
   });
 });
+
+// =============================================================================
+// Feedback-loop stage 2: agents/codex-sync.md and coderabbit-mimic.md must
+// carry canonical "Caller Scoping Guidance (tool_uses budget)" section so
+// callers (skills + parent claude) consistently apply narrow-scope dispatch
+// discipline. Each `it` is an independent assertion so a single anchor
+// erosion fails individually rather than masking a broader regression.
+// =============================================================================
+describe("Caller Scoping Guidance (tool_uses budget) — anchor lock-in", () => {
+  const agents: Record<string, string> = {
+    "codex-sync": readAgent("codex-sync"),
+    "coderabbit-mimic": readAgent("coderabbit-mimic"),
+  };
+
+  for (const [agentName, content] of Object.entries(agents)) {
+    describe(`agents/${agentName}.md carries canonical scoping guidance`, () => {
+      it("Caller Scoping Guidance section heading が存在する", () => {
+        expect(content).toMatch(/##\s*Caller\s*Scoping\s*Guidance/);
+      });
+
+      it("tool_uses budget ~30 という empirical 上限を anchor として記述", () => {
+        // Codex CLI の経験的 tool budget を canonical 値として固定
+        expect(content).toMatch(/tool[_\s-]?uses\s*budget|tool[_\s-]?uses[\s\S]{0,80}30/i);
+      });
+
+      it("narrow / medium / wide budget guideline (5 / 15 / avoid) を列挙する", () => {
+        // 3 段の recipe を独立 assertion で固定 (1 つでも消えると個別失敗)
+        expect(content).toMatch(/narrow[\s\S]{0,80}5\s*tool_uses|narrow[\s\S]{0,80}≤\s*5/i);
+        expect(content).toMatch(/medium[\s\S]{0,80}15\s*tool_uses|medium[\s\S]{0,80}≤\s*15/i);
+        expect(content).toMatch(/wide[\s\S]{0,80}(?:avoid|❌|分解|split)/i);
+      });
+
+      it("partial verdict / re-dispatch 方針を明示する (silence = approval 誤読防止)", () => {
+        expect(content).toMatch(/partial\s*verdict|partial[\s-]?verdict/i);
+        expect(content).toMatch(/re-?dispatch|narrower\s*scope|narrow scope|narrower/i);
+      });
+
+      it("anti-pattern (wide-scope dispatch 禁止) を forbidden として明示する", () => {
+        expect(content).toMatch(/anti[-\s]?pattern|forbidden|avoid|❌|禁止|避ける/i);
+        // PR 全体 / 一括 review の具体例で wide scope 失敗を例示
+        expect(content).toMatch(/entire\s*PR|all\s+files|PR\s*全部|一括/i);
+      });
+
+      it("経験的根拠 (early termination empirical observation) を出典として明記する", () => {
+        // 振り返りが改善に feedback されている証跡 (feedback-loop 機構の core idea)。
+        // tracker ID (sprint label 等) は generality blocklist で禁止されるため、
+        // generic な empirical 表現 (multiple sessions / observation 等) を anchor とする。
+        expect(content).toMatch(/empirical|observation|multiple\s*(?:recent\s*)?sessions|recent\s*(?:harness\s*)?sessions/i);
+        expect(content).toMatch(/early[\s-]?termination|truncat|exhaust|tool[_\s-]?budget/i);
+      });
+    });
+  }
+
+  // Cross-agent canonical parity guard (single direction of drift = single failure).
+  // Both reviewer surfaces must share each load-bearing phrase so the scoping
+  // discipline cannot drift on one side without the other.
+  it("両 agent が同じ load-bearing canonical 文言を持つ (cross-agent parity)", () => {
+    const canonicalPhrases: Array<[RegExp, string]> = [
+      [/##\s*Caller\s*Scoping\s*Guidance/, "section heading"],
+      [/tool_uses\s*budget/, "tool_uses budget terminology"],
+      [/≤\s*5\s*tool_uses/, "narrow budget threshold (≤ 5)"],
+      [/≤\s*15\s*tool_uses/, "medium budget threshold (≤ 15)"],
+      [/partial\s*verdict/i, "partial verdict policy term"],
+      [/silence\s*(?:≠|!=|<>|not\s*=|なる*わけ)|silence[\s\S]{0,20}approval/i, "silence ≠ approval reminder"],
+      [/(?:entire\s*PR|all\s+files|PR\s*全部|一括)/, "wide-scope anti-pattern example"],
+      [/(?:empirical|observation|multiple\s*(?:recent\s*)?sessions)/i, "empirical-evidence phrasing"],
+      [/Codex\s*CLI\s*tool_uses\s*budget\s*~?\s*30|tool_uses\s*budget\s*~?\s*30/, "downstream Codex ~30 ceiling"],
+    ];
+    for (const [phrase, label] of canonicalPhrases) {
+      expect(agents["codex-sync"], `codex-sync.md missing ${label}`).toMatch(phrase);
+      expect(agents["coderabbit-mimic"], `coderabbit-mimic.md missing ${label}`).toMatch(phrase);
+    }
+  });
+});

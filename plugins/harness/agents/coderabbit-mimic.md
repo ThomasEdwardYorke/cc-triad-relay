@@ -487,9 +487,9 @@ fi
 - 推測による findings 捏造（必ず evidence を持つ）
 - CodeRabbit 公式 docs に反する taxonomy の導入
 - Codex の "fixit" モードを走らせる（修正は worker agent の責務）
-
 ---
-
+## Caller Scoping Guidance (tool_uses budget)
+scoping rule (canonical 詳細は `agents/codex-sync.md` Caller Scoping Guidance section): **Narrow** (1 file, 1 question, ≤ 5 tool_uses) > **Medium** (≤ 15 tool_uses) > **Wide** (❌ avoid; 「entire PR review」「all files」一括 = empirical early-termination root cause across multiple recent sessions; partial verdict 兆候 = `tool_uses ≥ ~25` で terminal verdict なし → narrower scope re-dispatch、silence ≠ approval)。Two independent ceilings: `maxTurns: 20` (this agent) + Codex CLI tool_uses budget ~30 (downstream)。
 ## 参照
 
 - CodeRabbit docs: https://docs.coderabbit.ai/
