@@ -762,7 +762,7 @@ describe("disable-model-invocation for side-effecting workflows (Anthropic skill
  * Anthropic Claude Code slash command frontmatter の field 順序は公式 spec で
  * 定義されていない (community convention、公式 docs reference:
  * https://code.claude.com/docs/en/slash-commands#frontmatter-reference)。
- * 本 plugin の 14 commands は一貫した canonical order を採用しており、
+ * 本 plugin の 15 commands は一貫した canonical order を採用しており、
  * drift を CI で阻止する regression guard。
  *
  * canonical order:
@@ -797,7 +797,7 @@ describe("slash command frontmatter — canonical field order (community convent
    * されることを前提とする。multiline YAML block scalar (`|` / `>` style)
    * を field value に使うと、continuation 行の text が `key:` パターンに
    * match して false positive になる (例: 値内の "name: foo" が新 key と
-   * 誤判定される)。現状の 14 commands は全 field が inline で対応済だが、
+   * 誤判定される)。現状の 15 commands は全 field が inline で対応済だが、
    * 将来 multiline 記述が必要になった場合は本 helper を `parseYaml(...)`
    * + `Object.keys()` 経由に書き換える (yaml library は import 済)。
    *
@@ -828,7 +828,7 @@ describe("slash command frontmatter — canonical field order (community convent
       // extractTopLevelKeys は inline single-line frontmatter 前提のため、
       // multiline block scalar (`description: |` / `description: >` のような
       // YAML block scalar style) が混入すると continuation 行の text が新 key
-      // と誤判定される false positive 経路を持つ。本 sanity test は 14 commands
+      // と誤判定される false positive 経路を持つ。本 sanity test は 15 commands
       // 全件で block scalar marker が値部分に出現しないことを assert し、
       // helper の前提を CI で固定する。drift があれば即時検知され、
       // helper を parseYaml ベースに refactor すべき signal となる。
@@ -856,7 +856,7 @@ describe("slash command frontmatter — canonical field order (community convent
    * `extractTopLevelKeys` は CANONICAL_FIELD_ORDER でない key を先に filter
    * で捨てる設計のため、subsequence 判定では検知できない (false negative
    * 経路)。新規 field 追加時に CANONICAL_FIELD_ORDER list を更新する強制力
-   * を CI で持つため、別 it.each で全 14 commands に対し未知 top-level key
+   * を CI で持つため、別 it.each で全 15 commands に対し未知 top-level key
    * が出現しないことを assert する。drift があれば即時 fail し、
    * CANONICAL_FIELD_ORDER 更新の signal となる。
    */
@@ -1522,6 +1522,7 @@ describe("plugin.json component 宣言 (Anthropic 公式仕様: 明示宣言で�
   // symmetric deletions from both fs and manifest).
   const EXPECTED_COMMANDS = [
     "branch-merge",
+    "claude-oneshot",
     "coderabbit-review",
     "codex-team",
     "harness-merge-train",
