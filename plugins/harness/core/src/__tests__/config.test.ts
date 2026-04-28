@@ -1496,7 +1496,7 @@ describe("loadConfig / loadConfigSafe", () => {
     });
   });
 
-  describe("repoKind config field (Track 5B / D-129 meta-session auto-detection)", () => {
+  describe("repoKind config field for meta-session auto-detection", () => {
     // repoKind = "consumer" | "harness-itself"
     // - consumer (default): a project that installs harness as a plugin and
     //   uses skills like /harness-work, /coderabbit-review etc.

@@ -49,9 +49,9 @@ export type TamperingSeverity = "approve" | "ask" | "deny";
  * the consumer uses don't apply, since the plugin itself ships them).
  *
  * Meta-session detection lets the plugin's own repository opt out of
- * consumer-only discipline gates (G2 / G3 / G5 / G8 in the
- * implementation-workflow ledger) without ledger violation, since those
- * gates fire skills that don't exist when the plugin is being developed.
+ * consumer-only discipline gates without falsely logging a ledger
+ * violation, since those gates fire skills that don't exist when the
+ * plugin is being developed.
  */
 export type RepoKind = "consumer" | "harness-itself";
 
@@ -716,8 +716,8 @@ export interface HarnessConfig {
    * Whether this project is a consumer of the harness plugin or the
    * plugin's own repository. Defaults to `"consumer"`. Set to
    * `"harness-itself"` in the plugin repo to suppress consumer-only
-   * discipline-gate skill invocations (G2 / G3 / G5 / G8) which would
-   * otherwise log spurious ledger violations.
+   * discipline-gate skill invocations which would otherwise log spurious
+   * ledger violations.
    */
   repoKind: RepoKind;
   /**
