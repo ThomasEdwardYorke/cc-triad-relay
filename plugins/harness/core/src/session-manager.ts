@@ -170,13 +170,22 @@ export function readGitCommits(
   if (r.status !== 0) return [];
   const out = (r.stdout ?? "").trim();
   if (!out) return [];
-  return out.split(/\r?\n/).map((line) => {
-    const [hash, message, relativeTime] = line.split("\t");
-    return {
-      hash: hash ?? "",
-      message: message ?? "",
-      relativeTime: relativeTime ?? "",
-    };
+  // %s (subject) may rarely contain tab characters. Naive `split("\t")`
+  // would silently truncate the message at the first inner tab and shift
+  // relativeTime into the wrong slot. Use first-tab / last-tab anchors
+  // to keep the middle (message) intact even with embedded tabs. %H (hash)
+  // and %cr (relative time) are tab-free by Git's format guarantees.
+  return out.split(/\r?\n/).flatMap((line) => {
+    const firstTab = line.indexOf("\t");
+    const lastTab = line.lastIndexOf("\t");
+    if (firstTab < 0 || firstTab === lastTab) return [];
+    return [
+      {
+        hash: line.slice(0, firstTab),
+        message: line.slice(firstTab + 1, lastTab),
+        relativeTime: line.slice(lastTab + 1),
+      },
+    ];
   });
 }
 

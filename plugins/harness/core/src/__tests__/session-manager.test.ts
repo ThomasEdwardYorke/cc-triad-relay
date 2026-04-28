@@ -253,6 +253,28 @@ describe("readGitCommits", () => {
     const commits = readGitCommits(repo, 2);
     expect(commits).toHaveLength(2);
   });
+
+  it("does not truncate commit messages that contain tab characters", () => {
+    const repo = join(workdir, "repo");
+    mkdirSync(repo, { recursive: true });
+    spawnSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: repo });
+    spawnSync("git", ["config", "user.name", "Test"], { cwd: repo });
+    spawnSync("git", ["config", "commit.gpgsign", "false"], { cwd: repo });
+    writeFileSync(join(repo, "x.txt"), "1");
+    spawnSync("git", ["add", "."], { cwd: repo });
+    // Use -F (commit message file) to inject literal tab characters
+    // through git without bash quoting interfering.
+    const msgFile = join(repo, ".commit-msg.tmp");
+    writeFileSync(msgFile, "subject\twith\tembedded\ttabs");
+    const c = spawnSync("git", ["commit", "-q", "-F", msgFile], { cwd: repo });
+    expect(c.status).toBe(0);
+    const commits = readGitCommits(repo, 1);
+    expect(commits).toHaveLength(1);
+    expect(commits[0]!.message).toBe("subject\twith\tembedded\ttabs");
+    expect(commits[0]!.relativeTime).toMatch(/ago|second|minute/);
+    expect(commits[0]!.hash).toMatch(/^[0-9a-f]{7,40}$/);
+  });
 });
 
 describe("buildSessionSummary", () => {
