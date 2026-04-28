@@ -1534,6 +1534,7 @@ describe("plugin.json component 宣言 (Anthropic 公式仕様: 明示宣言で�
     "claude-oneshot",
     "coderabbit-review",
     "codex-team",
+    "context-audit",
     "harness-merge-train",
     "harness-plan",
     "harness-release",
@@ -1551,6 +1552,7 @@ describe("plugin.json component 宣言 (Anthropic 公式仕様: 明示宣言で�
   const EXPECTED_AGENTS = [
     "coderabbit-mimic",
     "codex-sync",
+    "context-audit-agent",
     "reviewer",
     "scaffolder",
     "security-auditor",

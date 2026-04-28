@@ -123,6 +123,17 @@ export const DEFAULT_CONFIG = {
         maxErrorLength: 1024,
         correctiveHints: true,
     },
+    contextBudget: {
+        // Opt-in. Consumers set `enabled: true` in their harness.config.json
+        // to start receiving Stop / PreToolUse warnings. Defaults preserve
+        // the historical baseline (no audit, no warnings) until explicit opt-in.
+        enabled: false,
+        budgetBytes: 35000,
+        autoLoadDirs: [".claude/rules"],
+        onDemandDirs: ["docs/ai-rules"],
+        entryPointFiles: ["CLAUDE.md", "README.md"],
+        indexFile: "",
+    },
     configChange: {
         enabled: true,
         maxFilePathLength: 256,
@@ -257,6 +268,10 @@ function mergeConfig(partial) {
         postToolUseFailure: {
             ...DEFAULT_CONFIG.postToolUseFailure,
             ...(partial.postToolUseFailure ?? {}),
+        },
+        contextBudget: {
+            ...DEFAULT_CONFIG.contextBudget,
+            ...(partial.contextBudget ?? {}),
         },
         configChange: {
             ...DEFAULT_CONFIG.configChange,

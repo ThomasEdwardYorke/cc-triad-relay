@@ -97,7 +97,13 @@ export async function route(
   switch (hookType) {
     case "pre-tool": {
       const { evaluatePreTool } = await import("./guardrails/pre-tool.js");
-      return evaluatePreTool(input as HookInput);
+      // `evaluatePreTool` returns `Promise<HookResult>`; explicit `await`
+      // surfaces the resolved value before main()'s JSON.stringify so an
+      // unresolved promise can never leak out as `{}`. The async-function
+      // auto-resolve would still work here, but the explicit form keeps the
+      // contract obvious to maintainers and resilient to future refactors
+      // that might lift the return into a non-async branch.
+      return await evaluatePreTool(input as HookInput);
     }
     case "post-tool": {
       const { evaluatePostTool } = await import("./guardrails/post-tool.js");

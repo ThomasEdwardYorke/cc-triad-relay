@@ -14,6 +14,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadConfigWithError } from "../config.js";
+import { runContextAudit } from "../context-audit/index.js";
 import { sanitizeAdditionalContextLine } from "./_shared/sanitize.js";
 
 export interface StopInput {
@@ -105,6 +106,49 @@ export async function handleStop(
         "[harness-work essence] broad scope / structured team + Codex parallel / TDD (Red->Green->Refactor) / never give up / address every minor finding / end-of-session handoff archive+update — details: docs/harness-work-essence.md",
       ),
     );
+  }
+
+  // ── Context budget audit (opt-in) ────────────────────────────
+  // Stop hook attaches a session-end FAIL warning when the consumer opts in
+  // via `harness.config.json.contextBudget.enabled === true`. The audit
+  // itself is fail-open: any IO error during the audit becomes a SKIP signal
+  // (which never elevates the verdict). The warning is purely observational —
+  // `decision` stays `approve` so the user retains full control over the
+  // next turn.
+  const ctxBudget = outcome.config.contextBudget;
+  if (ctxBudget && ctxBudget.enabled) {
+    try {
+      const audit = await runContextAudit({
+        projectRoot,
+        config: ctxBudget,
+      });
+      if (audit.verdict === "fail") {
+        const failed = audit.signals
+          .filter((s) => s.status === "fail")
+          .map((s) => `${s.id}: ${s.detail}`)
+          .join(" | ");
+        sections.push(
+          sanitizeAdditionalContextLine(
+            `[context budget] FAIL — ${failed}. Run: /context-audit (or /context-audit --strict for CI gating) — or move auto-load content into onDemandDirs (${ctxBudget.onDemandDirs.join(", ")})`,
+          ),
+        );
+      } else if (audit.verdict === "warn") {
+        const warns = audit.signals
+          .filter((s) => s.status === "warn")
+          .map((s) => `${s.id}: ${s.detail}`)
+          .join(" | ");
+        sections.push(
+          sanitizeAdditionalContextLine(
+            `[context budget] WARN — ${warns}`,
+          ),
+        );
+      }
+    } catch (err) {
+      // Strict fail-open: a bug in the audit engine must never break the Stop
+      // hook. Surface the error on stderr only.
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[harness stop] context-audit error: ${msg}\n`);
+    }
   }
 
   if (sections.length === 0) {
