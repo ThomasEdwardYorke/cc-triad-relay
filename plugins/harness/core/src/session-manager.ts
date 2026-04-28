@@ -1,7 +1,7 @@
 /**
  * core/src/session-manager.ts
  *
- * Stage C: progress aggregator for parallel-worktree v2.
+ * Progress aggregator for parallel claude session orchestration.
  *
  * Each per-worktree `claude -p --output-format stream-json` writes its
  * stream-json events to `<logDir>/claude-log-<slug>.jsonl`. This module:
@@ -13,8 +13,8 @@
  *   5. Renders a coordinator dashboard markdown table (`renderDashboard`).
  *
  * The companion skill `commands/claude-oneshot.md` writes those log files,
- * and `commands/parallel-worktree-v2.md` will fan out N invocations and
- * call `renderDashboard` to display orchestrator state.
+ * and downstream coordinator skills fan out N invocations and call
+ * `renderDashboard` to display orchestrator state.
  *
  * Implementation is intentionally synchronous and dependency-free so that
  * vitest can drive it from in-memory fixtures without polyfills.
@@ -173,7 +173,16 @@ export function readSessionLog(
     logDir ?? process.env.CLAUDE_ONESHOT_LOG_DIR ?? "/tmp";
   const path = join(dir, `claude-log-${slug}.jsonl`);
   if (!existsSync(path)) return [];
-  const content = readFileSync(path, "utf-8");
+  // Race / IO resilience: file may be rotated, deleted, or have permission
+  // diff between the existsSync check above and the read here. A single slug
+  // log issue must not crash dashboard build for the rest of the orchestrator,
+  // so swallow the error and return [].
+  let content: string;
+  try {
+    content = readFileSync(path, "utf-8");
+  } catch {
+    return [];
+  }
   const events: SessionEvent[] = [];
   for (const line of content.split(/\r?\n/)) {
     const ev = parseStreamJsonLine(slug, line);
@@ -289,8 +298,13 @@ export function renderDashboard(summaries: SessionSummary[]): string {
   const rows = summaries.map((s) => {
     const branch = s.branch ? escapeCell(s.branch) : "—";
     const phase = s.phase ? escapeCell(s.phase) : "—";
+    // Commit messages can contain backticks (e.g. "fix: handle `pipe` in foo").
+    // Wrapping the message in a single backtick code-span breaks the markdown
+    // cell when the message contains `, splitting one column into many.
+    // Strip backticks from the message to keep the table column count stable;
+    // escapeCell() already handles `|` and newlines.
     const commit = s.lastCommit
-      ? `${s.lastCommit.hash.slice(0, 7)} \`${escapeCell(s.lastCommit.message)}\` (${escapeCell(s.lastCommit.relativeTime)})`
+      ? `${s.lastCommit.hash.slice(0, 7)} ${escapeCell(s.lastCommit.message).replace(/`/g, "")} (${escapeCell(s.lastCommit.relativeTime)})`
       : "—";
     return `| ${escapeCell(s.slug)} | ${branch} | ${phase} | ${commit} | ${s.status} |`;
   });
