@@ -2,7 +2,7 @@
 name: tdd-implement
 description: "TDD + Codex チーム協業 + 疑似 CodeRabbit × 本物 CodeRabbit の完全レビューループによる最高品質の実装ワークフロー。実装指示を受けた時に使用する。「実装して」「修正して」「機能追加して」「バグ修正して」「リファクタリングして」などの実装タスク全般に適用。品質を妥協せず、チェックリスト管理・TDD・Codex レビューループ・CodeRabbit レビューループで完璧な実装を目指す。"
 allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput"]
-argument-hint: "<task description> [--profile=chill|assertive|strict] [--no-commit]"
+argument-hint: "[task-description|profile|no-commit]"
 ---
 
 # TDD Implementation with Codex Team + CodeRabbit Loop
@@ -167,7 +167,7 @@ Loop:
 
 ### 実行方法
 
-まず `$ARGUMENTS` から `--profile=` を抽出 (argv 単位 case 完全一致、未指定時は `chill`)。
+まず `$ARGUMENTS` から `--profile=(chill|assertive|strict)` を抽出 (argv 単位 case 完全一致、allowlist 外の値は `chill` に fallback、未指定時も `chill`)。
 上流 (`harness-work`) が materialize して渡した値、または直接コマンドライン指定のいずれかを受ける。
 
 ```bash
