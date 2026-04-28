@@ -42,6 +42,20 @@ export type HarnessLanguage = "en" | "ja";
 export type TamperingSeverity = "approve" | "ask" | "deny";
 
 /**
+ * Indicates whether the project consuming this harness config is a
+ * downstream consumer (the common case: a project that installs harness as
+ * a plugin and uses skills like `/harness-work`, `/coderabbit-review`) or
+ * the harness plugin's **own** repository (the meta-session case: skills
+ * the consumer uses don't apply, since the plugin itself ships them).
+ *
+ * Meta-session detection lets the plugin's own repository opt out of
+ * consumer-only discipline gates without falsely logging a ledger
+ * violation, since those gates fire skills that don't exist when the
+ * plugin is being developed.
+ */
+export type RepoKind = "consumer" | "harness-itself";
+
+/**
  * Tunables for the codex-sync agent aimed at mitigating mid-response
  * truncation caused by Claude Code's subagent output limit. See
  * `agents/codex-sync.md` for the user-facing remediation path.
@@ -699,6 +713,14 @@ export interface HarnessConfig {
   /** Language used for messages when a localized form is available. */
   language: HarnessLanguage;
   /**
+   * Whether this project is a consumer of the harness plugin or the
+   * plugin's own repository. Defaults to `"consumer"`. Set to
+   * `"harness-itself"` in the plugin repo to suppress consumer-only
+   * discipline-gate skill invocations which would otherwise log spurious
+   * ledger violations.
+   */
+  repoKind: RepoKind;
+  /**
    * Directory names that R10 refuses to delete via `rm`/`rmdir`/`unlink`.
    * Empty array disables R10 entirely (default).
    */
@@ -749,6 +771,7 @@ export interface HarnessConfig {
 export const DEFAULT_CONFIG: HarnessConfig = {
   projectName: "my-project",
   language: "en",
+  repoKind: "consumer",
   protectedDirectories: [],
   protectedEnvVarNames: [
     "OPENAI_API_KEY",
@@ -946,9 +969,15 @@ function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
     validateWorkTaskTracker(baseWork),
   );
 
+  // repoKind is a top-level scalar with strict enum validation.
+  // Throws on shape error (e.g. non-string, unknown value) so the
+  // misconfiguration surfaces early rather than silently downgrading.
+  const validatedRepoKind = validateRepoKind(partial);
+
   return {
     ...DEFAULT_CONFIG,
     ...partial,
+    repoKind: validatedRepoKind,
     codex: {
       ...DEFAULT_CONFIG.codex,
       ...(partial.codex ?? {}),
@@ -1381,6 +1410,33 @@ const VALID_TASK_TRACKER_MODES: readonly TaskTrackerMode[] = [
   "plans",
   "handoff",
 ];
+
+const VALID_REPO_KINDS: readonly RepoKind[] = ["consumer", "harness-itself"];
+
+/**
+ * Guard against `repoKind` being set to a non-string or to a string not in
+ * the allowed enum. `loadConfig()` throws so callers know the harness is
+ * misconfigured (vs. silently falling back to `"consumer"` and producing
+ * confusing meta-session ledger entries). `loadConfigSafe()` catches and
+ * falls back to defaults.
+ */
+function validateRepoKind(partial: Partial<HarnessConfig>): RepoKind {
+  if (!("repoKind" in partial) || partial.repoKind === undefined) {
+    return DEFAULT_CONFIG.repoKind;
+  }
+  const value = partial.repoKind;
+  if (typeof value !== "string") {
+    throw new Error(
+      `harness.config.json: repoKind must be a string (got ${typeof value})`,
+    );
+  }
+  if (!VALID_REPO_KINDS.includes(value as RepoKind)) {
+    throw new Error(
+      `harness.config.json: repoKind="${value}" is not allowed; must be one of ${JSON.stringify(VALID_REPO_KINDS)}`,
+    );
+  }
+  return value as RepoKind;
+}
 const HANDOFF_PATH_KEYS: readonly (keyof HandoffPathsConfig)[] = [
   "roadmap",
   "backlog",
