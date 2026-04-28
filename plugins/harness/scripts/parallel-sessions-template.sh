@@ -185,7 +185,7 @@ resolve_tmux_env_args() {
   #
   # Operator extension: `TMUX_PASS_ENV` is a whitespace-separated list of
   # additional env var names to propagate. Each name must satisfy
-  # `validate_identifier`, and each value must satisfy `validate_env_value`.
+  # `validate_env_var_name`, and each value must satisfy `validate_env_value`.
   local args=""
   local keys=("CLAUDE_ONESHOT_LOG_DIR")
   local extra_keys=()

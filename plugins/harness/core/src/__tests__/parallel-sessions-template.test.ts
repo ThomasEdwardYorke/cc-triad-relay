@@ -295,21 +295,21 @@ describe("parallel-sessions-template.sh: input validation (injection prevention)
 });
 
 describe("parallel-sessions-template.sh: tmux env propagation (-e)", () => {
-  // Stage G prerequisite. tmux otherwise filters out custom env on session
-  // creation, so per-window claude (and its e2e smoke mock) cannot see
-  // env vars the coordinator set unless the launcher pipes them via
-  // `tmux new-session -e KEY=VAL`. These tests fix the contract so a
+  // tmux env propagation prerequisite. tmux otherwise filters out custom env
+  // on session creation, so per-window claude (and any e2e smoke mock)
+  // cannot see env vars the coordinator set unless the launcher pipes them
+  // via `tmux new-session -e KEY=VAL`. These tests fix the contract so a
   // future regression that drops the `-e` propagation fails here, not
   // silently in production where the symptom is "log file written to /tmp
   // instead of the configured logDir".
 
   it("dry-run start propagates CLAUDE_ONESHOT_LOG_DIR via tmux -e", () => {
     const r = runScript(["--dry-run", "start", "main", "alpha"], {
-      CLAUDE_ONESHOT_LOG_DIR: "/tmp/stage-g-fixture-logs",
+      CLAUDE_ONESHOT_LOG_DIR: "/tmp/oneshot-fixture-logs",
     });
     expect(r.status).toBe(0);
     expect(r.stdout).toMatch(
-      /-e\s+'?CLAUDE_ONESHOT_LOG_DIR=\/tmp\/stage-g-fixture-logs'?/,
+      /-e\s+'?CLAUDE_ONESHOT_LOG_DIR=\/tmp\/oneshot-fixture-logs'?/,
     );
   });
 

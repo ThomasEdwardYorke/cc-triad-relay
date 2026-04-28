@@ -2,11 +2,11 @@
 #
 # tests/e2e/fixtures/mock-claude.sh
 #
-# Mock `claude` CLI binary for the Phase 2 Stage G end-to-end smoke test.
-# Reads `-n <slug>` from argv (matching the real Claude CLI invocation
-# emitted by parallel-sessions-template.sh `cmd_start`), then writes 8
-# stream-json events to `${CLAUDE_ONESHOT_LOG_DIR:-/tmp}/claude-log-<slug>.jsonl`
-# and exits 0.
+# Mock `claude` CLI binary for the parallel-worktree-v2 end-to-end smoke
+# test. Reads `-n <slug>` from argv (matching the real Claude CLI invocation
+# emitted by parallel-sessions-template.sh `cmd_start`), writes 9 stream-json
+# events (8 assistant + 1 result) to
+# `${CLAUDE_ONESHOT_LOG_DIR:-/tmp}/claude-log-<slug>.jsonl`, and exits 0.
 #
 # This binary is invoked as:
 #   <this-script> -n <slug> [--model <alias>] --permission-mode <mode>
@@ -80,11 +80,13 @@ emit() {
 # nothing.
 : > "$LOG_FILE"
 
-# ─── 8-event sequence (mirrors a TDD round in /tdd-implement) ────────────────
+# ─── 9-event sequence: 8 assistant + 1 result (mirrors a TDD round) ─────────
 #
 # session-manager.ts (parseAssistant + detectPhaseMarker) early-returns on
-# the first matching block per assistant message, so each event must contain
-# exactly one phase-bearing block.
+# the first matching block per assistant message, so each assistant event
+# must contain exactly one phase-bearing block. The trailing `result` event
+# is what the real Claude CLI emits at session end and is parsed as a
+# `completion` SessionEvent.
 
 emit "$(printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"TaskUpdate","input":{"task_id":"1","status":"in_progress"}}]},"timestamp":"%s"}' "$(iso_ts)")"
 sleep 0.1
