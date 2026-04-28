@@ -1,8 +1,9 @@
 ---
 name: claude-oneshot
 description: "non-interactive one-shot `claude -p` wrapper that writes stream-json output to a per-slug log file for downstream monitoring. Use this primitive from a parallel orchestrator (e.g. parallel-worktree v2) when each task needs an independent top-level Claude session with its own context budget instead of the cheaper Agent-tool fan-out."
+description-ja: "非対話の `claude -p` を1回実行し、スラッグ単位のログへ出力するラッパー。並列オーケストレータから複数タスクを独立 Claude セッションで実行する際に使う。"
 allowed-tools: ["Bash", "Read", "Write"]
-argument-hint: "<instruction> [--slug=<slug>] [--cwd=<path>] [--output=stream-json|json|text] [--model=<alias>] [--permission-mode=<mode>]"
+argument-hint: "[instruction|slug|cwd|output|model|permission-mode]"
 ---
 
 # `/claude-oneshot` — non-interactive `claude -p` wrapper for parallel orchestration
@@ -63,12 +64,15 @@ The skill resolves into a single `claude -p` invocation, redirected to the per-s
 
 ```bash
 LOG_DIR="${CLAUDE_ONESHOT_LOG_DIR:-/tmp}"
+mkdir -p "$LOG_DIR"
+SAFE_SLUG="$(printf '%s' "$SLUG" | tr -cs 'A-Za-z0-9._-' '-')"
+LOG_FILE="$LOG_DIR/claude-log-${SAFE_SLUG}.jsonl"
 claude -p "<instruction>" \
   --output-format <stream-json|json|text> \
   --model <model> \
   --permission-mode <mode> \
   --add-dir "<cwd>" \
-  > "$LOG_DIR/claude-log-<slug>.jsonl" 2>&1 &
+  > "$LOG_FILE" 2>&1 &
 echo $!   # PID of the spawned session
 ```
 
@@ -76,9 +80,9 @@ The wrapper is intentionally thin: it does not enforce TDD, Phase 5.5/6/7 qualit
 
 ## Related
 
-- `core/src/session-manager.ts` — consumer of the per-slug log files (Stage C, shipped alongside this skill in the same Phase 2 batch)
-- `scripts/parallel-sessions-template.sh` — alternative tmux-based launcher (Stage B, shipped alongside this skill in the same Phase 2 batch)
-- `commands/parallel-worktree-v2.md` — *planned* coordinator that fans out N `/claude-oneshot` invocations (Stage E, not yet shipped). Until Stage E lands, this skill is callable directly by any orchestrator that wants the per-slug log path contract.
+- `core/src/session-manager.ts` — consumer of the per-slug log files
+- `scripts/parallel-sessions-template.sh` — alternative tmux-based launcher
+- `commands/parallel-worktree-v2.md` — *planned* coordinator that fans out N `/claude-oneshot` invocations . Until Stage E lands, this skill is callable directly by any orchestrator that wants the per-slug log path contract.
 
 ## Notes
 

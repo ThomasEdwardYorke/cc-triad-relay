@@ -39,8 +39,9 @@ describe("claude-oneshot skill: frontmatter contract", () => {
     expect(content).toMatch(/allowed-tools:\s*\[[^\]]*"Bash"/);
   });
 
-  it("declares an argument-hint that documents <instruction>", () => {
-    expect(content).toMatch(/argument-hint:\s*["'].*<instruction>/);
+  it("declares an argument-hint that documents instruction token", () => {
+    // strict format `[instruction|...]`: 旧 free-form `<instruction>` を strict bracket に migrate
+    expect(content).toMatch(/argument-hint:\s*["']\[instruction\|/);
   });
 
   it("description mentions non-interactive `claude -p` wrapper", () => {
@@ -157,5 +158,17 @@ describe("claude-oneshot skill: generic spec hygiene", () => {
   it("does not reference test-bed branch names", () => {
     expect(content).not.toMatch(/feature\/new-partslist/);
     expect(content).not.toMatch(/feature\/harness-model-b/);
+  });
+});
+
+describe("claude-oneshot skill: strict frontmatter fields (Finding #5)", () => {
+  const content = readCommand("claude-oneshot");
+
+  it("declares description-ja field with Japanese 1-line summary", () => {
+    expect(content).toMatch(/^---[\s\S]*?\ndescription-ja:\s*".+?"/m);
+  });
+
+  it("argument-hint uses strict bracketed pipe-separated format [arg1|arg2|...]", () => {
+    expect(content).toMatch(/^---[\s\S]*?\nargument-hint:\s*"\[[\w-]+(?:\|[\w-]+)+\]"/m);
   });
 });
