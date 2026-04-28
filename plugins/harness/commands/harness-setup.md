@@ -64,7 +64,7 @@ And that the following agent definitions exist (v3 layout):
 - `agents/security-auditor.md`
 - `agents/codex-sync.md`
 
-And that the skills exist (5 verb skills plus 11 workflow skills):
+And that the skills exist (5 verb skills plus 12 workflow skills):
 
 - Verb skills
   - `commands/harness-plan.md`
@@ -79,6 +79,7 @@ And that the skills exist (5 verb skills plus 11 workflow skills):
   - `commands/coderabbit-review.md`
   - `commands/codex-team.md`
   - `commands/harness-merge-train.md`
+  - `commands/harness-self-improve.md`
   - `commands/parallel-worktree.md`
   - `commands/parallel-worktree-v2.md`
   - `commands/pseudo-coderabbit-loop.md`
@@ -115,11 +116,14 @@ plugins/harness/
 │   ├── harness-release.md
 │   ├── harness-setup.md
 │   ├── branch-merge.md
+│   ├── claude-oneshot.md
 │   ├── new-feature-branch.md
 │   ├── coderabbit-review.md
 │   ├── codex-team.md
 │   ├── harness-merge-train.md
+│   ├── harness-self-improve.md
 │   ├── parallel-worktree.md
+│   ├── parallel-worktree-v2.md
 │   ├── pseudo-coderabbit-loop.md
 │   ├── session-handoff.md
 │   └── tdd-implement.md

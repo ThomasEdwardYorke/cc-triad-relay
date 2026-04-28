@@ -1538,6 +1538,7 @@ describe("plugin.json component 宣言 (Anthropic 公式仕様: 明示宣言で�
     "harness-plan",
     "harness-release",
     "harness-review",
+    "harness-self-improve",
     "harness-setup",
     "harness-work",
     "new-feature-branch",

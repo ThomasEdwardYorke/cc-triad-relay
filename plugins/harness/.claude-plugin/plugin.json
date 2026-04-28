@@ -1,7 +1,7 @@
 {
   "name": "harness",
   "version": "0.4.0-rc.2",
-  "description": "Portable TypeScript guardrail and agent harness for Claude Code. Provides 13 guardrail rules, 6 specialised agents (worker / reviewer / scaffolder / security-auditor / codex-sync / coderabbit-mimic), 16 commands = 5 verb skills (plan / work / review / release / setup) + 11 workflow skills (branch-merge / claude-oneshot / harness-merge-train / new-feature-branch / coderabbit-review / codex-team / parallel-worktree / parallel-worktree-v2 / pseudo-coderabbit-loop / session-handoff / tdd-implement), 16 of Claude Code's lifecycle hook events (pre-tool / post-tool / permission / session-start / session-end / pre-compact / subagent-stop / subagent-start / task-created / stop / worktree-create / worktree-remove / task-completed / user-prompt-submit / post-tool-use-failure / config-change), and a pure-JS JSON state store with zero native dependencies.",
+  "description": "Portable TypeScript guardrail and agent harness for Claude Code. Provides 13 guardrail rules, 6 specialised agents (worker / reviewer / scaffolder / security-auditor / codex-sync / coderabbit-mimic), 17 commands = 5 verb skills (plan / work / review / release / setup) + 12 workflow skills (branch-merge / claude-oneshot / harness-merge-train / harness-self-improve / new-feature-branch / coderabbit-review / codex-team / parallel-worktree / parallel-worktree-v2 / pseudo-coderabbit-loop / session-handoff / tdd-implement), 16 of Claude Code's lifecycle hook events (pre-tool / post-tool / permission / session-start / session-end / pre-compact / subagent-stop / subagent-start / task-created / stop / worktree-create / worktree-remove / task-completed / user-prompt-submit / post-tool-use-failure / config-change), and a pure-JS JSON state store with zero native dependencies.",
   "author": {
     "name": "Claude Code Harness Contributors"
   },
@@ -25,6 +25,7 @@
     "./commands/harness-plan.md",
     "./commands/harness-release.md",
     "./commands/harness-review.md",
+    "./commands/harness-self-improve.md",
     "./commands/harness-setup.md",
     "./commands/harness-work.md",
     "./commands/new-feature-branch.md",
