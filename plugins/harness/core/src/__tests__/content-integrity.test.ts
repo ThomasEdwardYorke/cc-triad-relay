@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { dirname, resolve, posix as pathPosix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
@@ -1589,13 +1589,17 @@ describe("plugin.json component 宣言 (Anthropic 公式仕様: 明示宣言で�
     // 漸進的に解消する)。allowed-tools と argument-hint は legacy も含めて全件必須で、
     // 欠落は CI で即時 fail させる (描いてない field を持つ skill は invocable surface
     // が不確定のままになるため)。
+    // Legacy allowlist for `description-ja` (1 field only). Kept tight: any
+    // command **touched in this PR** must be removed from the allowlist so the
+    // 5-field rule lands progressively. parallel-worktree.md was updated in
+    // Phase 2 Stage E+F (v2 sibling skill addition + v1 migration notice), so
+    // it must declare description-ja and is no longer allowlisted.
     const legacyNoDescriptionJa = new Set([
       "branch-merge",
       "coderabbit-review",
       "codex-team",
       "harness-setup",
       "new-feature-branch",
-      "parallel-worktree",
       "tdd-implement",
     ]);
     for (const cmdName of EXPECTED_COMMANDS) {
@@ -5140,6 +5144,24 @@ describe("commands/parallel-worktree-v2.md — Model B v2 skill anchors", () => 
     expect(skill).toMatch(/claude-oneshot/);
   });
 
+  // Forward-reference protection (CR PR #68 round 4 Major):
+  // The string-reference assertions above pass even if the referenced
+  // primitive file is deleted or never shipped. Adding physical-existence
+  // assertions catches that drift at CI time.
+  //
+  // Coverage policy (per PR ship sequence):
+  //   - parallel-sessions-template.sh ships in this PR's parent feature
+  //     branch via git tracked files, so its physical existence is asserted
+  //     directly here.
+  //   - session-manager.ts (Stage C) and claude-oneshot.md (Stage D) ship
+  //     in independent sibling PRs (#65 / #63) that merge ahead of this PR.
+  //     The post-merge follow-up adds existsSync assertions for both. Until
+  //     those PRs land in main, the v2 skill spec body anchor regex above
+  //     plus the in-tree script anchor below provide partial coverage.
+  it("primitive file plugins/harness/scripts/parallel-sessions-template.sh が物理存在する", () => {
+    expect(existsSync(resolve(PLUGIN_ROOT, "scripts/parallel-sessions-template.sh"))).toBe(true);
+  });
+
   it("各 worktree が /tdd-implement Phase 1-7 を内部実行することを明示する", () => {
     expect(skill).toMatch(/tdd-implement/);
     // Phase 5.5 = Pseudo CR (per-worktree)
@@ -5197,20 +5219,45 @@ describe("commands/parallel-worktree-v2.md — Model B v2 skill anchors", () => 
 describe("commands/parallel-worktree.md — v1 migration notice (time-stable, no rollout/tracker leaks)", () => {
   const v1Skill = readCommand("parallel-worktree");
 
-  it("v1 spec 内に v2 sibling skill (`parallel-worktree-v2`) への forward link が存在する", () => {
-    expect(v1Skill).toMatch(/parallel-worktree-v2/);
+  // CR PR #68 round 4 Major (content-integrity.test.ts:5210) 対応:
+  // file 全体に対する keyword guard だと、migration notice section が消えても
+  // 別の説明文 ("並列実行モデル" 章等) で pass しえる。Model B subsection を
+  // 切り出して narrow scope で keyword を要求する drift guard に強化。
+  function extractModelBSection(skill: string): string {
+    // "### Model B" から次の "##" (level 2 heading) または "---" 区切りまで
+    const start = skill.indexOf("### Model B");
+    if (start < 0) return "";
+    const remainder = skill.slice(start);
+    // section terminate: 次の `\n## ` or `\n---\n`
+    const matchHeading = remainder.search(/\n## /);
+    const matchDivider = remainder.search(/\n---\n/);
+    const end = [matchHeading, matchDivider]
+      .filter((idx) => idx > 0)
+      .reduce((a, b) => Math.min(a, b), Infinity);
+    return Number.isFinite(end) ? remainder.slice(0, end) : remainder;
+  }
+  const modelBSection = extractModelBSection(v1Skill);
+
+  it("Model B subsection (`### Model B`) が file 内に物理存在する", () => {
+    // narrow guard の前提: section が存在しないと keyword check が空文字に対して
+    // 走る → false-pass を即時 fail させる
+    expect(modelBSection.length).toBeGreaterThan(100);
   });
 
-  it("v1 が migration / coexist の意図を user-facing な表現で明示する", () => {
-    expect(v1Skill).toMatch(/coexist|opt-in|migration|recommend|prefer|並存|並列|deprecated?/i);
+  it("Model B subsection 内に v2 sibling skill (`parallel-worktree-v2`) への forward link が存在する", () => {
+    expect(modelBSection).toMatch(/parallel-worktree-v2/);
   });
 
-  it("v1 がまだ default として動作することを明示 (突然 deprecate しない)", () => {
-    expect(v1Skill).toMatch(/default|現状|remains?[\s\S]{0,80}default|v1[\s\S]{0,80}(?:default|production|stable|until)/i);
+  it("Model B subsection が migration / coexist の意図を user-facing な表現で明示する", () => {
+    expect(modelBSection).toMatch(/coexist|opt-in|migration|recommend|prefer|並存|並列|deprecated?/i);
   });
 
-  it("v1 migration notice に sprint-label / maintainer-only 参照が leak していない", () => {
-    // CR PR #68 round 1 Major 指摘 (parallel-worktree.md:37) 対応:
+  it("Model B subsection が v1 がまだ default として動作することを明示する (突然 deprecate しない)", () => {
+    expect(modelBSection).toMatch(/default|現状|remains?[\s\S]{0,80}default|v1[\s\S]{0,80}(?:default|production|stable|until)/i);
+  });
+
+  it("v1 spec 全体に sprint-label / maintainer-only 参照が leak していない", () => {
+    // CR PR #68 round 1 Major 指摘 (parallel-worktree.md:37) 対応 (file 全体):
     // 「Phase 2 Stage E」「Phase 3 P3.2」「ROADMAP-model-b.md」「半年後 / 1 年後」等の
     // tracker / rollout 参照を shipped skill から外す time-stable wording 規律。
     // 注: ## スキル更新履歴 section の date entry (`v2.0 (2026-04-21)` 等) は
