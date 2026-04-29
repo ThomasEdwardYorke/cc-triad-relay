@@ -92,7 +92,11 @@ git commit -m "ci: add harness check workflow"
 git push
 ```
 
-→ PR ごとに plugin integrity が GitHub Actions で自動確認される。
+→ `harness` CLI が runner にインストールされている場合、PR ごとに plugin
+integrity が GitHub Actions で確認される。**default の workflow は `harness`
+不在時に warning を出して成功終了 (best-effort)** するため、実 merge gate
+にしたい場合は workflow 内コメントアウトされている `Install harness plugin`
+step を有効化するか、runner に CLI を pre-install してください。
 
 ### 7. Integrity 検証
 
@@ -101,7 +105,7 @@ harness check
 ```
 
 期待出力:
-```
+```text
 Plugin integrity:
   core build               OK
   manifest                 OK
@@ -119,7 +123,7 @@ WARN が残れば、対応する step (3-5) を見直し。
 
 ## standalone (plugin 不使用) で個別 copy する場合
 
-```
+```text
 template/.claude/CLAUDE.md.tmpl              → <your-project>/CLAUDE.md
 template/.claude/harness.config.json.tmpl    → <your-project>/harness.config.json
 template/.claude/settings.local.json.tmpl    → <your-project>/.claude/settings.local.json

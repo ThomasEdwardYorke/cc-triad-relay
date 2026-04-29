@@ -50,5 +50,5 @@ jobs:
             harness check
           else
             echo "::warning::harness CLI not on PATH — skipping integrity check"
-            echo "see template/README.md for full setup instructions"
+            echo "Enable the commented 'Install harness plugin' step above (or pre-install harness on the runner) to make this a real merge gate."
           fi
