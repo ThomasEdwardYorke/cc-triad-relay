@@ -21,10 +21,18 @@
  *   harness --version
  */
 
-import { existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  statSync,
+  mkdirSync,
+  readdirSync,
+} from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
+import { execFileSync } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -87,31 +95,215 @@ function readVersion() {
 // Subcommands
 // ------------------------------------------------------------
 
-function cmdInit(cwd) {
-  const out = resolve(cwd, "harness.config.json");
-  if (existsSync(out)) {
-    process.stderr.write(`harness init: ${out} already exists; leaving it untouched.\n`);
-    return 0;
+// ------------------------------------------------------------
+// Onboarding helpers (template → project bootstrap, dependency probe)
+// ------------------------------------------------------------
+
+/**
+ * Probe whether `cmd` is on PATH using `which` (POSIX) / `where` (Windows).
+ * `execFileSync` exits non-zero when the binary is missing; we swallow that
+ * into a boolean so callers stay synchronous.
+ */
+function commandExists(cmd) {
+  try {
+    execFileSync(process.platform === "win32" ? "where" : "which", [cmd], {
+      stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
   }
-  const starter = {
-    projectName: "my-project",
-    language: "en",
-    protectedDirectories: [],
-    protectedEnvVarNames: [
-      "OPENAI_API_KEY",
-      "ANTHROPIC_API_KEY",
-      "AWS_ACCESS_KEY_ID",
-      "AWS_SECRET_ACCESS_KEY",
-      "GITHUB_TOKEN",
-      "GOOGLE_API_KEY",
-    ],
-    protectedFileSuffixes: [".env"],
-    codex: { enabled: false },
-    workMode: { bypassRmRf: false, bypassGitPush: false },
-    tampering: { severity: "approve" },
+}
+
+/**
+ * Resolve the `template/` directory shipped alongside the plugin.
+ * Layout (post-install):
+ *   <marketplace>/template/                    ← target
+ *   <marketplace>/plugins/harness/bin/harness  ← __dirname
+ * `__dirname/../../../template` walks up: bin → harness → plugins → marketplace.
+ * Falls back to `CLAUDE_PLUGIN_ROOT/../../template` for hook-invoked CLI runs.
+ */
+function resolveTemplateRoot() {
+  const direct = resolve(__dirname, "..", "..", "..", "template");
+  if (existsSync(direct)) return direct;
+  const envRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  if (envRoot) {
+    const candidate = resolve(envRoot, "..", "..", "template");
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Copy a single template file with `{{PLACEHOLDER}}` substitution.
+ * Returns true if the destination was written, false if it was preserved
+ * (existing destination is never overwritten — `init` is idempotent).
+ *
+ * `String.prototype.split(literal).join(value)` is regex-meta-character
+ * safe — neither `key` nor `value` is interpreted as a regex pattern, so
+ * placeholder values containing `[`, `$`, `\`, `.` etc. are inserted verbatim.
+ * Switching to `replace(new RegExp(...), value)` would re-introduce the
+ * meta-character risk; keep the split/join idiom.
+ */
+function copyTemplateFile(srcPath, destPath, replacements) {
+  if (existsSync(destPath)) return false;
+  let content = readFileSync(srcPath, "utf-8");
+  for (const [key, value] of Object.entries(replacements)) {
+    content = content.split(key).join(value);
+  }
+  const destDir = dirname(destPath);
+  if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
+  writeFileSync(destPath, content, "utf-8");
+  return true;
+}
+
+/**
+ * Recursively copy a directory tree, applying `replacements` to each file.
+ * Skips files that already exist at the destination (idempotent).
+ */
+function copyTemplateDir(srcDir, destDir, replacements) {
+  if (!existsSync(srcDir)) return [];
+  if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
+  const created = [];
+  for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+    const src = join(srcDir, entry.name);
+    const dest = join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      created.push(...copyTemplateDir(src, dest, replacements));
+    } else if (entry.isFile()) {
+      // `.tmpl` 拡張子は配布元の慣習 (template/.coderabbit.yaml.tmpl etc.)。
+      // ただし .claude/rules/*.md などは元から `.md` で配布されるので
+      // 個別 file の dest 名は呼び出し側で制御する。本 helper は同名 copy のみ。
+      if (copyTemplateFile(src, dest, replacements)) {
+        created.push(dest);
+      }
+    }
+  }
+  return created;
+}
+
+function cmdInit(cwdArg) {
+  // `CLAUDE_PROJECT_DIR` が設定されていれば cwdArg より優先する。これは
+  // resolveTemplateRoot / resolvePluginRoot と同じ env-fallback 規約で、
+  // hook-invoked CLI が CLAUDE_PROJECT_DIR をセットするケース (consumer hook /
+  // CI runner で cwd と project root が分離する状況) を想定。bootstrap 先を
+  // 一元化することで、env と cwd の不整合による silent な誤配置を防ぐ。
+  const cwd = process.env.CLAUDE_PROJECT_DIR ?? cwdArg;
+  const templateRoot = resolveTemplateRoot();
+  const projectName = process.env.CLAUDE_PROJECT_NAME ?? basename(cwd);
+  const replacements = {
+    "{{PROJECT_NAME}}": projectName,
+    "{{PROJECT_DESCRIPTION}}": "(TODO: add description)",
+    "{{HARNESS_VERSION}}": readVersion(),
   };
-  writeFileSync(out, JSON.stringify(starter, null, 2) + "\n", "utf-8");
-  process.stdout.write(`harness init: wrote ${out}\n`);
+
+  const created = [];
+  const skipped = [];
+
+  // 1) harness.config.json — template があれば placeholder 置換 copy、なければ inline default。
+  //    既存動作 (空プロジェクトで harness.config.json のみ生成) を維持しつつ、
+  //    template/ を持たない standalone install でも壊れない設計。
+  const cfgPath = resolve(cwd, "harness.config.json");
+  if (existsSync(cfgPath)) {
+    skipped.push("harness.config.json");
+  } else {
+    const tmplCfg = templateRoot
+      ? join(templateRoot, ".claude/harness.config.json.tmpl")
+      : null;
+    if (tmplCfg && existsSync(tmplCfg)) {
+      let content = readFileSync(tmplCfg, "utf-8");
+      for (const [key, value] of Object.entries(replacements)) {
+        content = content.split(key).join(value);
+      }
+      writeFileSync(cfgPath, content, "utf-8");
+    } else {
+      // inline fallback — template が存在しない standalone install 用。
+      const starter = {
+        projectName,
+        language: "en",
+        protectedDirectories: [],
+        protectedEnvVarNames: [
+          "OPENAI_API_KEY",
+          "ANTHROPIC_API_KEY",
+          "AWS_ACCESS_KEY_ID",
+          "AWS_SECRET_ACCESS_KEY",
+          "GITHUB_TOKEN",
+          "GOOGLE_API_KEY",
+        ],
+        protectedFileSuffixes: [".env"],
+        codex: { enabled: false },
+        workMode: { bypassRmRf: false, bypassGitPush: false },
+        tampering: { severity: "approve" },
+      };
+      writeFileSync(cfgPath, JSON.stringify(starter, null, 2) + "\n", "utf-8");
+    }
+    created.push("harness.config.json");
+  }
+
+  // 2) Template 由来の bootstrap files (template root が見つかった時のみ)。
+  //    .tmpl 拡張子は dest で剥がす (e.g. CLAUDE.md.tmpl → CLAUDE.md)。
+  if (templateRoot) {
+    const bootstrap = [
+      [".claude/CLAUDE.md.tmpl", "CLAUDE.md"],
+      [".claude/settings.local.json.tmpl", ".claude/settings.local.json"],
+      ["Plans.md.tmpl", "Plans.md"],
+      [".coderabbit.yaml.tmpl", ".coderabbit.yaml"],
+      [
+        ".github/workflows/harness-check.yml.tmpl",
+        ".github/workflows/harness-check.yml",
+      ],
+    ];
+    for (const [srcRel, destRel] of bootstrap) {
+      const srcPath = join(templateRoot, srcRel);
+      const destPath = resolve(cwd, destRel);
+      if (!existsSync(srcPath)) continue;
+      if (existsSync(destPath)) {
+        skipped.push(destRel);
+        continue;
+      }
+      if (copyTemplateFile(srcPath, destPath, replacements)) {
+        created.push(destRel);
+      }
+    }
+
+    // 3) .claude/rules/ recursive copy (auto-load 対象、複数 .md ファイル)
+    const rulesSrc = join(templateRoot, ".claude/rules");
+    const rulesDest = resolve(cwd, ".claude/rules");
+    if (existsSync(rulesSrc)) {
+      const created_ = copyTemplateDir(rulesSrc, rulesDest, replacements);
+      for (const f of created_) {
+        // dest を project-relative path で記録 (UI 出力の cwd 依存を避ける)
+        const rel = f.startsWith(cwd) ? f.slice(cwd.length).replace(/^[\\/]/, "") : f;
+        created.push(rel);
+      }
+    }
+
+    // 4) .gitignore — 既存 .gitignore は touch せず (ユーザー判断に委ねる、merge 衝突回避)
+    const giSrc = join(templateRoot, ".gitignore");
+    const giDest = resolve(cwd, ".gitignore");
+    if (existsSync(giSrc) && !existsSync(giDest)) {
+      const content = readFileSync(giSrc, "utf-8");
+      writeFileSync(giDest, content, "utf-8");
+      created.push(".gitignore");
+    } else if (existsSync(giDest)) {
+      skipped.push(".gitignore (consider merging template/.gitignore manually)");
+    }
+  }
+
+  // Output summary
+  if (created.length > 0) {
+    process.stdout.write(`harness init: created ${created.length} file(s):\n`);
+    for (const f of created) process.stdout.write(`  + ${f}\n`);
+  }
+  if (skipped.length > 0) {
+    process.stdout.write(
+      `harness init: skipped ${skipped.length} existing file(s) (untouched):\n`,
+    );
+    for (const f of skipped) process.stdout.write(`  · ${f}\n`);
+  }
+  if (created.length === 0 && skipped.length === 0) {
+    process.stdout.write("harness init: nothing to do.\n");
+  }
   return 0;
 }
 
@@ -152,10 +344,76 @@ function cmdCheck() {
   }
 
   let ok = true;
+  process.stdout.write("Plugin integrity:\n");
   for (const [label, status] of checks) {
     process.stdout.write(`  ${label.padEnd(24)} ${status}\n`);
     if (status !== "OK") ok = false;
   }
+
+  // ----------------------------------------------------------------------
+  // Project state recommendations (warnings, non-blocking).
+  // Plugin integrity (above) は exit code に反映、project state は
+  // info / warning として表示するのみ — consumer の onboarding 漏れを
+  // 検出するが、CI を失敗させない (consumer 自由度を尊重)。
+  // ----------------------------------------------------------------------
+  const projectChecks = [];
+  const projectDir = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+
+  // .coderabbit.yaml + request_changes_workflow: true (APPROVED 自動発火の前提)
+  const yamlPath = join(projectDir, ".coderabbit.yaml");
+  if (!existsSync(yamlPath)) {
+    projectChecks.push([
+      ".coderabbit.yaml",
+      "WARN: not found — copy from template/.coderabbit.yaml.tmpl to enable APPROVED auto-fire",
+    ]);
+  } else {
+    try {
+      const raw = readFileSync(yamlPath, "utf-8");
+      // 軽量判定 (CLI で yaml lib をロードしない方針)。
+      // false-positive 防止: YAML comment 行 (`#` で始まる) は事前に除去してから
+      // 判定する。例えば `# request_changes_workflow: true (legacy doc)` の
+      // ような文書化目的のコメント行を実値として誤検出しない。structural 検証は
+      // content-integrity.test.ts (vitest 側、yaml lib 使用) で別途実施。
+      const stripped = raw
+        .split(/\r?\n/)
+        .filter((line) => !line.trim().startsWith("#"))
+        .join("\n");
+      if (/^\s*request_changes_workflow\s*:\s*true\b/m.test(stripped)) {
+        projectChecks.push([".coderabbit.yaml", "OK"]);
+      } else {
+        projectChecks.push([
+          ".coderabbit.yaml",
+          "WARN: request_changes_workflow: true not found — APPROVED state may not auto-fire",
+        ]);
+      }
+    } catch (e) {
+      projectChecks.push([
+        ".coderabbit.yaml",
+        `WARN: read failed (${e instanceof Error ? e.message : String(e)})`,
+      ]);
+    }
+  }
+
+  // External CLI 依存 — どれも consumer-facing で、不在は工程によっては blocker だが
+  // harness 自体は動く (個別 skill が gracefully degrade)。
+  const externalDeps = [
+    ["gh", "GitHub CLI — required for /coderabbit-review, gh pr ops"],
+    ["codex", "Codex CLI — required for codex-sync / coderabbit-mimic agents"],
+    ["coderabbit", "CodeRabbit CLI — required for /pseudo-coderabbit-loop real-CR mode"],
+  ];
+  for (const [bin, desc] of externalDeps) {
+    if (commandExists(bin)) {
+      projectChecks.push([bin, "OK"]);
+    } else {
+      projectChecks.push([bin, `WARN: not on PATH (${desc})`]);
+    }
+  }
+
+  process.stdout.write("\nProject state (recommendations, non-blocking):\n");
+  for (const [label, status] of projectChecks) {
+    process.stdout.write(`  ${label.padEnd(24)} ${status}\n`);
+  }
+
   return ok ? 0 : 1;
 }
 

@@ -5347,3 +5347,201 @@ describe("Caller Scoping Guidance (tool_uses budget) — anchor lock-in", () => 
     }
   });
 });
+
+/**
+ * `template/` install bootstrap files の構造検証。
+ *
+ * 目的:
+ *   - 新規プロジェクトへの install 後の onboarding 完成度を担保
+ *   - 特に `.coderabbit.yaml.tmpl` の `request_changes_workflow: true` 漏れを
+ *     構造的に防ぐ (consumer 自作で missed → APPROVED 自動発火不発の実例あり、
+ *     再発防止)
+ *   - 配布 template の generic 性 (R3) を blanket-check
+ *
+ * 配布物の責任分界:
+ *   - 本 test: template ファイルの存在 + structure assertion
+ *   - generality.test.ts: project-specific leak の blocklist
+ *   - bin/harness check: install 先 project に展開された後の integrity
+ */
+describe("template/ install bootstrap files", () => {
+  const templateRoot = resolve(PLUGIN_ROOT, "../../template");
+
+  describe(".coderabbit.yaml.tmpl (CodeRabbit 設定雛形)", () => {
+    const tmplPath = resolve(templateRoot, ".coderabbit.yaml.tmpl");
+
+    it("ファイルが存在する (新規 install での CR 設定漏れ防止)", () => {
+      expect(existsSync(tmplPath)).toBe(true);
+    });
+
+    it("schema directive がファイル先頭行 (yaml-language-server hint)", () => {
+      const raw = readFileSync(tmplPath, "utf-8");
+      const firstLine = raw.split("\n", 1)[0];
+      expect(firstLine).toBe(
+        "# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json",
+      );
+    });
+
+    it("language は generic default 'en-US' (consumer が override 前提)", () => {
+      // R3 generic 例示値遵守: ja-JP は consumer 依存
+      const config = parseYaml(readFileSync(tmplPath, "utf-8")) as Record<string, unknown>;
+      expect(config["language"]).toBe("en-US");
+    });
+
+    it("reviews.request_changes_workflow: true (APPROVED 自動発火の前提)", () => {
+      // template でこれを明示しないと CR が actionable=0 でも APPROVED state を
+      // deterministic に発火しない。新規 install 直後から /coderabbit-review
+      // Strong Clear が動作するよう、harness-distributed template では必須に固定。
+      const config = parseYaml(readFileSync(tmplPath, "utf-8")) as Record<string, unknown>;
+      const reviews = config["reviews"] as Record<string, unknown>;
+      expect(reviews?.["request_changes_workflow"]).toBe(true);
+    });
+
+    it("reviews.profile: chill (actionable-only、generic default)", () => {
+      const config = parseYaml(readFileSync(tmplPath, "utf-8")) as Record<string, unknown>;
+      const reviews = config["reviews"] as Record<string, unknown>;
+      expect(reviews?.["profile"]).toBe("chill");
+    });
+
+    it("reviews.pre_merge_checks: 公式 schema v2 構造 (custom_checks: array, description/docstrings: object)", () => {
+      const config = parseYaml(readFileSync(tmplPath, "utf-8")) as Record<string, unknown>;
+      const reviews = config["reviews"] as Record<string, unknown>;
+      const checks = reviews?.["pre_merge_checks"] as Record<string, unknown>;
+      expect(checks).toBeTypeOf("object");
+      // schema v2: custom_checks は array (object として書くと CR は default に fallback、
+      // PR #36 で修正済の既知バグ。template で構造を強制)
+      expect(Array.isArray(checks["custom_checks"])).toBe(true);
+      expect(checks["description"]).toBeTypeOf("object");
+      expect(checks["docstrings"]).toBeTypeOf("object");
+    });
+
+    it("reviews.auto_review.base_branches は regex 形式 (glob 不可)", () => {
+      const config = parseYaml(readFileSync(tmplPath, "utf-8")) as Record<string, unknown>;
+      const reviews = config["reviews"] as Record<string, unknown>;
+      const autoReview = reviews?.["auto_review"] as Record<string, unknown>;
+      expect(autoReview?.["enabled"]).toBe(true);
+      const branches = autoReview?.["base_branches"];
+      expect(Array.isArray(branches)).toBe(true);
+      // generic default: ^main$ (regex anchor)
+      expect(branches as string[]).toContain("^main$");
+    });
+
+    it("汎用化原則: 内部 tracker ID / project-specific 参照を含まない (R2/R3)", () => {
+      const raw = readFileSync(tmplPath, "utf-8");
+      // 例: parts-management / new-partslist / Phase N / Round N / PR # 形式は禁止
+      expect(raw).not.toMatch(/parts-management|new-partslist|Round\s*\d+/i);
+      // backend/ や frontend/ など stack 固有 path も含まない
+      expect(raw).not.toMatch(/\bbackend\/\*\*|\bfrontend\/\*\*/);
+    });
+  });
+
+  // Note: 個人ローカル運用補助 doc (project-local notes file) は consumer-specific
+  // な慣例で B-4a generality blocklist 対象。harness 配布 template からは
+  // 意図的に除外。consumer が必要なら自分で `.claude/` 配下に追加する。
+
+  describe("Plans.md.tmpl (タスク管理 doc 雛形)", () => {
+    const tmplPath = resolve(templateRoot, "Plans.md.tmpl");
+
+    it("ファイルが存在する (harness-setup.md init 図 line 39-47 と整合)", () => {
+      expect(existsSync(tmplPath)).toBe(true);
+    });
+
+    it("{{PROJECT_NAME}} placeholder を持つ", () => {
+      const raw = readFileSync(tmplPath, "utf-8");
+      expect(raw).toContain("{{PROJECT_NAME}}");
+    });
+
+    it("ラベル定義 ([feature]/[fix]/[refactor] 等) を含む", () => {
+      const raw = readFileSync(tmplPath, "utf-8");
+      expect(raw).toContain("[feature]");
+      expect(raw).toContain("[fix]");
+      expect(raw).toContain("[refactor]");
+    });
+
+    it("担当表 / 未着手 / 完了 の 3 section 構造", () => {
+      const raw = readFileSync(tmplPath, "utf-8");
+      expect(raw).toMatch(/担当表|in_progress/);
+      expect(raw).toMatch(/未着手|pending/);
+      expect(raw).toMatch(/完了|done/);
+    });
+
+    it("汎用化原則: 内部 tracker ID / project-specific 参照を含まない", () => {
+      const raw = readFileSync(tmplPath, "utf-8");
+      expect(raw).not.toMatch(/parts-management|new-partslist|Round\s*\d+/i);
+    });
+  });
+
+  describe("README.md (consumer onboarding entry point)", () => {
+    // 先行レビューで「README.md 自身の integrity guard が抜けている」と指摘された
+    // (CONTRIBUTING.md: 新規 / 変更 shipped spec は generality.test.ts /
+    // integrity / behavior test を更新する)。本 describe は consumer 向け
+    // onboarding 契約 (配布物一覧 + 重要 caveat) の drift を CI で固定する。
+    const readmePath = resolve(templateRoot, "README.md");
+
+    it("ファイルが存在する", () => {
+      expect(existsSync(readmePath)).toBe(true);
+    });
+
+    it("配布される shipped files (`.coderabbit.yaml.tmpl` / `Plans.md.tmpl` / CI workflow tmpl) を列挙する", () => {
+      const raw = readFileSync(readmePath, "utf-8");
+      // 配布対象が drift しないよう、各 template file 名を README で固定
+      expect(raw).toContain(".coderabbit.yaml.tmpl");
+      expect(raw).toContain("Plans.md.tmpl");
+      expect(raw).toContain("harness-check.yml.tmpl");
+    });
+
+    it("`request_changes_workflow: true` を残す注意を documenting する", () => {
+      const raw = readFileSync(readmePath, "utf-8");
+      // APPROVED 自動発火に必要なので consumer が消さないように明示
+      expect(raw).toMatch(/request_changes_workflow.*(残す|必要|true)/);
+    });
+
+    it("CI workflow の best-effort caveat を明記する (`harness` 不在時 skip)", () => {
+      const raw = readFileSync(readmePath, "utf-8");
+      // 2 要件組合せで false-positive 回避 (CONTRIBUTING.md: regression guard
+      // は 2 要件以上の組合せで OR 単独条件を避ける)。
+      // (A) best-effort / skip / 不在時 のいずれか — workflow が CLI 不在で
+      //     warning skip 動作することの説明
+      expect(raw).toMatch(/best-effort|warning[\s\S]{0,80}skip|不在時/i);
+      // (B) gate 化手段の明示 — Install harness plugin / pre-install /
+      //     runner に CLI のいずれか
+      expect(raw).toMatch(/Install harness plugin|pre-install|runner に.{0,10}CLI/i);
+    });
+
+    it("汎用化原則: 内部 tracker ID / project-specific 参照を含まない", () => {
+      const raw = readFileSync(readmePath, "utf-8");
+      expect(raw).not.toMatch(/parts-management|new-partslist|Round\s*\d+/i);
+    });
+  });
+
+  describe(".github/workflows/harness-check.yml.tmpl (CI workflow 雛形)", () => {
+    const tmplPath = resolve(
+      templateRoot,
+      ".github/workflows/harness-check.yml.tmpl",
+    );
+
+    it("ファイルが存在する", () => {
+      expect(existsSync(tmplPath)).toBe(true);
+    });
+
+    it("`Run harness check (best-effort)` step が `command -v` + `harness check` + warning を実 run block で連続して持つ (false-positive 防止)", () => {
+      // 旧版は `harness check` と `command -v harness` を独立 assertion で
+      // 検査していたが、yml コメント文 (`#`) にも該当文字列が現れるため
+      // run block を空にしても通る false-positive があった。先行レビュー指摘を受けて
+      // step 内の run block 全体を 1 本の multiline regex で縛る。
+      const raw = readFileSync(tmplPath, "utf-8");
+      expect(raw).toMatch(
+        /- name:\s*Run harness check \(best-effort\)[\s\S]*?run:\s*\|[\s\S]*?command\s+-v\s+harness[\s\S]*?harness\s+check[\s\S]*?::warning::harness CLI not on PATH/i,
+      );
+    });
+
+    it("name フィールドが固定 (workflow 一覧での視認性)", () => {
+      const raw = readFileSync(tmplPath, "utf-8");
+      expect(raw).toMatch(/^name:\s*Harness check/m);
+    });
+
+    it("汎用化原則: 内部 tracker ID / project-specific 参照を含まない", () => {
+      const raw = readFileSync(tmplPath, "utf-8");
+      expect(raw).not.toMatch(/parts-management|new-partslist|Round\s*\d+/i);
+    });
+  });
+});

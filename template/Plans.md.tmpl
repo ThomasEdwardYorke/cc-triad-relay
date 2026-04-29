@@ -1,0 +1,54 @@
+# {{PROJECT_NAME}} — Plans
+
+タスク管理の唯一の情報源。`/harness-plan` で追加・進捗同期、
+`/harness-work` で実装 (Auto Mode Detection: Solo / Parallel / Breezing)。
+
+---
+
+## 担当表 (in_progress)
+
+| ID | タスク | 担当 | status | 備考 |
+|---|---|---|---|---|
+
+---
+
+## 未着手 (pending)
+
+- [ ] [feature] (例) MVP の最初の機能を実装する
+- [ ] [docs] (例) README に Quick Start を追記する
+- [ ] [test] (例) CI で `harness check` を走行させる
+- [ ] [infra] (例) `.coderabbit.yaml` を default branch に push して CodeRabbit を有効化
+
+---
+
+## 完了 (done)
+
+(着手したタスクは完了時にここへ移動。最新を上に)
+
+---
+
+## ラベル
+
+- `[feature]` — 新機能
+- `[fix]` — バグ修正
+- `[refactor]` — リファクタリング
+- `[security]` — セキュリティ対応
+- `[test]` — テスト追加
+- `[docs]` — ドキュメント
+- `[infra]` — インフラ / CI
+
+## worktree ラベル (任意)
+
+`/parallel-worktree` 使用時、Plans.md 冒頭にラベル方針を明記すると分担しやすい。
+
+- `wt:recommended` — worktree で並列実装推奨 (独立した CRUD / UI / テスト)
+- `wt:coordination` — worktree 可だが事前調整必須 (共通基盤・スキーマ変更)
+- `wt:avoid` — main worktree のみ (横断 rename / Plans.md 更新)
+
+---
+
+## 運用 tips
+
+- タスクは **1 ファイル / 1 機能 / 1〜2 日** の粒度に分解
+- 着手時に担当表に行追加 → PR 作成時に `status=review` → merge 完了で完了 section へ
+- 担当表が常時 `maxParallel` 件以下になるよう調整 (デフォルト 4 並列上限)
