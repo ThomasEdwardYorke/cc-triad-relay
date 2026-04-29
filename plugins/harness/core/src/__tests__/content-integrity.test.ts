@@ -5471,8 +5471,8 @@ describe("template/ install bootstrap files", () => {
   });
 
   describe("README.md (consumer onboarding entry point)", () => {
-    // CR review (PR #75) で「README.md 自身の integrity guard が抜けている」と
-    // 指摘された (CONTRIBUTING.md: 新規 / 変更 shipped spec は generality.test.ts /
+    // 先行レビューで「README.md 自身の integrity guard が抜けている」と指摘された
+    // (CONTRIBUTING.md: 新規 / 変更 shipped spec は generality.test.ts /
     // integrity / behavior test を更新する)。本 describe は consumer 向け
     // onboarding 契約 (配布物一覧 + 重要 caveat) の drift を CI で固定する。
     const readmePath = resolve(templateRoot, "README.md");
@@ -5497,8 +5497,14 @@ describe("template/ install bootstrap files", () => {
 
     it("CI workflow の best-effort caveat を明記する (`harness` 不在時 skip)", () => {
       const raw = readFileSync(readmePath, "utf-8");
-      // workflow が default で skip すると merge gate にならない caveat を contract 化
-      expect(raw).toMatch(/best-effort|warning.*skip|不在時|Install harness plugin/i);
+      // 2 要件組合せで false-positive 回避 (CONTRIBUTING.md: regression guard
+      // は 2 要件以上の組合せで OR 単独条件を避ける)。
+      // (A) best-effort / skip / 不在時 のいずれか — workflow が CLI 不在で
+      //     warning skip 動作することの説明
+      expect(raw).toMatch(/best-effort|warning[\s\S]{0,80}skip|不在時/i);
+      // (B) gate 化手段の明示 — Install harness plugin / pre-install /
+      //     runner に CLI のいずれか
+      expect(raw).toMatch(/Install harness plugin|pre-install|runner に.{0,10}CLI/i);
     });
 
     it("汎用化原則: 内部 tracker ID / project-specific 参照を含まない", () => {
@@ -5517,10 +5523,10 @@ describe("template/ install bootstrap files", () => {
       expect(existsSync(tmplPath)).toBe(true);
     });
 
-    it("`Run harness check (best-effort)` step が `command -v` + `harness check` + warning を実 run block で連続して持つ (PR #75 nitpick: false-positive 防止)", () => {
+    it("`Run harness check (best-effort)` step が `command -v` + `harness check` + warning を実 run block で連続して持つ (false-positive 防止)", () => {
       // 旧版は `harness check` と `command -v harness` を独立 assertion で
       // 検査していたが、yml コメント文 (`#`) にも該当文字列が現れるため
-      // run block を空にしても通る false-positive があった。CR 指摘を受けて
+      // run block を空にしても通る false-positive があった。先行レビュー指摘を受けて
       // step 内の run block 全体を 1 本の multiline regex で縛る。
       const raw = readFileSync(tmplPath, "utf-8");
       expect(raw).toMatch(
