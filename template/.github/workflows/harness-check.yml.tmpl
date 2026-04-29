@@ -1,0 +1,54 @@
+# Harness install integrity CI
+#
+# 配布元: harness plugin (cc-triad-relay)
+#   `template/.github/workflows/harness-check.yml.tmpl`
+#
+# 目的:
+#   - PR ごとに `harness check` を走行し、plugin 整合を CI で担保
+#   - manifest / hooks / agents / commands の missing を merge 前に即検出
+#   - install 直後から GitHub Actions で品質ゲートが回る状態を提供
+#
+# 注意:
+#   - `harness` CLI が PATH に無い CI runner では `command -v` で skip
+#     (warning ログのみ、exit 0)。consumer が full check を希望する場合は
+#     "Install harness plugin" step を有効化。
+
+name: Harness check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  harness-check:
+    name: harness check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # オプション: full check を CI で回す場合は claude code plugin を install。
+      # 現状は claude CLI が GitHub Actions runner で動作しないため commented out。
+      # consumer 環境で integration が必要なら以下を有効化:
+      #   - name: Install harness plugin
+      #     run: |
+      #       claude plugin marketplace add ThomasEdwardYorke/cc-triad-relay
+      #       claude plugin install harness@cc-triad-relay --scope project
+
+      - name: Run harness check (best-effort)
+        run: |
+          if command -v harness >/dev/null 2>&1; then
+            harness check
+          else
+            echo "::warning::harness CLI not on PATH — skipping integrity check"
+            echo "see template/README.md for full setup instructions"
+          fi

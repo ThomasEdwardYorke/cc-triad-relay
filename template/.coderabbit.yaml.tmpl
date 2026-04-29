@@ -1,0 +1,100 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit 設定 — Claude Code Harness 配布 template
+#
+# 本ファイルは harness plugin (cc-triad-relay) から copy された **generic
+# template** です。プロジェクトに合わせて language / tone_instructions /
+# path_instructions / auto_review.base_branches を編集して使ってください。
+#
+# 重要 (default 値の意図):
+#   - `reviews.request_changes_workflow: true` — APPROVED state を確実に
+#     発火させる前提 (公式 changelog 参照)。これにより
+#     `/coderabbit-review` の Strong Clear (state: APPROVED) が
+#     deterministic に取れ、merge gate が rate-limit に依存しなくなる。
+#     新規 install 直後から harness の品質ゲートが動作するよう、
+#     harness-distributed template では `true` を明示固定します。
+#   - `reviews.profile: "chill"` — 公式 default、actionable-only review。
+#   - `reviews.auto_review.base_branches` の正規表現 `^main$` は **regex**
+#     形式 (glob ではない)。default branch 名が異なる場合は変更必須。
+#
+# 公式 docs:
+#   - https://docs.coderabbit.ai/getting-started/configure-coderabbit
+#   - https://docs.coderabbit.ai/changelog/request-changes-workflow
+#   - schema: https://coderabbit.ai/integrations/schema.v2.json
+
+# レビュー出力言語 (例: en-US / ja-JP)
+language: "en-US"
+
+# tone_instructions は 250 文字以内 (公式 schema.v2 制約)。
+# review 出力言語に合わせて翻訳推奨 (例: language を ja-JP に変更した場合は
+# 本フィールドも日本語に置換)。
+tone_instructions: "Be direct and constructive. Prioritize bugs, security issues, and design problems over style nits."
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: true
+  high_level_summary: true
+  changed_files_summary: true
+  sequence_diagrams: false
+  poem: false
+  in_progress_fortune: false
+
+  # Pre-merge gate: 初期は warning で導入 noise を抑え、安定後に error 昇格を検討。
+  # 公式 schema v2 構造:
+  #   custom_checks: array of {name, instructions, mode?}
+  #   description / docstrings: object {mode: "off"|"warning"|"error"}
+  pre_merge_checks:
+    custom_checks: []
+    description:
+      mode: "warning"
+    docstrings:
+      mode: "off"
+
+  auto_review:
+    enabled: true
+    drafts: false
+    ignore_usernames:
+      - dependabot[bot]
+      - renovate[bot]
+    # base_branches は **regex** 形式 (glob 不可)。
+    # ⚠️ default branch が `main` 以外なら必ず変更してください。
+    # 多 base_branches を auto-review したい場合は追記。例:
+    #   - "^master$"      # legacy default branch
+    #   - "^develop$"
+    #   - "^release/.+$"
+    base_branches:
+      - "^main$"
+
+  # 共通の除外 path
+  path_filters:
+    - "!**/*.lock"
+    - "!**/dist/**"
+    - "!**/build/**"
+    - "!**/node_modules/**"
+    - "!**/*.min.js"
+    - "!**/*.min.css"
+
+  # path 別レビュー指示 (空配列 = generic default)。
+  # プロジェクト固有のスタック / 設計方針を明示すると review 精度が大きく上がる。
+  # 例:
+  #   path_instructions:
+  #     - path: "src/**/*.ts"
+  #       instructions: |
+  #         TypeScript strict 前提。型注釈の漏れを指摘してください。
+  #     - path: "tests/**/*.ts"
+  #       instructions: |
+  #         vitest を使用。describe/it の階層化が適切か確認してください。
+  path_instructions: []
+
+# Knowledge base (CLAUDE.md / AGENTS.md 自動認識 + Web 検索)
+knowledge_base:
+  web_search:
+    enabled: true
+  code_guidelines:
+    enabled: true
+  learnings:
+    scope: "auto"
+
+# Chat (PR コメント上での AI 対話)
+chat:
+  auto_reply: true
