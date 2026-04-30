@@ -238,14 +238,17 @@ cd <worktree_dir>
 branch: <feature_branch-slug>
 **main repo には触らない。**
 
-## Environment Manifest (worker prompt 先頭に注入、必須)
+## Environment Manifest (prepended to worker prompt, mandatory)
 
-coordinator は **worker prompt 先頭に Environment Manifest を inject (prepend)
-する** 責務を持つ。観測された subagent failure mode (worker が local 環境と CI
-環境の runtime / DB version 差分を知らずに、unsupported な syntax / feature
-が原因の test failure を「自分が直すべき failure」と解釈し、migration skip /
-手動 SQL での test DB 構築 / version-specific syntax の local-only 書換等の
-禁止迂回を探索する pattern) に対する構造的対策。
+The coordinator MUST prepend an Environment Manifest to the worker prompt to
+mitigate failures caused by environment / version mismatches between local and
+CI runtimes (e.g. database version differences where one side has unsupported
+syntax / features). Without the manifest, a worker can misinterpret an
+infra-driven test failure as a code defect and explore forbidden workarounds
+(migration skip / manual SQL test DB setup / version-specific local-only syntax
+rewrite). Localized rationale and observed failure-mode notes are documented
+in the project handoff docs (consumer-side `docs/` notes); this spec keeps the
+canonical contract locale-neutral.
 
 **注入する内容 (project ごとに異なるが、典型例)**:
 
@@ -330,6 +333,17 @@ coordinator は `harness.config.json.environmentManifest` JSON を以下の **�
 | `forbidden_workarounds: [<list>]` | `### Forbidden actions (project-specific)\n- <each item>` |
 | 推奨キー以外の自由構造 | coordinator が任意で markdown 化 (free-form fallback) |
 | field 全体未定義 | 空 `## Environment Manifest` ヘッダのみ |
+
+**Newline sanitization (mandatory for all string values)**: free-form values
+in `environmentManifest` (and any other coordinator-injected payload such as
+`additionalContext`) are JSON-decoded strings that may contain literal
+newlines. Before emitting them as markdown bullets, the coordinator MUST
+normalize and escape every newline sequence (`\r\n` / `\n` / `\r`) to the
+**literal two-character sequence `\\n`** so a malicious / accidental newline
+cannot inject pseudo-section boundaries (e.g. forging a fake `## Task:`
+header inside a free-form value). This rule is identical to the
+`additionalContext` payload sanitization elsewhere in the harness — the same
+escape policy applies consistently across both surfaces.
 
 具体例 (推奨キー使用、JSON input):
 
@@ -540,12 +554,15 @@ PR 作成はしない (coordinator 実施)。
 
 ---
 
-## Phase 3: 監視 + 完了受領 + 機械的最終確認 (Coordinator verification)
+## Phase 3: monitor + acceptance + mechanical verification (coordinator)
 
-各 agent 完了後に coordinator が検証する。観測された subagent failure mode
-(worker final の自然文をそのまま完了として受け取り、commit/push 未実施 +
-未来形終端の状態を「完了報告」として誤認した pattern) に対する構造的対策。
-**worker final を信用せず、coordinator が機械的に確認する。**
+After each agent completes, the coordinator MUST mechanically verify the
+result. Plain-text final reports cannot be trusted as completion evidence
+(observed failure: workers leave intent statements at the end without
+performing commit / push, and the natural-language wording can read as
+"done" while no artifact exists). The coordinator therefore validates the
+final via artifacts (git state + structured 8-field schema) instead of
+prose.
 
 ### 機械的最終確認 (mechanical verification、自然文を信用しない)
 
@@ -566,9 +583,10 @@ verification、artifact-driven completion judgment):
    ```bash
    # local commit (worker が報告した COMMIT field、もしくは worktree HEAD)
    LOCAL_COMMIT=$(git -C <worktree_dir> rev-parse HEAD)
-   # remote ref の hash (ls-remote で feature_branch-slug の行を抽出)
-   REMOTE_LINE=$(git ls-remote origin <feature_branch-slug>)
-   REMOTE_COMMIT=$(echo "$REMOTE_LINE" | awk '{print $1}')
+   # remote ref の hash — `--heads` + `refs/heads/<branch>` で branch ref に
+   # 限定 (同名 tag / その他 ref が存在するとき複数行 match で wrong hash を
+   # 拾う事故を予防、必ず単一 head ref を取得)
+   REMOTE_COMMIT=$(git ls-remote --heads origin "refs/heads/<feature_branch-slug>" | awk '{print $1}')
    if [ -z "$REMOTE_COMMIT" ] || [ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]; then
      echo "INTERRUPTED: pushed branch hash mismatch (local=$LOCAL_COMMIT remote=$REMOTE_COMMIT)"
      # STATUS: DONE を reject、worker に再 push 依頼 (PARTIAL 扱い)

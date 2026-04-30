@@ -1,22 +1,24 @@
 /**
  * core/src/__tests__/pwt-p0-improvements.test.ts
  *
- * 観測された parallel-worktree subagent failure mode (49-50 tool 付近で intent
- * 文を残したまま停止し、coordinator がそれを完了と誤認した pattern) に対する
- * P0 改善案を prompt content 上の不変条件として固定する regression test.
+ * 観測された parallel-worktree subagent failure mode (intent 文を残したまま
+ * 停止し、coordinator がそれを完了と誤認した pattern) に対する P0 改善案を
+ * prompt content 上の不変条件として固定する regression test。
  *
- * 守りたい不変条件 (P0):
+ * 守りたい不変条件 (P0、stack-neutral):
  *
  *   P0-1+2+4 (agents/worker.md):
  *     1. Completion Gate — DONE / PARTIAL / BLOCKED / FAILED の 4 status と
  *        未来形禁止 (「します」「実行します」「修正します」「確認します」「更新します」)
- *     2. Budget Gate — 25 / 35 / 40 / 45 tool checkpoints (探索禁止 / 撤退 /
- *        finalization-only) で 49-50 tool 付近の "intent 文で停止" failure mode を撲滅
- *     3. Forbidden Infrastructure Workarounds — alembic skip / 手動 SQL /
- *        `NULLS NOT DISTINCT` 書換 / fake schema を禁止 (PG 14 制約由来の
- *        DB workaround を完封) + INFRA_BLOCKED 報告経路
+ *     2. Budget Gate — **25 / 30 / 35 / 40 tool checkpoints** (frontmatter
+ *        `maxTurns: 40` hard limit と一致、当初提案の 45 checkpoint は論理矛盾で
+ *        削除済)。intent 文で停止する failure mode 撲滅
+ *     3. Forbidden Infrastructure Workarounds — generic な
+ *        database-specific workaround 禁止 (migration skip / 手動 SQL /
+ *        version-specific syntax 書換 / fake schema) + INFRA_BLOCKED 報告経路
  *     4. 8-field final schema — STATUS / CHANGED_FILES / COMMIT / PUSHED_BRANCH /
- *        VALIDATION / BLOCKERS / NEXT_ACTION / FORBIDDEN_ACTIONS_USED
+ *        VALIDATION / BLOCKERS / NEXT_ACTION / FORBIDDEN_ACTIONS_USED、
+ *        空値表現は `(none)` で統一
  *
  *   P0-3 (commands/parallel-worktree.md, commands/tdd-implement.md):
  *     5. Environment Manifest を coordinator が worker prompt 先頭に注入する
@@ -280,8 +282,13 @@ describe("P0-3 + P0-5: commands/parallel-worktree.md — coordinator contract �
       expect(content).toMatch(/git\s+status[\s\S]{0,200}?git\s+log|git\s+log[\s\S]{0,200}?git\s+status/i);
     });
 
-    it("push 到達確認 (git ls-remote 等) を明示", () => {
-      expect(content).toMatch(/git\s+ls-remote|push\s+到達|origin\s+に\s*到達|remote\s+branch\s+(?:到達|exists)|pushed\s+(?:to|branch)/i);
+    it("push 到達確認で local/remote commit hash 一致まで verify することを明示 (regression: hash 比較が消えると detect)", () => {
+      // 弱い regex (mention だけで pass) は hash equality 退行を検知できないため、
+      // LOCAL_COMMIT / REMOTE_COMMIT identifier または "hash mismatch" / "local
+      // HEAD == remote ref" 等 hash 比較を表す語彙を必須化する。
+      expect(content).toMatch(
+        /LOCAL_COMMIT|REMOTE_COMMIT|local\s*HEAD[\s\S]{0,200}remote[\s\S]{0,200}(?:hash|commit)[\s\S]{0,200}(?:一致|match|mismatch|equal)|hash[\s\S]{0,80}(?:一致|match|mismatch|equal)/i,
+      );
     });
 
     it("未来形 detector / future-tense detection を明示", () => {
