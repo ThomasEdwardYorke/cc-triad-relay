@@ -937,14 +937,16 @@ git log / 未来形 scan) で完了判定する。**
    # primary: STATUS marker の存在 + DONE 確認 (主)。
    # NOTE: `grep -E` (POSIX ERE) は `\s` を literal `s` に解釈するため、
    # whitespace match には `[[:space:]]` を使う (commands/parallel-worktree.md と同じ)。
-   if ! grep -qE '^STATUS:[[:space:]]*(DONE|PARTIAL|BLOCKED|FAILED)' <worker-final>; then
+   # 行末 anchor `$` も併用して `STATUS: DONE_xxx` のような不正値を弾く (regression
+   # で 8-field schema 厳格性が破れないよう exact match に固定)。
+   if ! grep -qE '^STATUS:[[:space:]]*(DONE|PARTIAL|BLOCKED|FAILED)$' <worker-final>; then
      echo "INTERRUPTED: STATUS marker missing"
      exit 1
    fi
    # secondary: STATUS: DONE のときだけ末尾 30 行を狭い regex で scan
    #   - 引用 (`>` 行) と code fence (``` 内) を strip して inline 文のみを対象
    #   - sentence-end (。/./!) anchor + 限定 verb で intent 文末を狭く拾う
-   if grep -qE '^STATUS:[[:space:]]*DONE' <worker-final>; then
+   if grep -qE '^STATUS:[[:space:]]*DONE$' <worker-final>; then
      tail -n 30 <worker-final> \
        | sed -E '/^>/d' \
        | awk 'BEGIN{f=0} /^```/{f=1-f; next} !f' \

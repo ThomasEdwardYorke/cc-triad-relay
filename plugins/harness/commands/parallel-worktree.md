@@ -622,15 +622,22 @@ verification、artifact-driven completion judgment):
    # primary: STATUS marker の存在検査 (主) — 揃っていれば marker を信用。
    # NOTE: `grep -E` (POSIX ERE) は `\s` を literal `s` に解釈するため、
    # whitespace match には `[[:space:]]` を使う (bash builtin の `[[ =~ ]]` も同様)。
-   if ! grep -qE '^STATUS:[[:space:]]*(DONE|PARTIAL|BLOCKED|FAILED)' worker-final.txt; then
+   # 行末 anchor `$` も併用して `STATUS: DONE_xxx` のような不正値を弾く
+   # (commands/harness-work.md Step 5 と同じ exact-match 規約)。
+   if ! grep -qE '^STATUS:[[:space:]]*(DONE|PARTIAL|BLOCKED|FAILED)$' worker-final.txt; then
      echo "INTERRUPTED: STATUS marker missing"
      exit 1
    fi
    # secondary: STATUS: DONE のときだけ末尾 5 行を狭い regex で scan
-   #   - 文末 (。/./!) anchor で intent 文の文末位置に限定
+   #   - 引用 (`>` 行) と code fence (``` 内) を strip して inline 文のみを対象
+   #     (harness-work.md Step 5 と同じ前処理、quote / fence 内の intent 文の
+   #     false-positive を抑制)
+   #   - sentence-end (。/./!) anchor で intent 文の文末位置に限定
    #   - subject が agent (I / We / Next I / 自分) のもののみ拾う
-   if grep -qE '^STATUS:[[:space:]]*DONE' worker-final.txt; then
+   if grep -qE '^STATUS:[[:space:]]*DONE$' worker-final.txt; then
      tail -n 5 worker-final.txt \
+       | sed -E '/^>/d' \
+       | awk 'BEGIN{f=0} /^```/{f=1-f; next} !f' \
        | grep -E '(^|[。\.!])[[:space:]]*(修正|実行|確認|更新)します[。\.!]?[[:space:]]*$|^(I|We|Next I) (will|am going to) (fix|run|update|confirm)' \
        && echo "INTERRUPTED: future-tense at sentence end with agent subject, downgrading to PARTIAL"
    fi
