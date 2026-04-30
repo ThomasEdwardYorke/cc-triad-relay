@@ -281,15 +281,21 @@ FORBIDDEN_ACTIONS_USED: no                         # 禁止迂回を一切実施
 
 ### 8 field の意味
 
+**空値表現 invariant**: 全 field の空値は `(none)` で統一する (`null` /
+`[]` / `(empty)` 等の揺れは禁止)。これは `commands/parallel-worktree.md`
+Phase 3 step 4 / `commands/harness-work.md` Step 5 の plain-text
+colon-separated parser が `(none)` literal で空判定する canonical
+contract と一致させるため。
+
 | field | 必須? | 内容 |
 |---|---|---|
 | `STATUS` | 常時必須 | `DONE` / `PARTIAL` / `BLOCKED` / `FAILED` のいずれか (Completion Gate 4-status) |
-| `CHANGED_FILES` | 常時必須 | 変更ファイル一覧 (空なら空 list `[]` を明示) |
-| `COMMIT` | 実装系 (feat/fix/refactor/perf) で DONE 時必須 | commit hash。**調査・設計タスク (inquiry / design-only) は null 可**、その場合 `CHANGED_FILES` も空 |
-| `PUSHED_BRANCH` | 実装系で DONE 時必須 | push 先 branch。調査・設計タスクは null 可 |
+| `CHANGED_FILES` | 常時必須 | 変更ファイル一覧。空なら literal `(none)` |
+| `COMMIT` | 実装系 (feat/fix/refactor/perf) で DONE 時必須 | commit hash。**調査・設計タスク (inquiry / design-only) は `(none)`**、その場合 `CHANGED_FILES` も `(none)` |
+| `PUSHED_BRANCH` | 実装系で DONE 時必須 | push 先 branch。調査・設計タスクは `(none)` |
 | `VALIDATION` | 常時必須 | tests / lint / typecheck の PASS/FAIL/SKIPPED (実行不可なら SKIPPED + 理由) |
-| `BLOCKERS` | BLOCKED 時必須 | 何によって blocked か (例: known infra limitation の具体的内容) |
-| `NEXT_ACTION` | PARTIAL / BLOCKED 時必須 | coordinator または次の worker が実行すべき 1 command |
+| `BLOCKERS` | BLOCKED 時必須 | 何によって blocked か (例: known infra limitation の具体的内容)。BLOCKED 以外は `(none)` |
+| `NEXT_ACTION` | PARTIAL / BLOCKED 時必須 | coordinator または次の worker が実行すべき 1 command。DONE は `(complete)` |
 | `FORBIDDEN_ACTIONS_USED` | 常時必須 | `no` を必ず宣言 (`yes` は禁止迂回違反、別途エスカレーション) |
 
 ### タスク区分 (commit / push 必須かどうかの判別)
@@ -327,22 +333,22 @@ FORBIDDEN_ACTIONS_USED: no                         # 禁止迂回を一切実施
 
 最終応答は上記 8-field schema を含む text として返す。JSON 形式の補助 envelope
 を併用する場合も **field 名は text format と同じ大文字 SNAKE_CASE で揃える**
-(text → JSON → text の往復で field 名統一が破れると coordinator parser が
-fail するため):
++ **空値は文字列 `"(none)"` を使う** (`null` / `[]` / `false` 等は使わない、
+text format と同じ canonical contract):
 
 ```json
 {
   "STATUS": "DONE | PARTIAL | BLOCKED | FAILED",
-  "CHANGED_FILES": ["変更ファイル一覧"],
-  "COMMIT": "<commit hash | null>",
-  "PUSHED_BRANCH": "<branch | null>",
+  "CHANGED_FILES": "<comma-separated list | (none)>",
+  "COMMIT": "<commit hash | (none)>",
+  "PUSHED_BRANCH": "<branch | (none)>",
   "VALIDATION": {
     "tests": "PASS | FAIL | SKIPPED",
     "lint": "PASS | FAIL | SKIPPED",
     "typecheck": "PASS | FAIL | SKIPPED"
   },
-  "BLOCKERS": "<BLOCKED 理由 | null>",
-  "NEXT_ACTION": "<次の 1 command | null>",
-  "FORBIDDEN_ACTIONS_USED": false
+  "BLOCKERS": "<BLOCKED 理由 | (none)>",
+  "NEXT_ACTION": "<次の 1 command | (complete)>",
+  "FORBIDDEN_ACTIONS_USED": "no"
 }
 ```

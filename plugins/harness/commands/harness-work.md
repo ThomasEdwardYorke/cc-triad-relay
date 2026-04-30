@@ -928,16 +928,31 @@ git log / 未来形 scan) で完了判定する。**
 
    8 field 中 1 つでも欠落 → 委譲先に追加対応依頼 (再 dispatch、Step 5 step 5
    経路)。
-4. **未来形 detector (future-tense detection / 未来形検出)** — 委譲先
-   final 応答の **末尾 30 行** を regex scan して 未来形作業宣言を検出:
+4. **未来形 detector (future-tense detection / 未来形検出)** —
+   `commands/parallel-worktree.md` Phase 3 step 5 と **同じ判定順** に揃える
+   (dispatcher 経路ごとに完了判定が割れないため)。primary signal は
+   `STATUS: DONE` marker、regex は narrow scan で false-positive を抑制:
 
    ```bash
-   tail -n 30 <worker-final> | grep -E '実行します|修正します|確認します|更新します|します$|will (fix|run|update)' && \
-     echo "INTERRUPTED: future-tense detected, downgrading STATUS to PARTIAL"
+   # primary: STATUS marker の存在 + DONE 確認 (主)
+   if ! grep -qE '^STATUS:\s*(DONE|PARTIAL|BLOCKED|FAILED)' <worker-final>; then
+     echo "INTERRUPTED: STATUS marker missing"
+     exit 1
+   fi
+   # secondary: STATUS: DONE のときだけ末尾 30 行を狭い regex で scan
+   #   - 引用 (`>` 行) と code fence (``` 内) を strip して inline 文のみを対象
+   #   - sentence-end (。/./!) anchor + 限定 verb で intent 文末を狭く拾う
+   if grep -qE '^STATUS:\s*DONE' <worker-final>; then
+     tail -n 30 <worker-final> \
+       | sed -E '/^>/d' \
+       | awk 'BEGIN{f=0} /^```/{f=1-f; next} !f' \
+       | grep -E '(^|[。\.!])\s*(実行|修正|確認|更新)します[。\.!]?\s*$|^(I|We|Next I) (will|am going to) (fix|run|update|confirm)' \
+       && echo "INTERRUPTED: future-tense at sentence end with agent subject, downgrading STATUS: DONE to PARTIAL"
+   fi
    ```
 
-   検出時は `STATUS: DONE` であっても **interrupted** として扱い、`PARTIAL`
-   降格 → 残作業を別 worker / coordinator が継続。
+   primary signal で完了判定するのが本筋 (8-field schema の `STATUS:
+   DONE` を信頼)。regex は補助 fallback。
 5. **BLOCKED / PARTIAL handoff parser** — `STATUS: BLOCKED` または
    `STATUS: PARTIAL` の場合、`BLOCKERS` / `NEXT_ACTION` field を parse して
    coordinator が次の action を判断:

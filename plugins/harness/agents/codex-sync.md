@@ -134,11 +134,27 @@ relax it.
 A response that ends with future-tense (`修正します`) without
 `PATCH_APPLIED` or `FINDINGS_ONLY` is treated as **INTERRUPTED**, not done.
 
-### Marker emission rules (agent itself)
+### Marker emission rules (agent itself, authoritative statement)
 
-After Bash returns Codex stdout (or `OUTPUT_PATH=...` in redirect mode),
-this agent **must** append a final status marker to its own response on
-its own line:
+**Authoritative output contract** (reconciles Invocation Rule 8 + Output
+Format + Output File Redirect mode into a single rule):
+
+> The agent returns Codex stdout **verbatim**, followed by **exactly one
+> synthetic final-status marker line** (`PATCH_APPLIED` or `FINDINGS_ONLY`),
+> EXCEPT when an `[output-file: <abs-path>]` redirect is active — in
+> redirect mode the marker is appended to that file as the final
+> non-empty line, and the agent response remains the
+> `OUTPUT_PATH=...` / `OUTPUT_BYTES=...` / optional `EXIT_CODE=...` token
+> only (no marker on the agent response side).
+
+This is the only synthetic line the agent ever adds (inline mode);
+the rest of the response is verbatim Codex stdout per Invocation Rule 8
++ Output Format. Callers always obtain the marker by reading either:
+
+- inline mode: the **last non-empty line of the agent response**
+- redirect mode: the **last non-empty line of `OUTPUT_PATH`** (`tail -n 1`)
+
+Marker selection:
 
 - `PATCH_APPLIED` — `--write` mode was honored AND files actually changed
   (verify by inspecting Codex stdout for an apply summary). Caller can
@@ -148,8 +164,7 @@ its own line:
   findings (file path + line + severity + rationale) and stops.
 
 Omitting the marker is treated as budget exhaustion (INTERRUPTED) by the
-caller. The marker line is appended **after** the verbatim Codex stdout
-and is the only synthetic line this agent adds.
+caller.
 
 ### Marker behavior in Output File Redirect mode
 

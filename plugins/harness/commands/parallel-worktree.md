@@ -543,9 +543,26 @@ verification、artifact-driven completion judgment):
    reject)
 2. **git log -1 の確認** — `cd <worktree_dir> && git log -1 --format=%H%n%s`
    で expected branch に commit があるか + commit message が要件と一致
-3. **push 到達確認** — `git ls-remote origin <feature_branch-slug>` で
-   remote branch (origin に到達した branch) が存在するか確認 (pushed branch
-   verification)
+3. **push 到達確認 (commit hash 一致まで verify)** — remote branch の
+   存在確認だけでは古い head が remote に残っているだけで pass してしまう
+   (worker がローカル最新 commit を push していなくても remote branch は
+   過去 push の頭が居るため検出すり抜け)。**local HEAD と remote ref の
+   commit hash 一致**まで確認:
+
+   ```bash
+   # local commit (worker が報告した COMMIT field、もしくは worktree HEAD)
+   LOCAL_COMMIT=$(git -C <worktree_dir> rev-parse HEAD)
+   # remote ref の hash (ls-remote で feature_branch-slug の行を抽出)
+   REMOTE_LINE=$(git ls-remote origin <feature_branch-slug>)
+   REMOTE_COMMIT=$(echo "$REMOTE_LINE" | awk '{print $1}')
+   if [ -z "$REMOTE_COMMIT" ] || [ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]; then
+     echo "INTERRUPTED: pushed branch hash mismatch (local=$LOCAL_COMMIT remote=$REMOTE_COMMIT)"
+     # STATUS: DONE を reject、worker に再 push 依頼 (PARTIAL 扱い)
+   fi
+   ```
+
+   `LOCAL_COMMIT` と `REMOTE_COMMIT` が一致しない場合、`STATUS: DONE` を
+   reject して PARTIAL 降格 + 再 push 依頼 (`SendMessage`)。
 4. **8-field schema 検証** — worker final が **plain-text colon-separated
    values** 形式で以下 8 field を **全て** 含むか確認 (`agents/worker.md`
    の **完了報告フォーマット (8-field schema)** と完全一致):
