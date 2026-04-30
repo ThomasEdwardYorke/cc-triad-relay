@@ -527,6 +527,11 @@
           }
         }
       }
+    },
+    "environmentManifest": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Per-project infra version / known infrastructure limitation manifest. Coordinator (parallel-worktree / harness-work / tdd-implement) injects this into worker prompts so subagents can detect infra-driven failure (e.g. local DB version differs from CI) without exploring forbidden workarounds. Free-form object; common sub-keys: `postgres` / `node` / `ci_environment` / `forbidden_workarounds`. Materialization algorithm (JSON → markdown bullets) and worker prompt injection are documented in `commands/parallel-worktree.md` 'Environment Manifest injection'. When omitted, coordinator emits an empty manifest section meaning 'no declared infra constraints, INFRA_BLOCKED is still a valid retreat path'."
     }
   }
 }

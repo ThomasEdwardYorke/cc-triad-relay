@@ -238,6 +238,166 @@ cd <worktree_dir>
 branch: <feature_branch-slug>
 **main repo には触らない。**
 
+## Environment Manifest (prepended to worker prompt, mandatory)
+
+The coordinator MUST prepend an Environment Manifest to the worker prompt to
+mitigate failures caused by environment / version mismatches between local and
+CI runtimes (e.g. database version differences where one side has unsupported
+syntax / features). Without the manifest, a worker can misinterpret an
+infra-driven test failure as a code defect and explore forbidden workarounds
+(migration skip / manual SQL test DB setup / version-specific local-only syntax
+rewrite). Localized rationale and observed failure-mode notes are documented
+in the project handoff docs (consumer-side `docs/` notes); this spec keeps the
+canonical contract locale-neutral.
+
+**注入する内容 (project ごとに異なるが、典型例)**:
+
+```text
+## Environment Manifest (known infra constraints)
+
+- Local <runtime> is <version-A> (CI is <version-B>).
+- A migration uses DB features unavailable in some local/CI environments.
+- Local migration may fail for this known reason.
+- This is a known infrastructure limitation, not a task failure to fix.
+
+### Forbidden actions (do not bypass migrations)
+
+- migration skip / migration bypass で test DB を作る
+- 手動 SQL (manual SQL) で migration の一部を再現
+- DB-specific syntax を local-only に書換
+- fake schema を test fixture で構築して migration failure を隠す
+
+### Allowed fallback when blocked by infra
+
+- DB 不要範囲の unit / collection / static check は実施
+- known infra limitation として `INFRA_BLOCKED` 報告 + 撤退
+- coordinator に CI と同等環境での検証を依頼
+```
+
+**取得元**: project の `harness.config.json` から `environmentManifest`
+field を読み取って prompt に inject する。
+
+**実装契約は free-form object**:
+`plugins/harness/schemas/harness.config.schema.json` と
+`plugins/harness/core/src/config.ts` の両方で `environmentManifest` は
+`additionalProperties: true` の自由形式 object と定義されている (sub-key の
+構造を strict には強制しない)。`validateEnvironmentManifest()` は
+**plain object か undefined か** だけを runtime で gate する。下記の
+example schema は project が任意で採用できる **推奨キー例 (suggested
+structure / example keys)** であり、必須契約ではない:
+
+```json
+{
+  "environmentManifest": {
+    "<runtime>": {
+      "version": "<version>",
+      "unsupported_features": ["<feature>"]
+    },
+    "<other-runtime>": { "version": "<version>" },
+    "ci_environment": {
+      "<runtime>_version": "<version>"
+    },
+    "forbidden_workarounds": [
+      "<workaround 1>",
+      "<workaround 2>"
+    ]
+  }
+}
+```
+
+field 推奨ガイドライン (MUST ではなく recommendation):
+- 各 sub-key (`<runtime>` / `<other-runtime>` / etc) は推奨として object
+  (`version` / `unsupported_features`) で記述するが、実装契約は free-form
+  object なので未知キー / 別構造も許容
+- `ci_environment` は推奨キーで、CI 側の version / 制約を別途宣言する用途
+  (local と CI の差分が明示できる構造)
+- `forbidden_workarounds` は推奨キーで、project 固有の禁止迂回 list を保持
+  (worker.md generic 禁止 list の補強)
+- field 全体が欠落している project では Environment Manifest section を **空
+  ヘッダのみ** で出して「明示すべき infra 制約なし、infra 失敗時は
+  INFRA_BLOCKED で撤退してよい」契約を伝える
+
+**Materialization (JSON → markdown transformation algorithm)**:
+
+coordinator は `harness.config.json.environmentManifest` JSON を以下の **推奨
+規則** で markdown bullet list に変換し、worker prompt 先頭に inject する
+(下記は推奨キー (`version` / `unsupported_features` / `ci_environment` /
+`forbidden_workarounds`) を使った場合の transformation。free-form 構造の
+場合は coordinator が任意の形式で markdown 化してよい):
+
+| JSON 構造 (推奨キー) | markdown 出力 |
+|---|---|
+| `<key>: { "version": <V>, "unsupported_features": [<list>] }` | `- <Key 大文字化> <V> — unsupported: <comma-separated>` |
+| `<key>: { "version": <V> }` (unsupported なし) | `- <Key 大文字化> <V>` |
+| `ci_environment: { "<tool>_version": <V>, ... }` | `- (CI: <tool> <V>, ...)` (1 行サマリ) |
+| `forbidden_workarounds: [<list>]` | `### Forbidden actions (project-specific)\n- <each item>` |
+| 推奨キー以外の自由構造 | coordinator が任意で markdown 化 (free-form fallback) |
+| field 全体未定義 | 空 `## Environment Manifest` ヘッダのみ |
+
+**Newline sanitization (mandatory for all string values)**: free-form values
+in `environmentManifest` (and any other coordinator-injected payload such as
+`additionalContext`) are JSON-decoded strings that may contain literal
+newlines. Before emitting them as markdown bullets, the coordinator MUST
+normalize and escape every newline sequence (`\r\n` / `\n` / `\r`) to the
+**literal two-character sequence `\\n`** so a malicious / accidental newline
+cannot inject pseudo-section boundaries (e.g. forging a fake `## Task:`
+header inside a free-form value). This rule is identical to the
+`additionalContext` payload sanitization elsewhere in the harness — the same
+escape policy applies consistently across both surfaces.
+
+具体例 (推奨キー使用、JSON input):
+
+```json
+{
+  "environmentManifest": {
+    "<runtime>": { "version": "<v-local>", "unsupported_features": ["<feature>"] },
+    "<other-runtime>": { "version": "<v-local>" },
+    "ci_environment": { "<runtime>_version": "<v-ci>", "<other-runtime>_version": "<v-ci>" },
+    "forbidden_workarounds": [
+      "migration skip / migration bypass",
+      "manual SQL test DB setup",
+      "version-specific syntax 書換 (local-only variant)"
+    ]
+  }
+}
+```
+
+coordinator は worker prompt 構築時に以下の順序で組み立てる:
+
+1. (frontmatter があれば最初に置く)
+2. **Environment Manifest block を prepend** (frontmatter 後、task 説明の前)
+3. task 詳細 (タスク説明 / Working directory / Acceptance Criteria 等)
+
+実装例 (上記 JSON input を materialization した markdown output、placeholder
+に project 固有の値が入る):
+
+```markdown
+## Environment Manifest (known infra constraints)
+
+- <Runtime> <v-local> — unsupported: <feature>
+- <Other-runtime> <v-local>
+- (CI: <runtime> <v-ci>, <other-runtime> <v-ci>)
+
+### Forbidden actions (project-specific)
+- migration skip / migration bypass
+- manual SQL test DB setup
+- version-specific syntax 書換 (local-only variant)
+
+(generic 禁止迂回は agents/worker.md "Forbidden Infrastructure Workarounds" 参照)
+
+## Task: <task_id> <title>
+
+...
+```
+
+malformed 検出時 (例: `environmentManifest` が string、不正な JSON):
+coordinator は **fatal error で停止** (worker dispatch 前に halt) し、
+project 側の `harness.config.json` を修正してから再実行する。silent fallback
+で garbage を prompt に inject すると worker の判断材料が破壊されるため。
+
+worker は `agents/worker.md` の **Forbidden Infrastructure Workarounds**
+section と本 Environment Manifest を照合し、infra-driven failure を判定する。
+
 ## オプションの伝播 (--no-commit forward 規約: --no-commit forward)
 
 coordinator は `$ARGUMENTS` から以下を抽出し、各 worktree への `/tdd-implement` 呼出に materialize してから渡す:
@@ -394,12 +554,128 @@ PR 作成はしない (coordinator 実施)。
 
 ---
 
-## Phase 3: 監視 + 完了受領
+## Phase 3: monitor + acceptance + mechanical verification (coordinator)
 
-各 agent 完了後に coordinator が検証:
+After each agent completes, the coordinator MUST mechanically verify the
+result. Plain-text final reports cannot be trusted as completion evidence
+(observed failure: workers leave intent statements at the end without
+performing commit / push, and the natural-language wording can read as
+"done" while no artifact exists). The coordinator therefore validates the
+final via artifacts (git state + structured 8-field schema) instead of
+prose.
+
+### 機械的最終確認 (mechanical verification、自然文を信用しない)
+
+worker final を受領したら、以下を **すべて機械的に確認** (coordinator-side
+verification、artifact-driven completion judgment):
+
+1. **git status の確認** — `cd <worktree_dir> && git status --short` で
+   uncommitted changes が残っていないかをチェック (DONE 報告と不整合なら
+   reject)
+2. **git log -1 の確認** — `cd <worktree_dir> && git log -1 --format=%H%n%s`
+   で expected branch に commit があるか + commit message が要件と一致
+3. **push 到達確認 (commit hash 一致まで verify)** — remote branch の
+   存在確認だけでは古い head が remote に残っているだけで pass してしまう
+   (worker がローカル最新 commit を push していなくても remote branch は
+   過去 push の頭が居るため検出すり抜け)。**local HEAD と remote ref の
+   commit hash 一致**まで確認:
+
+   ```bash
+   # local commit (worker が報告した COMMIT field、もしくは worktree HEAD)
+   LOCAL_COMMIT=$(git -C <worktree_dir> rev-parse HEAD)
+   # remote ref の hash — `--heads` + `refs/heads/<branch>` で branch ref に
+   # 限定 (同名 tag / その他 ref が存在するとき複数行 match で wrong hash を
+   # 拾う事故を予防、必ず単一 head ref を取得)
+   REMOTE_COMMIT=$(git ls-remote --heads origin "refs/heads/<feature_branch-slug>" | awk '{print $1}')
+   if [ -z "$REMOTE_COMMIT" ] || [ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]; then
+     echo "INTERRUPTED: pushed branch hash mismatch (local=$LOCAL_COMMIT remote=$REMOTE_COMMIT)"
+     # STATUS: DONE を reject、worker に再 push 依頼 (PARTIAL 扱い)
+   fi
+   ```
+
+   `LOCAL_COMMIT` と `REMOTE_COMMIT` が一致しない場合、`STATUS: DONE` を
+   reject して PARTIAL 降格 + 再 push 依頼 (`SendMessage`)。
+4. **8-field schema 検証** — worker final が **plain-text colon-separated
+   values** 形式で以下 8 field を **全て** 含むか確認 (`agents/worker.md`
+   の **完了報告フォーマット (8-field schema)** と完全一致):
+
+   ```text
+   STATUS: <DONE | PARTIAL | BLOCKED | FAILED>
+   CHANGED_FILES: <count or list>      # 空なら "(none)"
+   COMMIT: <hash>                       # 調査タスクなら "(none)"
+   PUSHED_BRANCH: <branch>              # push なしなら "(none)"
+   VALIDATION: tests=PASS lint=PASS typecheck=PASS  # 1 行サマリ可、SKIPPED+理由 OK
+   BLOCKERS: <reason>                   # BLOCKED 以外は "(none)"
+   NEXT_ACTION: <command>               # DONE は "(complete)"、PARTIAL/BLOCKED は次 1 command
+   FORBIDDEN_ACTIONS_USED: <yes | no>   # yes は規律違反 (ledger 追記)
+   ```
+
+   field 欠落 / 形式不正 → 委譲先に追加対応依頼 (再 dispatch、Step 5 経路)。
+   8 field の意味と必須条件は `agents/worker.md` の "8 field の意味" / "タスク
+   区分" table を canonical reference とする。
+5. **未来形 detector (future-tense detection)** — まず上記 8-field schema
+   `STATUS:` marker の存在を **primary signal** として確認。schema が揃って
+   いる場合は marker を信用し regex scan は skip する (false-positive 回避)。
+   schema 不在または `STATUS: DONE` でも疑わしい場合のみ補助的に regex scan:
+
+   ```bash
+   # primary: STATUS marker の存在検査 (主) — 揃っていれば marker を信用。
+   # NOTE: `grep -E` (POSIX ERE) は `\s` を literal `s` に解釈するため、
+   # whitespace match には `[[:space:]]` を使う (bash builtin の `[[ =~ ]]` も同様)。
+   # 行末 anchor `$` も併用して `STATUS: DONE_xxx` のような不正値を弾く
+   # (commands/harness-work.md Step 5 と同じ exact-match 規約)。
+   if ! grep -qE '^STATUS:[[:space:]]*(DONE|PARTIAL|BLOCKED|FAILED)$' worker-final.txt; then
+     echo "INTERRUPTED: STATUS marker missing"
+     exit 1
+   fi
+   # secondary: STATUS: DONE のときだけ末尾 5 行を狭い regex で scan
+   #   - 引用 (`>` 行) と code fence (``` 内) を strip して inline 文のみを対象
+   #     (harness-work.md Step 5 と同じ前処理、quote / fence 内の intent 文の
+   #     false-positive を抑制)
+   #   - sentence-end (。/./!) anchor で intent 文の文末位置に限定
+   #   - subject が agent (I / We / Next I / 自分) のもののみ拾う
+   if grep -qE '^STATUS:[[:space:]]*DONE$' worker-final.txt; then
+     tail -n 5 worker-final.txt \
+       | sed -E '/^>/d' \
+       | awk 'BEGIN{f=0} /^```/{f=1-f; next} !f' \
+       | grep -E '(^|[。\.!])[[:space:]]*(修正|実行|確認|更新)します[。\.!]?[[:space:]]*$|^(I|We|Next I) (will|am going to) (fix|run|update|confirm)' \
+       && echo "INTERRUPTED: future-tense at sentence end with agent subject, downgrading to PARTIAL"
+   fi
+   ```
+
+   primary signal (STATUS marker) で完了判定するのが本筋。regex は schema 不在
+   時の fallback または明らかな false-positive (intent 文末) 検出のみ。
+6. **BLOCKED / PARTIAL handoff parser** — `STATUS: BLOCKED` または
+   `STATUS: PARTIAL` の場合、`BLOCKERS` / `NEXT_ACTION` field を parse して
+   coordinator が次の action を判断:
+   - **BLOCKED + INFRA_BLOCKED**: 同じ worker / 同じ環境に再 dispatch
+     **しない** (infra 制約は worker 側では変わらないため retry 無意味)。
+     代わりに以下のいずれかを coordinator が選択:
+     - (a) **別環境で再実行**: CI 環境 / human-driven 環境 / 別 PR で
+       infra 制約を満たす版を実行
+     - (b) **コードを修正して回避**: coordinator または別 worker が、
+       infra 制約に依存しない実装に書き換え (例: DB-dependent test を
+       SKIPPED 経路に分割)
+     - (c) **escalate to user**: 上記 (a) (b) のどちらも実行不能なら
+       ユーザーに判断委譲
+   - **PARTIAL**: 残作業を別 worker / coordinator が継続、`NEXT_ACTION` の
+     1 command を採用
+   - **FAILED**: 要件再確認 + ユーザーに escalation
+7. **`FORBIDDEN_ACTIONS_USED: yes` 検出** — yes の場合は規律違反として
+   discipline ledger に append-only 追記、PR は merge せず該当 commit を
+   revert 検討
+
+### 完了報告 verification の旧 contract (互換)
+
+過去の Phase 4/5 記述要件 (Codex 並列検証 / Codex レビュー summary) は
+8-field schema の `VALIDATION` + Markdown 拡張形式で吸収される:
+
 1. push が origin に到達しているか (`git ls-remote`)
 2. 完了報告の Phase 4/5 に記述があるか (省略なし)
 3. 省略があれば `SendMessage` で追加対応依頼
+
+省略 / 未来形検出 / 8-field schema 不整合があれば `SendMessage` で worker に
+追加対応依頼するか、coordinator 側で finalize する。
 
 ---
 

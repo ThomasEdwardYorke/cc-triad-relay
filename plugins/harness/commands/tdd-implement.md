@@ -51,6 +51,12 @@ Phase 9  ドキュメント更新
 2. 実装タスクを細分化してチェックリスト化（TaskCreate）
 3. 各タスクに依存関係を設定
 4. ユーザーに計画を提示して承認を得る（🔴 重要タスクのみ、🟢 軽量なら省略可）
+5. **Environment Manifest 取込** — project の `harness.config.json` から
+   `environmentManifest` field を読み取り、Phase 2-3 の test 設計時に既知 infra
+   制約 (known infrastructure limitation) を反映する (Solo モードでも環境差分は
+   起きる。例: local PostgreSQL 14 vs CI PG 15+ で `NULLS NOT DISTINCT`
+   unsupported のような known infra constraint がある場合、test fixture / migration
+   workflow の検討時に把握しておく)
 
 **チェックリストには以下を必ず含める:**
 - RED: テスト作成
@@ -64,6 +70,20 @@ Phase 9  ドキュメント更新
 - **Phase 7 Codex セカンドオピニオン**
 - Phase 8 Merge + 最終確認
 - Phase 9 ドキュメント更新
+
+### Environment Manifest の参照規約
+
+Solo モード (本 skill 直接起動) では parallel-worktree のように coordinator が
+worker prompt 先頭に inject する仕組みは無いが、**実装する Claude session
+自身が project の environment manifest を Phase 1 で参照** することで、
+infra-driven failure を「自分が直すべき failure」と誤認する pattern を避ける:
+
+- `harness.config.json` の `environmentManifest` field (定義あれば) を読む
+- 該当する infra constraint (例: PG version、unsupported feature) を Phase 2 RED
+  test 設計時に考慮 (DB-dependent test を回避できる場合は SKIPPED 経路を選ぶ)
+- 解決不能な infra failure に直面した場合は **`STATUS: BLOCKED` + INFRA_BLOCKED**
+  で撤退、迂回 (alembic skip / 手動 SQL 等) を試みない (`agents/worker.md` の
+  **Forbidden Infrastructure Workarounds** と同じ contract)
 
 ---
 

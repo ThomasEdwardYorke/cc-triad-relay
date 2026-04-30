@@ -807,6 +807,18 @@ export interface HarnessConfig {
   userPromptSubmit: UserPromptSubmitConfig;
   postToolUseFailure: PostToolUseFailureConfig;
   configChange: ConfigChangeConfig;
+  /**
+   * Per-project infrastructure manifest injected into worker prompts so
+   * subagents can detect infra-driven failure (e.g. local DB version differs
+   * from CI) without exploring forbidden workarounds. Optional, free-form
+   * object; coordinator (parallel-worktree / harness-work / tdd-implement)
+   * materializes this into a markdown bullet list and prepends it to the
+   * worker prompt. When undefined, coordinator emits an empty manifest
+   * section. See `commands/parallel-worktree.md` "Environment Manifest
+   * injection" for the materialization algorithm and recommended sub-keys
+   * (`postgres` / `node` / `ci_environment` / `forbidden_workarounds`).
+   */
+  environmentManifest?: Record<string, unknown>;
   subagentStart: SubagentStartConfig;
   /**
    * Optional context-budget audit knobs. Always populated post-merge —
@@ -1017,6 +1029,37 @@ export const DEFAULT_CONFIG: HarnessConfig = {
  * from having to defensively handle an unexpected fifth case in their
  * switch statements.
  */
+/**
+ * Validate `environmentManifest` field shape: must be `undefined` or a plain
+ * object (`Record<string, unknown>`). Reject `null` / array / scalar types as
+ * fatal config errors so malformed manifests (e.g.
+ * `{"environmentManifest": "oops"}` or `[]`) cannot reach runtime where
+ * coordinator skills (`commands/parallel-worktree.md` /
+ * `commands/tdd-implement.md`) attempt JSON-to-markdown materialization.
+ *
+ * This implements the fatal-error contract documented in
+ * `commands/parallel-worktree.md` "Materialization (JSON → markdown
+ * transformation algorithm)" — silent fallback would inject garbage into
+ * worker prompts.
+ */
+function validateEnvironmentManifest(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    const got =
+      value === null
+        ? "null"
+        : Array.isArray(value)
+          ? "array"
+          : typeof value;
+    throw new Error(
+      `harness.config.json: environmentManifest must be a plain object (got ${got})`,
+    );
+  }
+  return value as Record<string, unknown>;
+}
+
 function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
   const partialWork: Partial<WorkConfig> = partial.work ?? {};
   const baseWork: WorkConfig = {
@@ -1118,6 +1161,14 @@ function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
     ...(() => {
       const merged = mergeModelsConfig(partial.models);
       return merged ? { models: merged } : {};
+    })(),
+    // environmentManifest is optional. validateEnvironmentManifest throws on
+    // non-object input (rejecting `"oops"` / `[]` / `42` etc.) so malformed
+    // manifests cannot reach worker prompt materialization. Spread above
+    // would have carried any garbage type through verbatim.
+    ...(() => {
+      const validated = validateEnvironmentManifest(partial.environmentManifest);
+      return validated !== undefined ? { environmentManifest: validated } : {};
     })(),
   };
 }
