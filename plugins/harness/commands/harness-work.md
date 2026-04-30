@@ -900,38 +900,42 @@ Skill({skill: "harness-merge-train", args: "--filter='.[] | select(.author.login
 
 ---
 
-### Step 5: 完了確認 + 担当表クリア + 状態更新
+### Step 5: completion verification + assignment cleanup + state update
 
-全委譲完了後、coordinator が以下を **機械的に** verify する。観測された
-subagent failure mode (委譲先 worker / agent の自然文 final をそのまま
-完了報告として受け取り、未来形終端 + commit/push 未実施を完了と誤認した
-pattern) に対する構造的対策。**自然文を信用せず artifact (commit hash /
-git log / 未来形 scan) で完了判定する。**
+After all delegated work returns, the coordinator MUST mechanically verify
+the result. Plain-text final reports cannot be trusted as completion
+evidence (observed failure: delegated worker / agent finals leave intent
+statements at the end without performing commit / push, and the
+natural-language wording can read as "done" while no artifact exists).
+The coordinator therefore validates via artifacts (git state + structured
+8-field schema + future-tense scan) instead of prose.
 
-1. 委譲先からの完了報告を verify (commit hash / push / PR URL)
-2. 品質ゲートが全て走った証跡を確認:
-   - 各 worktree / 単一タスクで Phase 4 Codex 並列 ✅
-   - Phase 5 Codex レビュー ✅
-   - Phase 5.5 疑似 CodeRabbit clean ✅
-   - Phase 6 本物 CodeRabbit Clear (APPROVED or unresolved=0) ✅
-   - Phase 7 Codex セカンドオピニオン ✅
-3. **8-field schema 検証** — 委譲先 worker (`agents/worker.md`) の最終応答を
-   parse して以下 field の存在を機械確認 (8-field schema 検証):
-   - `STATUS` (DONE / PARTIAL / BLOCKED / FAILED) — 4-status 必須
-   - `CHANGED_FILES` — 変更ファイル一覧
-   - `COMMIT` — DONE で commit 必須タスクのみ非 null
-   - `PUSHED_BRANCH` — DONE で push 必須タスクのみ非 null
-   - `VALIDATION` — tests / lint / typecheck の PASS/FAIL/SKIPPED
-   - `BLOCKERS` — BLOCKED 時の blocker 理由
-   - `NEXT_ACTION` — PARTIAL/BLOCKED 時の次 1 command
-   - `FORBIDDEN_ACTIONS_USED` — `no` 必須 (yes は規律違反、ledger 追記)
+1. Verify the delegated final report (commit hash / push / PR URL).
+2. Confirm every quality gate ran on the delegated work:
+   - Phase 4 Codex parallel verification ✅ (each worktree / single task)
+   - Phase 5 Codex review loop ✅
+   - Phase 5.5 pseudo CodeRabbit clean ✅
+   - Phase 6 real CodeRabbit clear (APPROVED or unresolved=0) ✅
+   - Phase 7 Codex second-opinion adversarial ✅
+3. **8-field schema verification** — parse the delegated worker
+   (`agents/worker.md`) final and confirm every field is present:
+   - `STATUS` (DONE / PARTIAL / BLOCKED / FAILED) — 4-status required
+   - `CHANGED_FILES` — changed files list (`(none)` when empty)
+   - `COMMIT` — non-`(none)` for implementation tasks at DONE
+   - `PUSHED_BRANCH` — non-`(none)` for implementation tasks at DONE
+   - `VALIDATION` — tests / lint / typecheck PASS/FAIL/SKIPPED summary
+   - `BLOCKERS` — reason at BLOCKED, otherwise `(none)`
+   - `NEXT_ACTION` — next single command for PARTIAL/BLOCKED, `(complete)` for DONE
+   - `FORBIDDEN_ACTIONS_USED` — `no` required (`yes` = discipline violation,
+     append to ledger)
 
-   8 field 中 1 つでも欠落 → 委譲先に追加対応依頼 (再 dispatch、Step 5 step 5
-   経路)。
-4. **未来形 detector (future-tense detection / 未来形検出)** —
-   `commands/parallel-worktree.md` Phase 3 step 5 と **同じ判定順** に揃える
-   (dispatcher 経路ごとに完了判定が割れないため)。primary signal は
-   `STATUS: DONE` marker、regex は narrow scan で false-positive を抑制:
+   Any missing field → request a follow-up from the delegate (re-dispatch
+   via the regular Step 5 path).
+4. **Future-tense detection** — align the detection order with the
+   `commands/parallel-worktree.md` Phase 3 step 5 logic so dispatcher paths
+   produce identical completion verdicts. The primary signal is the
+   `STATUS: DONE` marker; the regex is a narrow secondary fallback that
+   suppresses false positives:
 
    ```bash
    # primary: STATUS marker の存在 + DONE 確認 (主)。
@@ -955,15 +959,19 @@ git log / 未来形 scan) で完了判定する。**
    fi
    ```
 
-   primary signal で完了判定するのが本筋 (8-field schema の `STATUS:
-   DONE` を信頼)。regex は補助 fallback。
-5. **BLOCKED / PARTIAL handoff parser** — `STATUS: BLOCKED` または
-   `STATUS: PARTIAL` の場合、`BLOCKERS` / `NEXT_ACTION` field を parse して
-   coordinator が次の action を判断:
-   - **BLOCKED + INFRA_BLOCKED**: coordinator が代替実行環境を検討
-     (worker に同じ task を再 dispatch しない)
-   - **PARTIAL**: `NEXT_ACTION` の 1 command を採用して継続
-   - **FAILED**: 要件再確認 + ユーザーに escalation
+   The primary signal (`STATUS: DONE` from the 8-field schema) is the
+   canonical completion gate; the regex is a defensive fallback.
+5. **BLOCKED / PARTIAL handoff parser** — when the final reports
+   `STATUS: BLOCKED` or `STATUS: PARTIAL`, the coordinator parses
+   `BLOCKERS` / `NEXT_ACTION` to choose the next action:
+   - **BLOCKED + INFRA_BLOCKED**: do NOT re-dispatch the same worker /
+     same environment (the infra constraint will not change). Instead the
+     coordinator evaluates one of: (a) re-run in an alternative environment
+     (CI / human-driven host / a different PR), (b) revise the implementation
+     to avoid the infra constraint, or (c) escalate to the user.
+   - **PARTIAL**: continue from `NEXT_ACTION` (single command) using a
+     follow-up worker or coordinator action.
+   - **FAILED**: revisit requirements and escalate to the user.
 6. **省略されていた場合**: 該当タスク (Plans-mode なら Plans.md 担当表の task-id、Handoff-mode なら `BacklogEntry.id`) を引数にして `/harness-work <task-id>` を再 dispatch。`--resume` フラグは存在しない (本 skill の `argument-hint` を参照)、再 dispatch は通常の task-id 経路で行う。
 
    **task-id は single-token (空白不可)**: 本 skill の引数 parser は `read -r -a ARGS_TOKENS <<< "$ARGUMENTS"` で word splitting するため、Plans-mode 担当表の task-id / Handoff-mode `BacklogEntry.id` の双方で **空白文字を含まない単一 token** を必須とする。`argument-hint` の `[task-number|N-M|PR-number|...]` も同じ single-token 前提で書かれている (例: `T-001` / `42-44` / `pr-123`、空白入り ID は parser 不整合)。consumer 側 (Plans.md / backlog.md) の規約として ID 命名で空白を許さない設計を強制すること。
