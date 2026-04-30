@@ -934,19 +934,21 @@ git log / 未来形 scan) で完了判定する。**
    `STATUS: DONE` marker、regex は narrow scan で false-positive を抑制:
 
    ```bash
-   # primary: STATUS marker の存在 + DONE 確認 (主)
-   if ! grep -qE '^STATUS:\s*(DONE|PARTIAL|BLOCKED|FAILED)' <worker-final>; then
+   # primary: STATUS marker の存在 + DONE 確認 (主)。
+   # NOTE: `grep -E` (POSIX ERE) は `\s` を literal `s` に解釈するため、
+   # whitespace match には `[[:space:]]` を使う (commands/parallel-worktree.md と同じ)。
+   if ! grep -qE '^STATUS:[[:space:]]*(DONE|PARTIAL|BLOCKED|FAILED)' <worker-final>; then
      echo "INTERRUPTED: STATUS marker missing"
      exit 1
    fi
    # secondary: STATUS: DONE のときだけ末尾 30 行を狭い regex で scan
    #   - 引用 (`>` 行) と code fence (``` 内) を strip して inline 文のみを対象
    #   - sentence-end (。/./!) anchor + 限定 verb で intent 文末を狭く拾う
-   if grep -qE '^STATUS:\s*DONE' <worker-final>; then
+   if grep -qE '^STATUS:[[:space:]]*DONE' <worker-final>; then
      tail -n 30 <worker-final> \
        | sed -E '/^>/d' \
        | awk 'BEGIN{f=0} /^```/{f=1-f; next} !f' \
-       | grep -E '(^|[。\.!])\s*(実行|修正|確認|更新)します[。\.!]?\s*$|^(I|We|Next I) (will|am going to) (fix|run|update|confirm)' \
+       | grep -E '(^|[。\.!])[[:space:]]*(実行|修正|確認|更新)します[。\.!]?[[:space:]]*$|^(I|We|Next I) (will|am going to) (fix|run|update|confirm)' \
        && echo "INTERRUPTED: future-tense at sentence end with agent subject, downgrading STATUS: DONE to PARTIAL"
    fi
    ```
