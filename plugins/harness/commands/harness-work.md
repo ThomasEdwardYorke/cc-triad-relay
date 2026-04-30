@@ -902,7 +902,11 @@ Skill({skill: "harness-merge-train", args: "--filter='.[] | select(.author.login
 
 ### Step 5: 完了確認 + 担当表クリア + 状態更新
 
-全委譲完了後、coordinator が:
+全委譲完了後、coordinator が以下を **機械的に** verify する。観測された
+subagent failure mode (委譲先 worker / agent の自然文 final をそのまま
+完了報告として受け取り、未来形終端 + commit/push 未実施を完了と誤認した
+pattern) に対する構造的対策。**自然文を信用せず artifact (commit hash /
+git log / 未来形 scan) で完了判定する。**
 
 1. 委譲先からの完了報告を verify (commit hash / push / PR URL)
 2. 品質ゲートが全て走った証跡を確認:
@@ -911,7 +915,37 @@ Skill({skill: "harness-merge-train", args: "--filter='.[] | select(.author.login
    - Phase 5.5 疑似 CodeRabbit clean ✅
    - Phase 6 本物 CodeRabbit Clear (APPROVED or unresolved=0) ✅
    - Phase 7 Codex セカンドオピニオン ✅
-3. **省略されていた場合**: 該当タスク (Plans-mode なら Plans.md 担当表の task-id、Handoff-mode なら `BacklogEntry.id`) を引数にして `/harness-work <task-id>` を再 dispatch。`--resume` フラグは存在しない (本 skill の `argument-hint` を参照)、再 dispatch は通常の task-id 経路で行う。
+3. **8-field schema 検証** — 委譲先 worker (`agents/worker.md`) の最終応答を
+   parse して以下 field の存在を機械確認 (8-field schema 検証):
+   - `STATUS` (DONE / PARTIAL / BLOCKED / FAILED) — 4-status 必須
+   - `CHANGED_FILES` — 変更ファイル一覧
+   - `COMMIT` — DONE で commit 必須タスクのみ非 null
+   - `PUSHED_BRANCH` — DONE で push 必須タスクのみ非 null
+   - `VALIDATION` — tests / lint / typecheck の PASS/FAIL/SKIPPED
+   - `BLOCKERS` — BLOCKED 時の blocker 理由
+   - `NEXT_ACTION` — PARTIAL/BLOCKED 時の次 1 command
+   - `FORBIDDEN_ACTIONS_USED` — `no` 必須 (yes は規律違反、ledger 追記)
+
+   8 field 中 1 つでも欠落 → 委譲先に追加対応依頼 (再 dispatch、Step 5 step 5
+   経路)。
+4. **未来形 detector (future-tense detection / 未来形検出)** — 委譲先
+   final 応答の **末尾 30 行** を regex scan して 未来形作業宣言を検出:
+
+   ```bash
+   tail -n 30 <worker-final> | grep -E '実行します|修正します|確認します|更新します|します$|will (fix|run|update)' && \
+     echo "INTERRUPTED: future-tense detected, downgrading STATUS to PARTIAL"
+   ```
+
+   検出時は `STATUS: DONE` であっても **interrupted** として扱い、`PARTIAL`
+   降格 → 残作業を別 worker / coordinator が継続。
+5. **BLOCKED / PARTIAL handoff parser** — `STATUS: BLOCKED` または
+   `STATUS: PARTIAL` の場合、`BLOCKERS` / `NEXT_ACTION` field を parse して
+   coordinator が次の action を判断:
+   - **BLOCKED + INFRA_BLOCKED**: coordinator が代替実行環境を検討
+     (worker に同じ task を再 dispatch しない)
+   - **PARTIAL**: `NEXT_ACTION` の 1 command を採用して継続
+   - **FAILED**: 要件再確認 + ユーザーに escalation
+6. **省略されていた場合**: 該当タスク (Plans-mode なら Plans.md 担当表の task-id、Handoff-mode なら `BacklogEntry.id`) を引数にして `/harness-work <task-id>` を再 dispatch。`--resume` フラグは存在しない (本 skill の `argument-hint` を参照)、再 dispatch は通常の task-id 経路で行う。
 
    **task-id は single-token (空白不可)**: 本 skill の引数 parser は `read -r -a ARGS_TOKENS <<< "$ARGUMENTS"` で word splitting するため、Plans-mode 担当表の task-id / Handoff-mode `BacklogEntry.id` の双方で **空白文字を含まない単一 token** を必須とする。`argument-hint` の `[task-number|N-M|PR-number|...]` も同じ single-token 前提で書かれている (例: `T-001` / `42-44` / `pr-123`、空白入り ID は parser 不整合)。consumer 側 (Plans.md / backlog.md) の規約として ID 命名で空白を許さない設計を強制すること。
 

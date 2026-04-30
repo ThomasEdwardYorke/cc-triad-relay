@@ -238,6 +238,109 @@ cd <worktree_dir>
 branch: <feature_branch-slug>
 **main repo には触らない。**
 
+## Environment Manifest (worker prompt 先頭に注入、必須)
+
+coordinator は **worker prompt 先頭に Environment Manifest を inject (prepend)
+する** 責務を持つ。観測された subagent failure mode (worker が PG 14 / PG 15+
+差分を知らずに `NULLS NOT DISTINCT` migration failure を「自分が直すべき
+failure」と解釈し、alembic skip / 手動 SQL の禁止迂回を探索した pattern) に
+対する構造的対策。
+
+**注入する内容 (project ごとに異なるが、典型例)**:
+
+```text
+## Environment Manifest (known infra constraints)
+
+- Local PostgreSQL is 14 (CI is 15+).
+- migration `002_baseline.py` uses `NULLS NOT DISTINCT`, which is unsupported on PG 14.
+- Local `alembic upgrade head` MAY fail for this known reason.
+- This is a known infrastructure limitation, not a task failure to fix.
+
+### Forbidden actions (do not bypass migrations)
+
+- alembic migration skip / migration bypass で test DB を作る
+- 手動 SQL (manual SQL) で migration の一部を再現
+- `NULLS NOT DISTINCT` を local-only に書換
+- fake schema を test fixture で構築して migration failure を隠す
+
+### Allowed fallback when blocked by infra
+
+- DB 不要範囲の unit / collection / static check は実施
+- PG 14 limitation として `INFRA_BLOCKED` 報告 + 撤退
+- coordinator に PG 15+ 環境での検証を依頼
+```
+
+**取得元**: project の `harness.config.json` から `environmentManifest`
+field を読み取って prompt に inject する。**標準化された JSON schema**:
+
+```json
+{
+  "environmentManifest": {
+    "postgres": {
+      "version": 14,
+      "unsupported_features": ["NULLS NOT DISTINCT"]
+    },
+    "node": { "version": 18 },
+    "ci_environment": {
+      "postgres_version": 15,
+      "node_version": 20
+    },
+    "forbidden_workarounds": [
+      "alembic skip / migration bypass",
+      "manual SQL test DB setup",
+      "version-specific syntax 書換 (local-only variant)"
+    ]
+  }
+}
+```
+
+field 構造規約:
+- 各 sub-key (`postgres` / `node` / etc) は **object** で、`version` と
+  optional な `unsupported_features` (string array) を持つ
+- `ci_environment` は CI 側の version / 制約を別途宣言 (local と CI の差分が
+  明示できる構造)
+- `forbidden_workarounds` は project 固有の禁止迂回 list (worker.md generic
+  禁止 list の補強)
+- field 全体が欠落している project では Environment Manifest section を **空
+  ヘッダのみ** で出して「明示すべき infra 制約なし、infra 失敗時は
+  INFRA_BLOCKED で撤退してよい」契約を伝える
+
+**Materialization (prompt injection 手順)**:
+
+coordinator は worker prompt 構築時に以下の順序で組み立てる:
+
+1. (frontmatter があれば最初に置く)
+2. **Environment Manifest block を prepend** (frontmatter 後、task 説明の前)
+3. task 詳細 (タスク説明 / Working directory / Acceptance Criteria 等)
+
+実装例:
+
+```markdown
+## Environment Manifest (known infra constraints)
+
+- PostgreSQL 14 local (CI: PG 15+) — unsupported on local: NULLS NOT DISTINCT
+- Node 18 local (CI: 20+)
+
+### Forbidden actions (project-specific)
+- alembic skip / migration bypass
+- manual SQL test DB setup
+- version-specific syntax 書換 (local-only variant)
+
+(generic 禁止迂回は agents/worker.md "Forbidden Infrastructure Workarounds" 参照)
+
+## Task: <task_id> <title>
+
+...
+```
+
+malformed 検出時 (例: `environmentManifest` が string、不正な JSON):
+coordinator は **fatal error で停止** (worker dispatch 前に halt) し、
+project 側の `harness.config.json` を修正してから再実行する。silent fallback
+で garbage を prompt に inject すると worker の判断材料が破壊されるため。
+
+worker は `agents/worker.md` の **Forbidden Infrastructure Workarounds**
+section と本 Environment Manifest を照合し、infra-driven failure を判定する。
+
 ## オプションの伝播 (--no-commit forward 規約: --no-commit forward)
 
 coordinator は `$ARGUMENTS` から以下を抽出し、各 worktree への `/tdd-implement` 呼出に materialize してから渡す:
@@ -394,12 +497,90 @@ PR 作成はしない (coordinator 実施)。
 
 ---
 
-## Phase 3: 監視 + 完了受領
+## Phase 3: 監視 + 完了受領 + 機械的最終確認 (Coordinator verification)
 
-各 agent 完了後に coordinator が検証:
+各 agent 完了後に coordinator が検証する。観測された subagent failure mode
+(worker final の自然文をそのまま完了として受け取り、commit/push 未実施 +
+未来形終端の状態を「完了報告」として誤認した pattern) に対する構造的対策。
+**worker final を信用せず、coordinator が機械的に確認する。**
+
+### 機械的最終確認 (mechanical verification、自然文を信用しない)
+
+worker final を受領したら、以下を **すべて機械的に確認** (coordinator-side
+verification、artifact-driven completion judgment):
+
+1. **git status の確認** — `cd <worktree_dir> && git status --short` で
+   uncommitted changes が残っていないかをチェック (DONE 報告と不整合なら
+   reject)
+2. **git log -1 の確認** — `cd <worktree_dir> && git log -1 --format=%H%n%s`
+   で expected branch に commit があるか + commit message が要件と一致
+3. **push 到達確認** — `git ls-remote origin <feature_branch-slug>` で
+   remote branch (origin に到達した branch) が存在するか確認 (pushed branch
+   verification)
+4. **8-field schema 検証** — worker final が **plain-text colon-separated
+   values** 形式で以下 8 field を **全て** 含むか確認 (`agents/worker.md`
+   の **完了報告フォーマット (8-field schema)** と完全一致):
+
+   ```text
+   STATUS: <DONE | PARTIAL | BLOCKED | FAILED>
+   CHANGED_FILES: <count or list>      # 空なら "(none)"
+   COMMIT: <hash>                       # 調査タスクなら "(none)"
+   PUSHED_BRANCH: <branch>              # push なしなら "(none)"
+   VALIDATION: tests=PASS lint=PASS typecheck=PASS  # 1 行サマリ可、SKIPPED+理由 OK
+   BLOCKERS: <reason>                   # BLOCKED 以外は "(none)"
+   NEXT_ACTION: <command>               # DONE は "(complete)"、PARTIAL/BLOCKED は次 1 command
+   FORBIDDEN_ACTIONS_USED: <yes | no>   # yes は規律違反 (ledger 追記)
+   ```
+
+   field 欠落 / 形式不正 → 委譲先に追加対応依頼 (再 dispatch、Step 5 経路)。
+   8 field の意味と必須条件は `agents/worker.md` の "8 field の意味" / "タスク
+   区分" table を canonical reference とする。
+5. **未来形 detector (future-tense detection)** — まず上記 8-field schema
+   `STATUS:` marker の存在を **primary signal** として確認。schema が揃って
+   いる場合は marker を信用し regex scan は skip する (false-positive 回避)。
+   schema 不在または `STATUS: DONE` でも疑わしい場合のみ補助的に regex scan:
+
+   ```bash
+   # primary: STATUS marker の存在検査 (主) — 揃っていれば marker を信用
+   if ! grep -qE '^STATUS:\s*(DONE|PARTIAL|BLOCKED|FAILED)' worker-final.txt; then
+     echo "INTERRUPTED: STATUS marker missing"
+     exit 1
+   fi
+   # secondary: STATUS: DONE のときだけ末尾 5 行を狭い regex で scan
+   #   - 文末 (。/./!) anchor で intent 文の文末位置に限定
+   #   - subject が agent (I / We / Next I / 自分) のもののみ拾う
+   if grep -qE '^STATUS:\s*DONE' worker-final.txt; then
+     tail -n 5 worker-final.txt \
+       | grep -E '(^|[。\.!])\s*(修正|実行|確認|更新)します[。\.!]?\s*$|^(I|We|Next I) (will|am going to) (fix|run|update|confirm)' \
+       && echo "INTERRUPTED: future-tense at sentence end with agent subject, downgrading to PARTIAL"
+   fi
+   ```
+
+   primary signal (STATUS marker) で完了判定するのが本筋。regex は schema 不在
+   時の fallback または明らかな false-positive (intent 文末) 検出のみ。
+6. **BLOCKED / PARTIAL handoff parser** — `STATUS: BLOCKED` または
+   `STATUS: PARTIAL` の場合、`BLOCKERS` / `NEXT_ACTION` field を parse して
+   coordinator が次の action を判断:
+   - **BLOCKED + INFRA_BLOCKED**: coordinator が PG 15+ 環境での再実行を
+     検討 (worker に同じ task を再 dispatch しない)
+   - **PARTIAL**: 残作業を別 worker / coordinator が継続、`NEXT_ACTION` の
+     1 command を採用
+   - **FAILED**: 要件再確認 + ユーザーに escalation
+7. **`FORBIDDEN_ACTIONS_USED: yes` 検出** — yes の場合は規律違反として
+   discipline ledger に append-only 追記、PR は merge せず該当 commit を
+   revert 検討
+
+### 完了報告 verification の旧 contract (互換)
+
+過去の Phase 4/5 記述要件 (Codex 並列検証 / Codex レビュー summary) は
+8-field schema の `VALIDATION` + Markdown 拡張形式で吸収される:
+
 1. push が origin に到達しているか (`git ls-remote`)
 2. 完了報告の Phase 4/5 に記述があるか (省略なし)
 3. 省略があれば `SendMessage` で追加対応依頼
+
+省略 / 未来形検出 / 8-field schema 不整合があれば `SendMessage` で worker に
+追加対応依頼するか、coordinator 側で finalize する。
 
 ---
 

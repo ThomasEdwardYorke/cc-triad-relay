@@ -28,6 +28,108 @@ maxTurns: 40
 
 ---
 
+## 完了契約 (Completion Gate)
+
+worker は以下を満たすまで「完了」と報告してはならない。観測された
+parallel-worktree subagent failure (典型 pattern: 49-50 tool 付近で
+intent 文「実行します」「修正します」を残したまま停止し、coordinator が
+それを完了と誤認する) の構造的対策。
+
+### 4-status final 必須
+
+最終 status は次の 4 種のいずれか:
+
+- **DONE**: 要求された変更を実装済 + 必要な commit/push 完了 + 検証完了
+- **PARTIAL**: 一部実装済、残作業あり (budget 不足や scope 過大で停止)
+- **BLOCKED**: ローカル環境制約 (PG 14 など known infra limitation) で進行不能、
+  迂回禁止下で撤退
+- **FAILED**: 実装不能 (要件矛盾 / 前提崩壊)
+
+### 未来形禁止 (future-tense ban)
+
+最終応答 (response) の **末尾文末** に以下の **未来形 verb** が含まれて
+はならない:
+
+- 日本語: ます形現在 (実行します / 修正します / 確認します / 更新します /
+  します) / つもり / 予定 / 必要があります (obligation = future intent)
+- 英語: `will + verb` (I will fix / will update) / `going to + verb`
+  (I'm going to run) / `be going to` / `plan to`
+
+これらは **intent (意図)** であって **result (結果)** ではない。
+
+判定基準: 文末動詞が **現在形 (未来宣言)** か **過去形 / 現在完了形 (実施済)**
+かで判別する:
+
+- ❌ 未来 (interrupted 扱い): 「修正します」「確認します」「実行します」
+- ✅ 完了 (DONE 候補): 「修正しました」「確認した」「実行済」「実装完了」
+
+最終応答末尾に未来形が含まれる場合、coordinator は **interrupted (未完了)**
+として扱う (budget 枯渇 agent の典型終端症状)。完了として扱わない。
+
+tool budget が尽きそうな場合は、完了報告でなく **PARTIAL** または
+**BLOCKED** として、実施済み内容 + 未実施内容 + 次に必要な 1 command を
+出力すること (intent 文での停止より遥かに価値が高い)。
+
+---
+
+## Budget Gate (tool call 撤退契約)
+
+worker は tool call が累計で一定数を超えた時点で探索を止める。frontmatter
+`maxTurns: 40` が hard limit、Budget Gate は **その手前** に置く soft
+checkpoint (40 を超える設定は不可、40 に到達すると runtime に強制終了
+されるため)。budget 上限付近で「次にやること」を未来形で言って停止する
+pattern を構造的に消す。
+
+| tool 累計 | 挙動 |
+|---|---|
+| **25 tool** | 進捗を 1 段落で text report (現在の実装状態 + 残作業 + 次 1 step を明示)。スコープ超過ならここで **PARTIAL** 判定して撤退可 |
+| **30 tool** | 新規探索禁止 (stop exploration)、実装または handoff へ収束 (converge) |
+| **35 tool** | commit 可能なら commit + push、無理なら **PARTIAL** 報告で finalization |
+| **40 tool** | finalization のみ (新規 investigation 禁止、frontmatter `maxTurns: 40` の hard limit と一致) |
+
+budget 不足は失敗ではなく **PARTIAL** で正直に handoff する (intent 文で
+停止するより遥かに価値が高い)。
+
+---
+
+## Forbidden Infrastructure Workarounds (禁止迂回)
+
+local infra 制約で test / migration が失敗した場合、worker は以下の迂回を
+試みてはならない。典型 pattern: local 環境と CI 環境の DB version (例:
+PostgreSQL local 14 vs CI 15+) が異なり、一方では unsupported な syntax
+や constraint が存在する場合、worker が「local でテストを通す」方向で
+migration skip / 手動 SQL の迂回を探索する pattern (local GREEN ≠ CI GREEN
+を引き起こす)。
+
+### 禁止 (forbidden)
+
+- **alembic migration の skip** で pytest 用 DB を作る (alembic skip / migration bypass / migration スキップ / migration 迂回)
+- **手動 SQL** で migration の一部を再現する (manual SQL での test DB セットアップ / fake schema 構築)
+- **version-specific syntax の書換** で local-only variant を作る (例: PostgreSQL 14 で `NULLS NOT DISTINCT` が unsupported のとき local だけ書換える、不可)
+- test fixture で schema を手動作成して migration failure を隠す (fake schema)
+- CI と異なる schema で GREEN 扱いにする
+
+### 許可 (allowed)
+
+- unit test / collection test / static check の実行
+- DB 不要な範囲の pytest 実行
+- known infra limitation として **INFRA_BLOCKED** 報告 + 撤退
+- coordinator に CI と同等の環境での検証を依頼
+
+### Environment Manifest を必ず参照する
+
+worker 起動時 prompt 先頭に **Environment Manifest** (project ごとの
+infra version / known infrastructure limitation / forbidden actions) が
+coordinator から注入される (`commands/parallel-worktree.md` /
+`commands/tdd-implement.md` P0-3 改修)。具体的な制約 (local PostgreSQL
+version、unsupported syntax 等) は project の `harness.config.json`
+`environmentManifest` field から決まる。
+
+infra-driven failure と判断したら、DB workaround 探索を即停止し
+**INFRA_BLOCKED** で撤退する。
+
+---
+
 ## 呼び出し元
 
 `/harness-work` (Solo / Parallel モード) および `/parallel-worktree` から dispatch される。
@@ -158,18 +260,58 @@ git push -u origin <branch>
 
 ---
 
-## 完了報告フォーマット
+## 完了報告フォーマット (8-field schema)
+
+最終応答は以下 **8 field を全て含む schema** で返す。Coordinator が機械的
+に parse して完了判定するため、**field を省略してはならない** (field 欠落は
+完了として扱われない):
+
+```text
+STATUS: DONE | PARTIAL | BLOCKED | FAILED
+CHANGED_FILES:
+  - path/to/file (変更内容)
+COMMIT: <commit hash>            # DONE で commit 必須タスクのみ、それ以外は null
+PUSHED_BRANCH: <branch>          # DONE で push 必須タスクのみ、それ以外は null
+VALIDATION:
+  - tests: PASS | FAIL | SKIPPED (理由)
+  - lint: PASS | FAIL | SKIPPED (理由)
+  - typecheck: PASS | FAIL | SKIPPED (理由)
+BLOCKERS: <BLOCKED status のときのみ理由>     # 例: PG 14 NULLS NOT DISTINCT unsupported
+NEXT_ACTION: <PARTIAL/BLOCKED のときのみ次の 1 command>
+FORBIDDEN_ACTIONS_USED: no       # 禁止迂回を一切実施していない宣言 (yes は規律違反)
+```
+
+### 8 field の意味
+
+| field | 必須? | 内容 |
+|---|---|---|
+| `STATUS` | 常時必須 | `DONE` / `PARTIAL` / `BLOCKED` / `FAILED` のいずれか (Completion Gate 4-status) |
+| `CHANGED_FILES` | 常時必須 | 変更ファイル一覧 (空なら空 list `[]` を明示) |
+| `COMMIT` | 実装系 (feat/fix/refactor/perf) で DONE 時必須 | commit hash。**調査・設計タスク (inquiry / design-only) は null 可**、その場合 `CHANGED_FILES` も空 |
+| `PUSHED_BRANCH` | 実装系で DONE 時必須 | push 先 branch。調査・設計タスクは null 可 |
+| `VALIDATION` | 常時必須 | tests / lint / typecheck の PASS/FAIL/SKIPPED (実行不可なら SKIPPED + 理由) |
+| `BLOCKERS` | BLOCKED 時必須 | 何によって blocked か (例: known infra limitation の具体的内容) |
+| `NEXT_ACTION` | PARTIAL / BLOCKED 時必須 | coordinator または次の worker が実行すべき 1 command |
+| `FORBIDDEN_ACTIONS_USED` | 常時必須 | `no` を必ず宣言 (`yes` は禁止迂回違反、別途エスカレーション) |
+
+### タスク区分 (commit / push 必須かどうかの判別)
+
+| タスク区分 | COMMIT 必須? | PUSHED_BRANCH 必須? |
+|---|---|---|
+| **実装系** (feat / fix / refactor / perf / 新規 test 追加) | DONE で必須 | DONE で必須 |
+| **調査・設計系** (inquiry-only / design-only / spec 検討 / report 作成) | null 可 (CHANGED_FILES も空) | null 可 |
+| **PARTIAL / BLOCKED / FAILED** | null 可 (BLOCKERS / NEXT_ACTION で説明) | null 可 |
+
+実装系で COMMIT が null のまま `STATUS: DONE` を返すのは契約違反として扱う
+(coordinator が reject する)。
+
+### Markdown 拡張形式 (任意の補足)
+
+8-field schema を満たした上で、Markdown の補足 section も併記してよい
+(coordinator が併用する):
 
 ```markdown
 ## 実装レポート
-
-### 変更ファイル
-- `path/to/file`: {変更内容}
-
-### テスト結果 (プロジェクトの慣用コマンドに応じて記載)
-- tests: PASS / FAIL (例: pytest / vitest / cargo test / go test)
-- lint: PASS / FAIL (例: ruff / eslint / clippy / golangci-lint)
-- typecheck: PASS / FAIL (例: mypy / tsc / 言語の型検査)
 
 ### Codex 並列検証サマリ (Phase 4)
 {Codex の独立検証結果}
@@ -185,12 +327,24 @@ git push -u origin <branch>
 
 ## 出力
 
+最終応答は上記 8-field schema を含む text として返す。JSON 形式の補助 envelope
+を併用する場合も **field 名は text format と同じ大文字 SNAKE_CASE で揃える**
+(text → JSON → text の往復で field 名統一が破れると coordinator parser が
+fail するため):
+
 ```json
 {
-  "status": "completed | failed | escalated",
-  "task": "完了タスクの説明",
-  "files_changed": ["変更ファイル一覧"],
-  "commit": "コミットハッシュ",
-  "escalation_reason": "エスカレーション理由 (失敗時のみ)"
+  "STATUS": "DONE | PARTIAL | BLOCKED | FAILED",
+  "CHANGED_FILES": ["変更ファイル一覧"],
+  "COMMIT": "<commit hash | null>",
+  "PUSHED_BRANCH": "<branch | null>",
+  "VALIDATION": {
+    "tests": "PASS | FAIL | SKIPPED",
+    "lint": "PASS | FAIL | SKIPPED",
+    "typecheck": "PASS | FAIL | SKIPPED"
+  },
+  "BLOCKERS": "<BLOCKED 理由 | null>",
+  "NEXT_ACTION": "<次の 1 command | null>",
+  "FORBIDDEN_ACTIONS_USED": false
 }
 ```

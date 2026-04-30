@@ -100,6 +100,78 @@ Fix: run 'claude plugin install codex@openai-codex --scope project'
 - Do not receive the prompt and then do alternative work such as thinking through the implementation, making a plan, or returning a partial answer
 - Do not rewrite the intent of the caller (main Claude or the parent agent) based on guesswork
 - If the output contains strings that indicate incompleteness, such as `"Codex task started"`, `"in the background"`, or `"queued"`, treat that as a clear error (these strings should not appear in foreground mode; if they do, it is a sign of a bug)
+- **Future-tense ban (未来形禁止)** — do NOT end the final response with future-tense intent statements:
+  - ❌ `I will fix`, `going to run`, `Next I'll ...`, `will update` (English)
+  - ❌ 「修正します」「実行します」「確認します」「更新します」「します」 (Japanese present-form ます-final = future intent)
+  - ❌ 「修正するつもり」「修正する予定」「修正する必要があります」 (intent / obligation form)
+  - ✅ Use past / completion form instead: `fixed`, `applied`, `completed`, 「修正しました」「実施済」「適用完了」
+  - ✅ When work is incomplete: return `FINDINGS_ONLY` (read-only review) or stop and report budget exhaustion via the Final Status Schema below — never paraphrase intent as completion
+
+## Final Status Schema (PATCH_APPLIED / FINDINGS_ONLY)
+
+This agent is bounded to **read-only review or single-fix scope** (see Caller
+Scoping Guidance below). The final response must declare its status with one of
+two markers so the parent (caller) can mechanically classify the outcome
+without parsing prose:
+
+- **`PATCH_APPLIED`** — `--write` mode was honored, a patch was actually
+  written by Codex, and the caller can verify with `git diff`. Use this only
+  when a concrete file change exists.
+- **`FINDINGS_ONLY`** — review or analysis was completed without any file
+  modification. Default mode for read-only Codex calls. The body should list
+  findings (file path + line + severity + rationale) and stop.
+
+**Why this matters**: this agent's `maxTurns: 10` is the **agent tool-use**
+ceiling (Bash + Read + return), not a downstream Codex budget. The downstream
+Codex CLI separately enforces ~30 tool_uses per invocation (see Caller
+Scoping Guidance). The status marker does **not** structurally solve either
+ceiling — it only mechanizes the return signal so callers can detect
+budget-exhausted truncation without parsing prose. **Narrow-scope enforcement
+remains the caller's responsibility** (1 file / 1 question / 1 fix per
+dispatch); the markers exist to make that contract verifiable, not to
+relax it.
+
+A response that ends with future-tense (`修正します`) without
+`PATCH_APPLIED` or `FINDINGS_ONLY` is treated as **INTERRUPTED**, not done.
+
+### Marker emission rules (agent itself)
+
+After Bash returns Codex stdout (or `OUTPUT_PATH=...` in redirect mode),
+this agent **must** append a final status marker to its own response on
+its own line:
+
+- `PATCH_APPLIED` — `--write` mode was honored AND files actually changed
+  (verify by inspecting Codex stdout for an apply summary). Caller can
+  confirm via `git diff`.
+- `FINDINGS_ONLY` — read-only review (default mode without `--write`),
+  or `--write` was passed but no patch was applied. The body lists
+  findings (file path + line + severity + rationale) and stops.
+
+Omitting the marker is treated as budget exhaustion (INTERRUPTED) by the
+caller. The marker line is appended **after** the verbatim Codex stdout
+and is the only synthetic line this agent adds.
+
+### Marker behavior in Output File Redirect mode
+
+When the `[output-file: <abs-path>]` marker is present (Output File Redirect
+section below):
+
+- Codex stdout is redirected to `<abs-path>`. The status marker (`PATCH_APPLIED`
+  / `FINDINGS_ONLY`) is **appended to that file** as the final non-empty
+  line, not to the agent response.
+- The agent return value remains `OUTPUT_PATH=...` / `OUTPUT_BYTES=...`
+  / optional `EXIT_CODE=...` (no marker on the agent response side).
+- Caller responsibility: read the file, then `tail -n 1` (last non-empty
+  line) to obtain the status marker.
+
+**Caller responsibilities (when dispatching this agent)**:
+
+1. Set scope to **narrow** by default (read-only review or 1-file 1-fix scope).
+2. Inspect the final marker (`PATCH_APPLIED` or `FINDINGS_ONLY`) before treating
+   the dispatch as complete (in inline mode: last line of the agent response;
+   in redirect mode: last non-empty line of `OUTPUT_PATH`).
+3. Do not re-dispatch a wide-scope job after a budget-exhausted response —
+   split into multiple narrow dispatches per concern.
 
 ## Caller Scoping Guidance (tool_uses budget)
 
