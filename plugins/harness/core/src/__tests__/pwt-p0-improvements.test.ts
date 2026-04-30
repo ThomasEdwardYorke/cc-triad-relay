@@ -145,9 +145,13 @@ describe("P0-1+2+4: agents/worker.md — subagent failure mode 撲滅", () => {
       );
     });
 
-    it("`NULLS NOT DISTINCT` 書換禁止 (PG 14 制約由来) を明示", () => {
-      expect(content).toMatch(/NULLS\s+NOT\s+DISTINCT/i);
-      expect(content).toMatch(/(?:PG\s*14|PostgreSQL\s*14|local\s+PostgreSQL)/i);
+    it("version-specific syntax 書換禁止 (generic、local 環境の syntax を書換える迂回禁止) を明示", () => {
+      // 旧 expectation `NULLS NOT DISTINCT` + `PG 14` は parts-management specific 漏洩 (CR R2 指摘)。
+      // generic に version-specific syntax の書換禁止が明示されていれば足りる。
+      expect(content).toMatch(/version[-\s]specific\s+syntax/i);
+      expect(content).toMatch(
+        /local\s*(?:のみ|だけ|-only|environment|環境)|local-only|local\s+variant/i,
+      );
     });
 
     it("INFRA_BLOCKED 報告経路を明示 (DB workaround を続けない)", () => {
@@ -236,13 +240,20 @@ describe("P0-3 + P0-5: commands/parallel-worktree.md — coordinator contract �
       expect(content).toMatch(/Environment\s+Manifest|環境\s*マニフェスト|環境制約\s*マニフェスト/i);
     });
 
-    it("PG 14 / PG 15+ 差分を例示として含む", () => {
-      expect(content).toMatch(/PG\s*14|PostgreSQL\s*14/i);
-      expect(content).toMatch(/PG\s*15|PostgreSQL\s*15/i);
+    it("local 環境と CI 環境の差分概念を例示として含む (generic、project-specific でない)", () => {
+      // 旧 expectation `PG 14 / PG 15+` は parts-management specific 漏洩 (CR R2 指摘)。
+      // generic な version-difference / local-vs-CI 概念で表現される旨だけ verify。
+      expect(content).toMatch(
+        /local\s+(?:environment|環境)|CI\s+(?:environment|環境)|local.*CI|CI.*local|version\s*(?:差分|差|mismatch|difference)|local-only|CI と同等|version[-\s]specific/i,
+      );
     });
 
-    it("`NULLS NOT DISTINCT` を Environment Manifest 例として記述", () => {
-      expect(content).toMatch(/NULLS\s+NOT\s+DISTINCT/i);
+    it("version-specific syntax / unsupported feature の概念を例示として記述 (generic)", () => {
+      // 旧 expectation `NULLS NOT DISTINCT` は project-specific reference (CR R2 指摘)。
+      // generic な `version-specific syntax` / `unsupported syntax / feature` 等の概念で十分。
+      expect(content).toMatch(
+        /version[-\s]specific\s+syntax|unsupported\s+(?:syntax|feature)|DB[-\s]specific\s+syntax|DB\s+feature[s]?\s+(?:not\s+)?(?:supported|unavailable|unsupported)/i,
+      );
     });
 
     it("worker prompt 先頭への注入を明示", () => {

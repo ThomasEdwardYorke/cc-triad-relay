@@ -241,93 +241,106 @@ branch: <feature_branch-slug>
 ## Environment Manifest (worker prompt 先頭に注入、必須)
 
 coordinator は **worker prompt 先頭に Environment Manifest を inject (prepend)
-する** 責務を持つ。観測された subagent failure mode (worker が PG 14 / PG 15+
-差分を知らずに `NULLS NOT DISTINCT` migration failure を「自分が直すべき
-failure」と解釈し、alembic skip / 手動 SQL の禁止迂回を探索した pattern) に
-対する構造的対策。
+する** 責務を持つ。観測された subagent failure mode (worker が local 環境と CI
+環境の runtime / DB version 差分を知らずに、unsupported な syntax / feature
+が原因の test failure を「自分が直すべき failure」と解釈し、migration skip /
+手動 SQL での test DB 構築 / version-specific syntax の local-only 書換等の
+禁止迂回を探索する pattern) に対する構造的対策。
 
 **注入する内容 (project ごとに異なるが、典型例)**:
 
 ```text
 ## Environment Manifest (known infra constraints)
 
-- Local PostgreSQL is 14 (CI is 15+).
-- migration `002_baseline.py` uses `NULLS NOT DISTINCT`, which is unsupported on PG 14.
-- Local `alembic upgrade head` MAY fail for this known reason.
+- Local <runtime> is <version-A> (CI is <version-B>).
+- A migration uses DB features unavailable in some local/CI environments.
+- Local migration may fail for this known reason.
 - This is a known infrastructure limitation, not a task failure to fix.
 
 ### Forbidden actions (do not bypass migrations)
 
-- alembic migration skip / migration bypass で test DB を作る
+- migration skip / migration bypass で test DB を作る
 - 手動 SQL (manual SQL) で migration の一部を再現
-- `NULLS NOT DISTINCT` を local-only に書換
+- DB-specific syntax を local-only に書換
 - fake schema を test fixture で構築して migration failure を隠す
 
 ### Allowed fallback when blocked by infra
 
 - DB 不要範囲の unit / collection / static check は実施
-- PG 14 limitation として `INFRA_BLOCKED` 報告 + 撤退
-- coordinator に PG 15+ 環境での検証を依頼
+- known infra limitation として `INFRA_BLOCKED` 報告 + 撤退
+- coordinator に CI と同等環境での検証を依頼
 ```
 
 **取得元**: project の `harness.config.json` から `environmentManifest`
-field を読み取って prompt に inject する。**標準化された JSON schema**:
+field を読み取って prompt に inject する。
+
+**実装契約は free-form object**:
+`plugins/harness/schemas/harness.config.schema.json` と
+`plugins/harness/core/src/config.ts` の両方で `environmentManifest` は
+`additionalProperties: true` の自由形式 object と定義されている (sub-key の
+構造を strict には強制しない)。`validateEnvironmentManifest()` は
+**plain object か undefined か** だけを runtime で gate する。下記の
+example schema は project が任意で採用できる **推奨キー例 (suggested
+structure / example keys)** であり、必須契約ではない:
 
 ```json
 {
   "environmentManifest": {
-    "postgres": {
-      "version": 14,
-      "unsupported_features": ["NULLS NOT DISTINCT"]
+    "<runtime>": {
+      "version": "<version>",
+      "unsupported_features": ["<feature>"]
     },
-    "node": { "version": 18 },
+    "<other-runtime>": { "version": "<version>" },
     "ci_environment": {
-      "postgres_version": 15,
-      "node_version": 20
+      "<runtime>_version": "<version>"
     },
     "forbidden_workarounds": [
-      "alembic skip / migration bypass",
-      "manual SQL test DB setup",
-      "version-specific syntax 書換 (local-only variant)"
+      "<workaround 1>",
+      "<workaround 2>"
     ]
   }
 }
 ```
 
-field 構造規約:
-- 各 sub-key (`postgres` / `node` / etc) は **object** で、`version` と
-  optional な `unsupported_features` (string array) を持つ
-- `ci_environment` は CI 側の version / 制約を別途宣言 (local と CI の差分が
-  明示できる構造)
-- `forbidden_workarounds` は project 固有の禁止迂回 list (worker.md generic
-  禁止 list の補強)
+field 推奨ガイドライン (MUST ではなく recommendation):
+- 各 sub-key (`<runtime>` / `<other-runtime>` / etc) は推奨として object
+  (`version` / `unsupported_features`) で記述するが、実装契約は free-form
+  object なので未知キー / 別構造も許容
+- `ci_environment` は推奨キーで、CI 側の version / 制約を別途宣言する用途
+  (local と CI の差分が明示できる構造)
+- `forbidden_workarounds` は推奨キーで、project 固有の禁止迂回 list を保持
+  (worker.md generic 禁止 list の補強)
 - field 全体が欠落している project では Environment Manifest section を **空
   ヘッダのみ** で出して「明示すべき infra 制約なし、infra 失敗時は
   INFRA_BLOCKED で撤退してよい」契約を伝える
 
 **Materialization (JSON → markdown transformation algorithm)**:
 
-coordinator は `harness.config.json.environmentManifest` JSON を以下の規則で
-markdown bullet list に変換し、worker prompt 先頭に inject する:
+coordinator は `harness.config.json.environmentManifest` JSON を以下の **推奨
+規則** で markdown bullet list に変換し、worker prompt 先頭に inject する
+(下記は推奨キー (`version` / `unsupported_features` / `ci_environment` /
+`forbidden_workarounds`) を使った場合の transformation。free-form 構造の
+場合は coordinator が任意の形式で markdown 化してよい):
 
-| JSON 構造 | markdown 出力 |
+| JSON 構造 (推奨キー) | markdown 出力 |
 |---|---|
-| `<key>: { "version": <N>, "unsupported_features": [<list>] }` | `- <Key 大文字化> <N> — unsupported: <comma-separated>` |
-| `<key>: { "version": <N> }` (unsupported なし) | `- <Key 大文字化> <N>` |
-| `ci_environment: { "<tool>_version": <N>, ... }` | `- (CI: <tool> <N>, ...)` (1 行サマリ) |
+| `<key>: { "version": <V>, "unsupported_features": [<list>] }` | `- <Key 大文字化> <V> — unsupported: <comma-separated>` |
+| `<key>: { "version": <V> }` (unsupported なし) | `- <Key 大文字化> <V>` |
+| `ci_environment: { "<tool>_version": <V>, ... }` | `- (CI: <tool> <V>, ...)` (1 行サマリ) |
 | `forbidden_workarounds: [<list>]` | `### Forbidden actions (project-specific)\n- <each item>` |
+| 推奨キー以外の自由構造 | coordinator が任意で markdown 化 (free-form fallback) |
 | field 全体未定義 | 空 `## Environment Manifest` ヘッダのみ |
 
-具体例 (JSON input):
+具体例 (推奨キー使用、JSON input):
 
 ```json
 {
   "environmentManifest": {
-    "postgres": { "version": 14, "unsupported_features": ["NULLS NOT DISTINCT"] },
-    "node": { "version": 18 },
-    "ci_environment": { "postgres_version": 15, "node_version": 20 },
+    "<runtime>": { "version": "<v-local>", "unsupported_features": ["<feature>"] },
+    "<other-runtime>": { "version": "<v-local>" },
+    "ci_environment": { "<runtime>_version": "<v-ci>", "<other-runtime>_version": "<v-ci>" },
     "forbidden_workarounds": [
-      "alembic skip / migration bypass",
+      "migration skip / migration bypass",
       "manual SQL test DB setup",
       "version-specific syntax 書換 (local-only variant)"
     ]
@@ -341,17 +354,18 @@ coordinator は worker prompt 構築時に以下の順序で組み立てる:
 2. **Environment Manifest block を prepend** (frontmatter 後、task 説明の前)
 3. task 詳細 (タスク説明 / Working directory / Acceptance Criteria 等)
 
-実装例 (上記 JSON input を materialization した markdown output):
+実装例 (上記 JSON input を materialization した markdown output、placeholder
+に project 固有の値が入る):
 
 ```markdown
 ## Environment Manifest (known infra constraints)
 
-- PostgreSQL 14 — unsupported: NULLS NOT DISTINCT
-- Node 18
-- (CI: postgres 15, node 20)
+- <Runtime> <v-local> — unsupported: <feature>
+- <Other-runtime> <v-local>
+- (CI: <runtime> <v-ci>, <other-runtime> <v-ci>)
 
 ### Forbidden actions (project-specific)
-- alembic skip / migration bypass
+- migration skip / migration bypass
 - manual SQL test DB setup
 - version-specific syntax 書換 (local-only variant)
 

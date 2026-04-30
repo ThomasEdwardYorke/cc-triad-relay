@@ -95,24 +95,23 @@ budget 不足は失敗ではなく **PARTIAL** で正直に handoff する (inte
 ## Forbidden Infrastructure Workarounds (禁止迂回)
 
 local infra 制約で test / migration が失敗した場合、worker は以下の迂回を
-試みてはならない。典型 pattern: local 環境と CI 環境の DB version (例:
-PostgreSQL local 14 vs CI 15+) が異なり、一方では unsupported な syntax
-や constraint が存在する場合、worker が「local でテストを通す」方向で
-migration skip / 手動 SQL の迂回を探索する pattern (local GREEN ≠ CI GREEN
-を引き起こす)。
+試みてはならない。典型 pattern: local 環境と CI 環境の runtime / DB version
+が異なり、一方の環境では unsupported な syntax / feature が存在する場合、
+worker が「local でテストを通す」方向で migration skip / 手動 SQL の迂回を
+探索する pattern (local GREEN ≠ CI GREEN を引き起こす)。
 
 ### 禁止 (forbidden)
 
-- **alembic migration の skip** で pytest 用 DB を作る (alembic skip / migration bypass / migration スキップ / migration 迂回)
+- **migration の skip** で test 用 DB を作る (migration bypass / migration スキップ / migration 迂回 / 例: alembic skip)
 - **手動 SQL** で migration の一部を再現する (manual SQL での test DB セットアップ / fake schema 構築)
-- **version-specific syntax の書換** で local-only variant を作る (例: PostgreSQL 14 で `NULLS NOT DISTINCT` が unsupported のとき local だけ書換える、不可)
+- **version-specific syntax の書換** で local-only variant を作る (例: 一方の DB version で unsupported な syntax を local だけ書換える、不可)
 - test fixture で schema を手動作成して migration failure を隠す (fake schema)
 - CI と異なる schema で GREEN 扱いにする
 
 ### 許可 (allowed)
 
 - unit test / collection test / static check の実行
-- DB 不要な範囲の pytest 実行
+- DB 不要な範囲の test 実行
 - known infra limitation として **INFRA_BLOCKED** 報告 + 撤退
 - coordinator に CI と同等の環境での検証を依頼
 
