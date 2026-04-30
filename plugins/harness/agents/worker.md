@@ -264,21 +264,19 @@ git push -u origin <branch>
 
 最終応答は以下 **8 field を全て含む schema** で返す。Coordinator が機械的
 に parse して完了判定するため、**field を省略してはならない** (field 欠落は
-完了として扱われない):
+完了として扱われない)。**全 field は plain-text colon-separated values**
+形式 (1 field = 1 行)。`commands/parallel-worktree.md` Phase 3 の機械的最終
+確認 step 4 は本 schema を canonical reference として parse する:
 
 ```text
 STATUS: DONE | PARTIAL | BLOCKED | FAILED
-CHANGED_FILES:
-  - path/to/file (変更内容)
-COMMIT: <commit hash>            # DONE で commit 必須タスクのみ、それ以外は null
-PUSHED_BRANCH: <branch>          # DONE で push 必須タスクのみ、それ以外は null
-VALIDATION:
-  - tests: PASS | FAIL | SKIPPED (理由)
-  - lint: PASS | FAIL | SKIPPED (理由)
-  - typecheck: PASS | FAIL | SKIPPED (理由)
-BLOCKERS: <BLOCKED status のときのみ理由>     # 例: PG 14 NULLS NOT DISTINCT unsupported
-NEXT_ACTION: <PARTIAL/BLOCKED のときのみ次の 1 command>
-FORBIDDEN_ACTIONS_USED: no       # 禁止迂回を一切実施していない宣言 (yes は規律違反)
+CHANGED_FILES: <count or comma-separated list>     # 空なら "(none)"
+COMMIT: <commit hash>                              # 実装系 DONE で必須、調査・設計は "(none)"
+PUSHED_BRANCH: <branch>                            # 実装系 DONE で必須、push なしは "(none)"
+VALIDATION: tests=PASS lint=PASS typecheck=PASS    # single-line summary。SKIPPED+理由は parens で続けてよい (例: tests=SKIPPED(no DB))
+BLOCKERS: <BLOCKED 理由>                           # BLOCKED 以外は "(none)"
+NEXT_ACTION: <PARTIAL/BLOCKED の次 1 command>      # DONE は "(complete)"、PARTIAL/BLOCKED は実行 command
+FORBIDDEN_ACTIONS_USED: no                         # 禁止迂回を一切実施していない宣言 (yes は規律違反、ledger 追記)
 ```
 
 ### 8 field の意味

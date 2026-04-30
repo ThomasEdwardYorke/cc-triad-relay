@@ -305,7 +305,35 @@ field 構造規約:
   ヘッダのみ** で出して「明示すべき infra 制約なし、infra 失敗時は
   INFRA_BLOCKED で撤退してよい」契約を伝える
 
-**Materialization (prompt injection 手順)**:
+**Materialization (JSON → markdown transformation algorithm)**:
+
+coordinator は `harness.config.json.environmentManifest` JSON を以下の規則で
+markdown bullet list に変換し、worker prompt 先頭に inject する:
+
+| JSON 構造 | markdown 出力 |
+|---|---|
+| `<key>: { "version": <N>, "unsupported_features": [<list>] }` | `- <Key 大文字化> <N> — unsupported: <comma-separated>` |
+| `<key>: { "version": <N> }` (unsupported なし) | `- <Key 大文字化> <N>` |
+| `ci_environment: { "<tool>_version": <N>, ... }` | `- (CI: <tool> <N>, ...)` (1 行サマリ) |
+| `forbidden_workarounds: [<list>]` | `### Forbidden actions (project-specific)\n- <each item>` |
+| field 全体未定義 | 空 `## Environment Manifest` ヘッダのみ |
+
+具体例 (JSON input):
+
+```json
+{
+  "environmentManifest": {
+    "postgres": { "version": 14, "unsupported_features": ["NULLS NOT DISTINCT"] },
+    "node": { "version": 18 },
+    "ci_environment": { "postgres_version": 15, "node_version": 20 },
+    "forbidden_workarounds": [
+      "alembic skip / migration bypass",
+      "manual SQL test DB setup",
+      "version-specific syntax 書換 (local-only variant)"
+    ]
+  }
+}
+```
 
 coordinator は worker prompt 構築時に以下の順序で組み立てる:
 
@@ -313,13 +341,14 @@ coordinator は worker prompt 構築時に以下の順序で組み立てる:
 2. **Environment Manifest block を prepend** (frontmatter 後、task 説明の前)
 3. task 詳細 (タスク説明 / Working directory / Acceptance Criteria 等)
 
-実装例:
+実装例 (上記 JSON input を materialization した markdown output):
 
 ```markdown
 ## Environment Manifest (known infra constraints)
 
-- PostgreSQL 14 local (CI: PG 15+) — unsupported on local: NULLS NOT DISTINCT
-- Node 18 local (CI: 20+)
+- PostgreSQL 14 — unsupported: NULLS NOT DISTINCT
+- Node 18
+- (CI: postgres 15, node 20)
 
 ### Forbidden actions (project-specific)
 - alembic skip / migration bypass
@@ -561,8 +590,16 @@ verification、artifact-driven completion judgment):
 6. **BLOCKED / PARTIAL handoff parser** — `STATUS: BLOCKED` または
    `STATUS: PARTIAL` の場合、`BLOCKERS` / `NEXT_ACTION` field を parse して
    coordinator が次の action を判断:
-   - **BLOCKED + INFRA_BLOCKED**: coordinator が PG 15+ 環境での再実行を
-     検討 (worker に同じ task を再 dispatch しない)
+   - **BLOCKED + INFRA_BLOCKED**: 同じ worker / 同じ環境に再 dispatch
+     **しない** (infra 制約は worker 側では変わらないため retry 無意味)。
+     代わりに以下のいずれかを coordinator が選択:
+     - (a) **別環境で再実行**: CI 環境 / human-driven 環境 / 別 PR で
+       infra 制約を満たす版を実行
+     - (b) **コードを修正して回避**: coordinator または別 worker が、
+       infra 制約に依存しない実装に書き換え (例: DB-dependent test を
+       SKIPPED 経路に分割)
+     - (c) **escalate to user**: 上記 (a) (b) のどちらも実行不能なら
+       ユーザーに判断委譲
    - **PARTIAL**: 残作業を別 worker / coordinator が継続、`NEXT_ACTION` の
      1 command を採用
    - **FAILED**: 要件再確認 + ユーザーに escalation

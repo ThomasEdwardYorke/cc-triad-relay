@@ -164,6 +164,26 @@ section below):
 - Caller responsibility: read the file, then `tail -n 1` (last non-empty
   line) to obtain the status marker.
 
+**Append semantics (precise contract)**:
+
+- **Existing content preservation**: Codex stdout written to `<abs-path>` is
+  preserved verbatim. The agent does not re-format, strip blank lines, or
+  truncate trailing whitespace.
+- **Marker line termination**: the marker line is appended with a single
+  trailing LF (`\n`). If the existing file already ends with a trailing LF,
+  the result is `...\n<MARKER>\n` (no double-LF normalization required); if
+  the existing file does not end with LF, the agent prepends one LF before
+  the marker so the marker stands alone on its own line: `...<last byte>\n<MARKER>\n`.
+- **Marker text format**: literal `PATCH_APPLIED` or `FINDINGS_ONLY` only,
+  no surrounding whitespace, no trailing punctuation.
+- **`tail -n 1` semantics**: caller invokes `tail -n 1 "$OUTPUT_FILE"` and
+  expects exactly the marker text (with optional trailing `\n` consumed by
+  the shell). If `tail -n 1` returns an empty line, the marker append failed
+  and the run is treated as INTERRUPTED.
+- **Idempotency**: if the agent is `SendMessage`-resumed after a partial
+  truncation, the resumed turn must NOT re-append a marker if one is already
+  present at the file tail (prevent double markers).
+
 **Caller responsibilities (when dispatching this agent)**:
 
 1. Set scope to **narrow** by default (read-only review or 1-file 1-fix scope).
