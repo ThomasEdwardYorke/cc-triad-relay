@@ -121,6 +121,20 @@ Fix: run 'claude plugin install codex@openai-codex --scope project'
   subsequent budget exhaustion / mid-response truncation cannot reframe
   intent as completion.
 
+  **Coverage limitation (best-effort within stdout cap)**: the inline
+  marker is best-effort within `TASK_MAX_OUTPUT_LENGTH` (default 32000
+  chars, runtime-observed cap 160000). For long-running Codex review
+  tasks whose verbatim stdout would exceed the cap, the marker can still
+  be middle-truncated before it is reached. Callers that anticipate
+  large output (CodeRabbit-style multi-file review, full PR review JSON,
+  Codex Phase 7 broad audits) MUST opt into the **Output File Redirect**
+  contract below by including the `[output-file: <abs-path>]` marker in
+  the prompt body — the agent then redirects Codex stdout to a file and
+  appends the marker as the file's last non-empty line, bypassing the
+  inline cap. Treat the inline marker-first safeguard as the default
+  for short reviews; default to redirect mode when the expected stdout
+  size is unknown or likely to exceed ~10000 chars.
+
 ## Final Status Schema (PATCH_APPLIED / FINDINGS_ONLY)
 
 This agent is bounded to **read-only review or single-fix scope** (see Caller

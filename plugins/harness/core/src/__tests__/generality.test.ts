@@ -298,12 +298,18 @@ const BLOCK_PATTERNS: BlockPattern[] = [
   // 除外しても情報損失なし (代わりに `spec gap` / `feature flag X` 等の意味語に
   // 置換すべし)。
   //
+  // 左境界の厳格化 (Codex Phase 7 minor 対応): 旧 regex `/\bD-\d+\b/g` は
+  // `\b` が word/non-word 境界で成立するため `25-D-37` のような hyphen-compound
+  // や `漢字D-37` のような CJK-adjacent でも誤 match した。`(?<![\w-])` で
+  // 左側が word char / hyphen の場合を除外し、左境界を「文頭 or 純粋空白 /
+  // 純粋句読点」に限定する (B-3f の `gen-N` pattern と同じ lookbehind 設計)。
+  //
   // shipped spec で過去の関連 entry を参照したい場合は `git log` / CHANGELOG.md /
   // `docs/maintainer/` に移管する。
   {
     id: "B-3h",
     category: "tracker-id",
-    pattern: /\bD-\d+\b/g,
+    pattern: /(?<![\w-])D-\d+\b/g,
     message:
       "内部 backlog tracker ID (`D-<digits>` 形式、例: `D-74` / `D-150`) が含まれています。" +
       "shipped spec から除外し、CHANGELOG.md / `docs/maintainer/` / commit message に移管してください。" +
@@ -2350,6 +2356,34 @@ describe("exemption grammar (unified, pipe-separated)", () => {
 
     it("negative: `d-74` (小文字) は match しない (case-sensitive)", () => {
       expect(matches("d-74")).toBe(false);
+    });
+
+    // Codex Phase 7 minor 対応: lookbehind `(?<![\w-])` 強化で左境界を厳格化。
+    // 旧 `\bD-\d+\b` は word/non-word 境界で成立するため hyphen-compound や
+    // CJK-adjacent などを誤 match していた。
+    it("negative: `25-D-37` (hyphen-compound、左に `-`) は match しない (lookbehind 強化)", () => {
+      expect(matches("25-D-37")).toBe(false);
+    });
+
+    it("negative: `foo-D-12` (左 word + hyphen compound) は match しない", () => {
+      expect(matches("foo-D-12")).toBe(false);
+    });
+
+    // CJK-adjacent caveat: JavaScript `\w` is ASCII only ([A-Za-z0-9_])
+    // unless the `/u` flag + Unicode property escapes are used. The
+    // lookbehind `(?<![\w-])` therefore does NOT exclude CJK adjacency
+    // — `漢字D-37` still matches because `字` is not in `\w`. Documented
+    // here as a known boundary; if CJK leaks become a real issue later,
+    // upgrade the pattern to `/(?<![\p{L}\p{N}_-])D-\d+\b/gu` (Unicode-
+    // aware) and re-pin this case as a negative.
+    it("known boundary: CJK-adjacent `漢字D-37` STILL matches (ASCII `\\w` limitation)", () => {
+      expect(matches("漢字D-37")).toBe(true);
+    });
+
+    it("positive (regression): 文頭 / whitespace 後の `D-74` は match する", () => {
+      expect(matches("D-74")).toBe(true);
+      expect(matches("note: D-74 was filed")).toBe(true);
+      expect(matches("(D-74)")).toBe(true); // 括弧 = 非 word 非 hyphen
     });
   });
 });

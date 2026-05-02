@@ -298,7 +298,34 @@ export interface WorkConfig {
    * values fall back to `undefined` after a stderr warning.
    */
   pipelineCheckPath?: string;
+  /**
+   * Project-side default for `/harness-work`'s parallel implementation
+   * engine. `"v1"` (default, back-compat) delegates Parallel / Breezing
+   * modes to `/parallel-worktree` (Model A). `"v2"` delegates to
+   * `/parallel-worktree-v2` (Model B, per-worktree independent claude
+   * processes). Overridden by `--parallel-mode=v1|v2` flag and by opt-in
+   * auto rules (see `allowAutoModelB`). Resolver:
+   * `core/src/work/parallel-mode-resolver.ts`. Invalid values fall back
+   * to `"v1"` after a stderr warning.
+   */
+  parallelMode: ParallelMode;
+  /**
+   * Opt-in gate for `/harness-work` v6 auto Model B downgrade rules.
+   * When `true`, the resolver picks `"v2"` automatically when
+   * `n_tasks >= 2 && recent_subagent_failures >= 2` (failure-history rule)
+   * OR `n_tasks >= 3` (task-count rule). Default `false` preserves v5
+   * behaviour exactly — auto rules are silent until explicit opt-in.
+   */
+  allowAutoModelB: boolean;
 }
+
+/**
+ * Allowed values for `WorkConfig.parallelMode` and the `--parallel-mode`
+ * flag. Single source of truth; the resolver
+ * (`core/src/work/parallel-mode-resolver.ts`) re-exports its own copy
+ * for runtime validation.
+ */
+export type ParallelMode = "v1" | "v2";
 
 export interface SecurityConfig {
   /**
@@ -897,6 +924,11 @@ export const DEFAULT_CONFIG: HarnessConfig = {
       enforceHarnessWorkEssence: false,
     },
     failFast: true,
+    // /harness-work v6 (Phase A-2): default to Model A (`v1`) for
+    // back-compat. Consumers opt in to Model B by setting `parallelMode`
+    // to `v2` and / or enabling the auto rules with `allowAutoModelB`.
+    parallelMode: "v1",
+    allowAutoModelB: false,
   },
   security: {
     enabledChecks: [
@@ -1085,7 +1117,7 @@ function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
     }
   }
   const mergedWork: WorkConfig = validateWorkPipelineCheckPath(
-    validateWorkTaskTracker(baseWork),
+    validateWorkTaskTracker(validateWorkParallelMode(baseWork)),
   );
 
   // repoKind is a top-level scalar with strict enum validation.
@@ -1541,6 +1573,46 @@ const VALID_TASK_TRACKER_MODES: readonly TaskTrackerMode[] = [
   "plans",
   "handoff",
 ];
+
+const VALID_PARALLEL_MODES: readonly ParallelMode[] = ["v1", "v2"];
+
+/**
+ * Guard against `work.parallelMode` / `work.allowAutoModelB` being set
+ * to invalid values. Invalid `parallelMode` falls back to DEFAULT
+ * (`"v1"`); invalid `allowAutoModelB` (non-boolean) falls back to
+ * DEFAULT (`false`). Both emit a stderr warning so the consumer learns
+ * the rejected payload, then keep the loader fail-open (consistent with
+ * `validateWorkTaskTracker` / `validateWorkPipelineCheckPath`).
+ */
+function validateWorkParallelMode(cfg: WorkConfig): WorkConfig {
+  let next = cfg;
+
+  // parallelMode enum check
+  if (!VALID_PARALLEL_MODES.includes(next.parallelMode)) {
+    process.stderr.write(
+      `[harness config] work.parallelMode=${sanitiseConfigValueForStderr(
+        next.parallelMode,
+      )} is not in ${JSON.stringify(
+        VALID_PARALLEL_MODES,
+      )}; falling back to "${DEFAULT_CONFIG.work.parallelMode}".\n`,
+    );
+    next = { ...next, parallelMode: DEFAULT_CONFIG.work.parallelMode };
+  }
+
+  // allowAutoModelB type check (boolean only)
+  if (typeof next.allowAutoModelB !== "boolean") {
+    process.stderr.write(
+      `[harness config] work.allowAutoModelB=${sanitiseConfigValueForStderr(
+        next.allowAutoModelB,
+      )} is not a boolean; falling back to ${String(
+        DEFAULT_CONFIG.work.allowAutoModelB,
+      )}.\n`,
+    );
+    next = { ...next, allowAutoModelB: DEFAULT_CONFIG.work.allowAutoModelB };
+  }
+
+  return next;
+}
 
 const VALID_REPO_KINDS: readonly RepoKind[] = ["consumer", "harness-itself"];
 

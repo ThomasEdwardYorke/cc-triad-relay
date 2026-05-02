@@ -26,7 +26,14 @@
  *
  * Spec source: `commands/harness-work.md` v6 Auto Mode Detection section.
  */
-/** Allowed values for `--parallel-mode` and `work.parallelMode`. */
+/**
+ * Allowed values for `--parallel-mode` and `work.parallelMode`.
+ *
+ * Kept as a literal tuple in the resolver (not imported from `config.ts`)
+ * to keep this file pure-function — the resolver is consumed by both
+ * `loadConfig`-aware callers and direct CLI argv parsers, so depending
+ * on `config.ts` would create a cycle.
+ */
 export declare const VALID_PARALLEL_MODES: readonly ["v1", "v2"];
 export type ParallelMode = (typeof VALID_PARALLEL_MODES)[number];
 /** Source from which the resolved mode was taken (telemetry / user-facing). */

@@ -197,6 +197,45 @@ describe("resolveParallelMode — precedence chain", () => {
     });
   });
 
+  describe("untyped caller defensive coercion", () => {
+    // Adversarial: a raw caller (argv parser, untyped JSON) might pass
+    // a non-string truthy value such as `42` or `false`. The resolver
+    // must NOT throw when calling `.trim()` on those — it should
+    // coerce them to "absent" and continue the precedence chain.
+    it("non-string cliFlag (number) does not throw and falls through to default", () => {
+      const r = resolveParallelMode({
+        cliFlag: 42 as unknown as string,
+      });
+      expect(r.mode).toBe("v1");
+      expect(r.source).toBe("default");
+      expect(r.warnings).toEqual([]);
+    });
+
+    it("non-string cliFlag (boolean false) does not throw and falls through to default", () => {
+      const r = resolveParallelMode({
+        cliFlag: false as unknown as string,
+      });
+      expect(r.mode).toBe("v1");
+      expect(r.source).toBe("default");
+    });
+
+    it("non-string harnessConfigDefault (number) does not throw and falls through to default", () => {
+      const r = resolveParallelMode({
+        harnessConfigDefault: 7 as unknown as string,
+      });
+      expect(r.mode).toBe("v1");
+      expect(r.source).toBe("default");
+    });
+
+    it("non-string harnessConfigDefault (object) does not throw", () => {
+      const r = resolveParallelMode({
+        harnessConfigDefault: { v: "v2" } as unknown as string,
+      });
+      expect(r.mode).toBe("v1");
+      expect(r.source).toBe("default");
+    });
+  });
+
   describe("warnings", () => {
     it("invalid cliFlag emits exactly one warning and falls through to default", () => {
       const r = resolveParallelMode({ cliFlag: "vX" });

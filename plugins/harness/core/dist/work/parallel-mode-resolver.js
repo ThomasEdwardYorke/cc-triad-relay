@@ -26,10 +26,28 @@
  *
  * Spec source: `commands/harness-work.md` v6 Auto Mode Detection section.
  */
-/** Allowed values for `--parallel-mode` and `work.parallelMode`. */
+/**
+ * Allowed values for `--parallel-mode` and `work.parallelMode`.
+ *
+ * Kept as a literal tuple in the resolver (not imported from `config.ts`)
+ * to keep this file pure-function — the resolver is consumed by both
+ * `loadConfig`-aware callers and direct CLI argv parsers, so depending
+ * on `config.ts` would create a cycle.
+ */
 export const VALID_PARALLEL_MODES = ["v1", "v2"];
 function isValidMode(value) {
     return VALID_PARALLEL_MODES.includes(value);
+}
+/**
+ * Defensive coercion for inputs that may arrive from untyped callers
+ * (e.g. raw argv parsers, JSON config loaders). Non-string truthy
+ * values like `42` or `false` would crash `(input ?? "").trim()` if we
+ * only used the nullish coalescing operator. Strings are returned
+ * verbatim; everything else is treated as absent (empty string), so
+ * the resolver's regular fallthrough path applies without throwing.
+ */
+function coerceOptionalString(value) {
+    return typeof value === "string" ? value : "";
 }
 /**
  * Resolve the effective parallel-mode by walking the precedence chain.
@@ -38,7 +56,7 @@ function isValidMode(value) {
 export function resolveParallelMode(input) {
     const warnings = [];
     // 1. cliFlag (highest)
-    const cliRaw = (input.cliFlag ?? "").trim();
+    const cliRaw = coerceOptionalString(input.cliFlag).trim();
     if (cliRaw.length > 0) {
         if (isValidMode(cliRaw)) {
             return { mode: cliRaw, source: "cli", warnings };
@@ -63,7 +81,7 @@ export function resolveParallelMode(input) {
     // The config loader normally keeps this on the allowlist, but the resolver
     // re-checks so a malformed payload (`{"work":{"parallelMode":"v3"}}`)
     // cannot leak an invalid mode to the dispatcher.
-    const cfgRaw = (input.harnessConfigDefault ?? "").trim();
+    const cfgRaw = coerceOptionalString(input.harnessConfigDefault).trim();
     if (cfgRaw.length > 0) {
         if (isValidMode(cfgRaw)) {
             return { mode: cfgRaw, source: "harness-config", warnings };

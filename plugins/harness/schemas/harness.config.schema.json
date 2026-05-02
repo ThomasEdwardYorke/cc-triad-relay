@@ -195,6 +195,17 @@
           "type": "string",
           "minLength": 1,
           "description": "Optional project-relative path to a pipeline-verification runbook (e.g. `.claude/skills/<project>-local-rules/references/pipeline-check.md`). Consumed by /harness-work to surface a project-specific addendum on top of the stack-neutral built-in checks. Absolute paths, `..` segments, empty strings, and control-character payloads are rejected at load time and fall back to undefined with a stderr warning."
+        },
+        "parallelMode": {
+          "type": "string",
+          "enum": ["v1", "v2"],
+          "default": "v1",
+          "description": "Project-side default for /harness-work's parallel implementation engine. `v1` (default, back-compat) delegates Parallel/Breezing modes to /parallel-worktree (Model A). `v2` delegates to /parallel-worktree-v2 (Model B, per-worktree independent claude processes). Overridden by `--parallel-mode=v1|v2` flag and by opt-in auto rules (see `allowAutoModelB`). Resolver: `core/src/work/parallel-mode-resolver.ts`."
+        },
+        "allowAutoModelB": {
+          "type": "boolean",
+          "default": false,
+          "description": "Opt-in gate for /harness-work v6 auto Model B downgrade rules. When true, the resolver picks `v2` automatically when `n_tasks >= 2 && recent_subagent_failures >= 2` (failure-history rule) OR `n_tasks >= 3` (task-count rule). Default false preserves v5 behaviour exactly — auto rules are silent until explicit opt-in."
         }
       },
       "allOf": [
