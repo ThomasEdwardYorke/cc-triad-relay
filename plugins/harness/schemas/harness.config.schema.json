@@ -532,6 +532,31 @@
       "type": "object",
       "additionalProperties": true,
       "description": "Per-project infra version / known infrastructure limitation manifest. Coordinator (parallel-worktree / harness-work / tdd-implement) injects this into worker prompts so subagents can detect infra-driven failure (e.g. local DB version differs from CI) without exploring forbidden workarounds. Free-form object; common sub-keys: `postgres` / `node` / `ci_environment` / `forbidden_workarounds`. Materialization algorithm (JSON → markdown bullets) and worker prompt injection are documented in `commands/parallel-worktree.md` 'Environment Manifest injection'. When omitted, coordinator emits an empty manifest section meaning 'no declared infra constraints, INFRA_BLOCKED is still a valid retreat path'."
+    },
+    "clarify": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Configuration for the `/harness:clarify` skill (depth-first interview). Controls how each AskUserQuestion option `description` is composed per absolute rule 7 (audience-aware double-expression + concrete example). All keys optional; defaults equivalent to `{ audienceLevel: \"both\", includeConcreteExamples: true, exampleCount: 1 }`. See `commands/clarify.md` § '絶対原則' rule 7 for the rendering contract.",
+      "properties": {
+        "audienceLevel": {
+          "type": "string",
+          "enum": ["beginner", "senior", "both"],
+          "default": "both",
+          "description": "Target reader for the question `description` text. `both` (default) renders all three lines (ベテラン / 初学者 / 例). `beginner` and `senior` still render all three but emphasise their respective layer; the other layer is kept as a 1-line skim aid rather than removed (operator should never lose information just by changing this knob)."
+        },
+        "includeConcreteExamples": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true (default), each `description` includes at least one concrete `例: ...` line tied to the actual codebase / domain. Set to false only when running rapid-fire follow-up questions where examples become repetitive (the `例:` line can be omitted but the dual-audience lines stay)."
+        },
+        "exampleCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "default": 1,
+          "description": "Number of `例: ...` lines per option `description`. 1 (default) is sufficient for most binary or 2-3 way choices. 2-3 is appropriate when the trade-off requires comparing concrete scenarios side-by-side (e.g., parent-child cascade vs restrict on multiple table pairs)."
+        }
+      }
     }
   }
 }
