@@ -1531,6 +1531,7 @@ describe("plugin.json component 宣言 (Anthropic 公式仕様: 明示宣言で�
   // symmetric deletions from both fs and manifest).
   const EXPECTED_COMMANDS = [
     "branch-merge",
+    "clarify",
     "claude-oneshot",
     "coderabbit-review",
     "codex-team",
