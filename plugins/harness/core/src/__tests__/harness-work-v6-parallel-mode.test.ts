@@ -1,7 +1,7 @@
 /**
  * core/src/__tests__/harness-work-v6-parallel-mode.test.ts
  *
- * `/harness-work` v6 改訂 (D-harness-work-parallel-mode-v2: Auto Mode Detection
+ * `/harness-work` v6 改訂 (parallel-mode v2 spec update: Auto Mode Detection
  * に Model B 経路を追加 + `--parallel-mode=v1|v2` flag 新設) を CI 時点で固定
  * する content test。
  *
@@ -18,8 +18,8 @@
  *      で v2 に降格 (`harness.config.json.work.allowAutoModelB: true` で opt-in)
  *   3. Auto default-v2 rule: `n_tasks >= 3` で v2 (同 opt-in gate)
  *   4. Step 4 委譲表に `/parallel-worktree-v2` 行が追加される
- *   5. v6 update history が末尾に追加され、D-harness-work-parallel-mode-v2 を
- *      引用 / spec gap (Model B 自動委譲経路) を明示
+ *   5. v6 update history が末尾に追加され、parallel-mode v2 spec gap
+ *      (Model B 自動委譲経路) を明示
  *   6. v5 互換性破壊なし (merge mode / detect_merge_orchestration() / 既存
  *      mode lineup は不変)
  */
@@ -161,7 +161,7 @@ describe("/harness-work v6 parallel-mode (commands/harness-work.md)", () => {
       expect(content).toMatch(/-\s*\*\*v6[^\n]+/);
     });
 
-    it("v6 entry が D-harness-work-parallel-mode-v2 / Model B / parallel-mode flag を引用", () => {
+    it("v6 entry が parallel-mode v2 / Model B / parallel-mode flag を引用", () => {
       const v6Entry = content.match(/-\s*\*\*v6[\s\S]*?(?=\n-\s*\*\*v\d|\n##|$)/);
       expect(v6Entry).not.toBeNull();
       const body = v6Entry?.[0] ?? "";

@@ -792,7 +792,7 @@ Skill({skill: "tdd-implement", args: "<task description + AC + forbidden files> 
 
 `v2` は **3+ サブタスク + per-worktree skill access (Pseudo CR + Real CR + Codex Phase 7 を各 worktree で個別実行)** が必要なケースで選ぶ。`v1` で context contention / subagent failure が頻発する場合は opt-in auto rule (`work.allowAutoModelB: true` + `recent_subagent_failures >= 2`) で v2 に降格させる経路もあり。
 
-```
+```text
 # v1 (Model A) — テンプレート表記 (<PROFILE> / <N> は spec 上のプレースホルダ)
 Skill({skill: "parallel-worktree", args: "--max-parallel=<N> --feature-branch=<branch> --profile=<PROFILE> --spec=<inline-spec>"})
 

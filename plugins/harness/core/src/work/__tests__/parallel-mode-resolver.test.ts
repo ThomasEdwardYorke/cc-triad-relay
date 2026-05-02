@@ -1,9 +1,9 @@
 /**
  * core/src/work/__tests__/parallel-mode-resolver.test.ts
  *
- * RED test for `resolveParallelMode` (`/harness-work` v6 D-harness-work-parallel-mode-v2).
+ * Test for `resolveParallelMode` (`/harness-work` v6 parallel-mode v2 spec update).
  *
- * Spec source: `.docs/handoff/harness-model-b-backlog.md` Phase A-2 entry.
+ * Spec source: `commands/harness-work.md` v6 Auto Mode Detection section.
  *
  * Resolution precedence (highest first):
  *   1. cliFlag                      — `--parallel-mode=v1|v2`
