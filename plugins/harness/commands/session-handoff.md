@@ -218,11 +218,19 @@ session-<YYYY-MM-DD>-<phase-slug>.md
    しても `current.md` / `backlog.md` の更新忘れは自動修正されない — `check` は
    報告役であり、人間 / Claude が `update` / `archive` で修正責務を負う。
 
-10. **`check` 後に `current.md` / `backlog.md` を別途 Read する (冗長・redundant)**
-    `check` Gate 2 で両 file の full content を Claude context に ingest 済。
-    **check 後の再 Read (re-read) は冗長**、context 圧迫の原因。詳細が必要なら
-    ingest 済 content を直接 query (新規 Read 不要)。例外: compaction 後は
-    `/session-handoff check` 再走で再 ingest、個別 Read は避ける。
+10. **`check` 後に `current.md` を別途 Read (冗長・依然禁止) / `backlog.md` の Top 3
+    圏外 entry を無条件再 Read (partial-ingest 趣旨を破壊、注意)**
+    - **`current.md`**: Gate 2 で常に全文 ingest 済 → check 後 再 Read は冗長・禁止
+      (context 圧迫主因)。詳細は ingest 済 content を直接 query。
+    - **`backlog.md`**: Phase A-1 改修 (v2.1) で default は partial ingest (heading +
+      Top [Critical|High] top-3 + 行数 metadata、~40 行)。Top 3 圏外 entry / 詳細
+      prose が必要なら `Read` (offset/limit) での **個別 query を許容** (partial
+      ingest の trade-off で発生する正規補完経路)。**ただし** 個別 query を 2 回以上
+      行うなら最初から `--verbose` で再 check (`/session-handoff check --verbose`) し
+      直す (重複 ingest 防止、verbose ingest 1 回で済ませる)。
+    - 例外: compaction 後は `/session-handoff check` 再走で再 ingest、個別 Read は
+      避ける。verbose 路 (`--verbose` / WARN・FAIL auto-promote) で full ingest 後は
+      current.md と同様に再 Read 冗長に戻る。
 
 ---
 
@@ -284,24 +292,62 @@ comprehension) と理解 (understanding synthesis)** まで一貫して確認す
 - archive ファイル名が主規約 (`session-<YYYY-MM-DD>-<slug>.md`) または命名例外
   (`pre-<YYYY-MM-DD>-<slug>.md` / `summary-<slug>.md`) に従うか
 
-#### Gate 2 — Content Comprehension (内容把握、v2 新設)
+#### Gate 2 — Content Comprehension (内容把握、v2.1 partial-ingest 既定)
 
-**full-context ingestion**: `Read` tool で `current.md` / `backlog.md` を
-**全文** Claude context に取り込む。report は要約のみ出力するが、full content
-は context に保持され直接 query 可能 → **check 後の個別 Read は冗長**
-(Anti-pattern #10)。
+**Argument parsing (Phase A-1)**: 起動時に slash-command 引数をスキャン、literal
+token `--verbose` 完全一致 / case-sensitive で初期 mode を決定。`--verbose` あり →
+`mode=verbose` 起動、なし → `mode=concise` (default)。Gate 3 で WARN/FAIL ≥ 1 →
+auto verbose 昇格 (下記 Phase C)。
 
-実行手順:
+**partial-ingest by default + opt-in full-context (`--verbose`)**:
+`current.md` は **全文 (full-context) ingest** (鳥瞰図 ≤ 120 行、低コスト)。
+`backlog.md` は **partial ingest** — heading + Top [Critical|High] top-3 entry の
+YAML/1-line 要約 + 行数 metadata、**~40 行 envelope**。`--verbose` 明示 / auto
+verbose 昇格時のみ backlog も全文 ingest。**partial 時は backlog 各 entry 本文
+prose / yaml 詳細は context 未 ingest** — Top 3 圏外詳細は check 後に `Read`
+(offset/limit) で個別 query (Anti-pattern #10 緩和)。
 
-1. `Read` で `current.md` **全文** 取込 → Latest state / Top priority / Quick-start /
-   Pointers (max 4、各 `Glob` で実在確認) を抽出して report
-2. `Read` で `backlog.md` **全文** 取込 → High priority top 3 を抽出
-3. `Bash: git log --oneline -5` と Latest state 突合 (不一致 → Gate 3 で FAIL)
-4. archive/ 最新 session archive (`session-<YYYY-MM-DD>-*.md` のみ、`summary-*` /
-   `pre-*` は除外) と current.md を日付比較 (current が古ければ WARN)
-5. **Context loaded 行数**記録: current (X) と backlog (Y) を **別々に保持**し、
-   合計 N = X+Y を Summary に `Context loaded: <N> lines (current: {X}, backlog: {Y})`
-   で可視化 (再肥大化の即時検知。S-13 は Y を単独で閾値判定)
+実行手順 (Phase A: cheap probes / Phase B: signal eval / Phase C: auto-promote):
+
+1. **Phase A.1** — `Read` で `current.md` **全文** 取込 → Latest state / Top priority /
+   Quick-start / Pointers (max 4、各 `Glob` で実在確認) を抽出して report
+2. **Phase A.2 — Backlog ingest** (mode 別):
+   - **mode=concise (default)**:
+     - `Bash: wc -l <backlog>` で Y_total (S-13 用、`wc` 失敗 → `Y_total = N/A` で
+       fallback `Glob` 行数推定; 取得不能なら S-13 を SKIP)
+     - `Bash: grep -nE '^###|^##' <backlog>` で heading 行抽出 (~13 件目安)
+     - `Bash: grep -nE '#[0-9]+|/pull/[0-9]+|pr:\s*[0-9]+|PR\s*#[0-9]+' <backlog>`
+       で **PR 参照を全 entry 範囲で抽出** (S-04 用、Bash report 参照のみ — Read で
+       context に入れず、partial mode でも S-04 圏外 silent miss を防ぐ設計)
+     - `Read` (offset/limit) で **Top [Critical|High] top-3 entry** YAML/1-line summary
+       のみ追加 ingest (各 5-8 行 × 3 = ~20 行)
+     - 合計 Y_partial ≈ heading + top-3 詳細 + metadata = **~40 行 envelope**
+   - **mode=verbose** (--verbose 明示 / 後段 auto-promote): 上記を skip し `Read`
+     で `backlog.md` 全文 ingest (Y_full = Y_total)
+3. **Phase A.3** — `Bash: git log --oneline -5` と Latest state 突合 (不一致 → Gate 3 FAIL)
+4. **Phase A.4** — archive/ 最新 session archive (`session-<YYYY-MM-DD>-*.md` のみ、
+   `summary-*` / `pre-*` 除外) と current.md を日付比較 (current が古ければ WARN)
+5. **Phase A.5 — Context loaded 行数**記録: current (X) / backlog (Y) 別々に保持、
+   合計 N=X+Y を Summary `Context loaded: <N> lines (current: {X}, backlog: {Y},
+   mode: {concise|verbose})` で可視化。S-13 は Y_total (partial 時は `wc` metadata、
+   verbose 時は実 ingest = 総行数) を閾値判定 — partial ingest は **signal 覆滅
+   ではなく context 圧迫のみ削減** する設計
+6. **Phase C — Gate 3 評価後の auto-promote**: mode=concise で Phase B (Gate 3
+   完了) 結果 WARN/FAIL ≥ 1 → auto-promote 発火 (backlog を `Read` 全文 ingest
+   し直し、1 回追加 Read で `mode=verbose` 格上げ + verbose Output Template 再 emit)。
+   mode=verbose 起動時は Phase A.2 で full ingest 済 → Phase C は no-op。S-04/S-13/S-18
+   など全 backlog scan 依存 signal は Phase A cheap probes で取得済 → Phase C 時
+   再評価不要 (auto-promote = **template 詳細化 + ingest 拡大のみ**、verdict 確定済)
+
+#### Output Mode (`--verbose` flag — Phase A-1)
+
+`check` は 2 種 Output Template (concise default + verbose) を持つ
+([詳細](../docs/references/check-details.md) § Output Template): **concise (default)**
+= PASS verdict のみ **5 行 summary** (verdict / branch+commit / top priority /
+context loaded / next action) emit。**`--verbose`** 明示
+(`/session-handoff check --verbose`) または **WARN/FAIL ≥ 1 で auto verbose 昇格**で
+詳細 template (Gate 1-3 表 + signal 列挙 + Recommended Remediation) に切替。
+backlog ingest mode と Output Template は同期切替 (両方 verbose に倒れる)。
 
 #### Gate 3 — Understanding Synthesis (理解の総合判定、v2 新設)
 
@@ -404,25 +450,20 @@ Gate 3 部分実行 + `required_section_missing: FAIL`) は
 本 skill は Anthropic 公式の以下を踏襲:
 
 - **[MEMORY.md pattern][anthropic-memory]**: concise index + topic files
-- **[SKILL.md pattern][anthropic-skills]**: overview + supporting files
-  (本 skill 自体は **≤ 500 行** を hard limit とする (Anthropic SKILL.md focused
-  原則)。以降の機能追加は **`docs/references/<helper>.md` 分離**で 500 を超えない
-  設計。Layer 3 (2026-04-27) で Post-Check Verification 詳細を
-  [`docs/references/post-check-verification.md`](../docs/references/post-check-verification.md)、
-  最終報告 8 section format を [`docs/references/final-report-format.md`](../docs/references/final-report-format.md)、
-  `check` Output Template / Forbidden / Edge Cases を [`docs/references/check-details.md`](../docs/references/check-details.md) に分離済)
+- **[SKILL.md pattern][anthropic-skills]**: overview + supporting files (本 skill は
+  **≤ 500 行** hard limit。機能追加は `docs/references/<helper>.md` 分離で維持。
+  Layer 3 (2026-04-27) で [post-check-verification.md](../docs/references/post-check-verification.md) /
+  [final-report-format.md](../docs/references/final-report-format.md) /
+  [check-details.md](../docs/references/check-details.md) に分離済)
 - **[context window 推奨][anthropic-context]**: 変動する情報と always-on を分離
 
 本 skill が追加する invariant:
-- **handoff 専用 directory** (`.docs/handoff/`) を持つ (Anthropic 公式は
-  directory 名を規定せず。pattern 自体は公式整合)
-- **per-session archive** 運用 (公式は archive の自動化を skill or hook
-  で実装することを許容している)
-- **check が orient-phase 判定を兼ねる** (公式 [SessionStart hook][anthropic-hooks]
-  は `startup` / `resume` / `clear` / `compact` source を区別する。本 skill
-  の `check` は v2 で 3-gate 化しており、SessionStart hook 配線時の
-  orient-phase 判定として wire できる。auto-invoke する場合は read-only
-  契約 + 短時間実行を守り、`FAIL` でも hard block しない運用を推奨)
+- **handoff 専用 directory** (`.docs/handoff/`) — 公式は directory 名を規定せず、pattern 公式整合
+- **per-session archive** 運用 (公式は archive 自動化を skill or hook 実装を許容)
+- **check が orient-phase 判定を兼ねる** ([SessionStart hook][anthropic-hooks] の
+  `startup` / `resume` / `clear` / `compact` source を区別する公式契約に整合)。
+  v2 で 3-gate 化済 → SessionStart hook 配線時の orient-phase 判定に wire 可。
+  auto-invoke 時は read-only 契約 + 短時間実行 + `FAIL` でも hard block しない運用推奨
 
 ---
 
@@ -443,18 +484,13 @@ Gate 3 部分実行 + `required_section_missing: FAIL`) は
 
 ## Notes (注意事項)
 
-- 本 skill は **汎用テンプレート** である。特定プロジェクトの branch 名 /
-  ファイル layout 前提はない。project-specific な拡張は consumer 側
-  `.claude/skills/<project>-handoff/` で override する。
-- consumer 側で **8 section 最終報告 format に project-specific フィールド** (compliance / on-call rotation 等) を追加したい場合は memory `reference_session_final_report_template.md` (consumer-side) を保持する。`archive` の最終報告 emit step は plugin generic template ([`docs/references/final-report-format.md`](../docs/references/final-report-format.md)) と consumer memory を **merge** して emit する設計 (base 8 section の順序は変更しない、downstream reader が固定順序を前提とする)。
-- 本 skill は破壊的操作を行わない。archive 書き出しは常に追加、
-  既存 file の削除はユーザー明示承認を要求する。
-- `update` / `archive` が自動 trigger される場合、
-  Anthropic 公式では `SessionEnd` hook に wire することを推奨。手軽な
-  freshness reminder のみ欲しい場合は `Stop` hook に
-  [`docs/handoff-stop-reminder-sample.md`](../docs/handoff-stop-reminder-sample.md)
-  を install する代替経路もある (Layer 3 で同梱)。
+- 本 skill は **汎用テンプレート**。特定 project の branch 名 / ファイル layout
+  前提なし。project-specific 拡張は consumer 側 `.claude/skills/<project>-handoff/` で override
+- consumer 側で **8 section 最終報告 format に project-specific フィールド** (compliance / on-call rotation 等) を追加したい場合は memory `reference_session_final_report_template.md` (consumer-side) を保持。`archive` 最終報告 emit step は plugin generic template ([`docs/references/final-report-format.md`](../docs/references/final-report-format.md)) と consumer memory を **merge** emit (base 8 section の順序は変更しない、downstream reader 固定順序前提)
+- 本 skill は破壊的操作を行わない。archive 書出は常に追加、既存 file 削除はユーザー明示承認要求
+- `update` / `archive` 自動 trigger は `SessionEnd` hook 推奨。手軽な freshness reminder
+  なら `Stop` hook + [`docs/handoff-stop-reminder-sample.md`](../docs/handoff-stop-reminder-sample.md) 代替経路あり (Layer 3 同梱)
 
 ---
 
-**本 skill**: v1.0 初版 / 最終更新 2026-04-22
+**本 skill**: v2.1 / 最終更新 2026-05-03 (Phase A-1 partial-ingest + concise default)

@@ -2742,14 +2742,19 @@ describe("session-handoff skill — check v2 3 機能 (Structural / Content / Sy
 
   // PR #6: full-context ingestion + backlog 再肥大化 guard の 5 追加改善
 
-  it("Gate 2 が full-context ingestion を明示する (Read で full 読込 = Claude context に入る旨)", () => {
+  it("Gate 2 が full-context ingestion (current.md) を明示する (Read で full 読込 = Claude context に入る旨、Phase A-1 v2.1 後は backlog partial / current full の split を厳格化)", () => {
     const sec = checkSection();
-    // Gate 2 description に「全文 / full content / context に入る」相当の明示。
+    // Gate 2 description に「全文 / full content / context に入る」相当の明示が必要。
     // 単なる「抽出 (extract)」だけでは、Read 済の full content が Claude context に
     // 残ることが伝わらない。明示することで「check 後に current.md を別途 Read」
     // という冗長運用を予防。
+    // CR Phase 4 (Codex MINOR #5): 旧 regex は単独 `ingestion` / `Claude...context`
+    // で false-pass する brittle assertion。Phase A-1 で current/backlog split が
+    // 仕様化されたため、`current.md` が full ingest であることを明示的に要求して
+    // 将来の意図しない仕様後退を捕捉する (backlog 側の partial ingest assertion は
+    // 別 test で別途 enforce、本 test は current full ingest 契約のみを担保)。
     expect(sec).toMatch(
-      /full[-\s]?context|full[-\s]?content|全文|ingestion|Claude[\s\S]{0,30}(context|コンテキスト)/i,
+      /current\.md[\s\S]{0,100}(?:全文|full[-\s]?(?:context|content|ingest))|(?:全文|full[-\s]?(?:context|content|ingest))[\s\S]{0,100}current\.md/i,
     );
   });
 
@@ -2792,6 +2797,98 @@ describe("session-handoff skill — check v2 3 機能 (Structural / Content / Sy
     expect(antiSection).toMatch(
       /(check 後|after check|check 直後)[\s\S]{0,150}(再[\s]?Read|re[-\s]?read|再読|redundant|冗長)/i,
     );
+  });
+
+  // ----------------------------------------------------------------
+  // Phase A-1: partial-ingest + concise-default
+  // -60% context 圧迫削減 改修。Gate 2 を current full + backlog partial
+  // (heading + Top [Critical|High] top-3 + 行数 metadata) に分解し、
+  // Output Template を concise default + verbose の 2 種に分け、`--verbose`
+  // flag 明示時 / FAIL/WARN 自動昇格時のみ verbose で emit する。
+  // ----------------------------------------------------------------
+  describe("Phase A-1 partial-ingest + concise default (-60% context 圧迫削減)", () => {
+    it("Gate 2 が backlog partial-ingest (heading + Top [Critical|High] top-3 + 行数 metadata, ~40 行 envelope) を明示する", () => {
+      const sec = checkSection();
+      // partial ingest contract: backlog は heading-only + Top High/Critical top-3
+      // + 行数 metadata に絞る (~40 行 envelope)。current.md は従来通り full ingest
+      // (≤ 120 行で低コスト)。
+      expect(sec).toMatch(/partial[-\s]?ingest|heading[-\s]?only|partial.{0,40}backlog|backlog.{0,80}partial/i);
+      // Top High/Critical top-3 抽出
+      expect(sec).toMatch(/(?:Top|top)\s*(?:\[?(?:Critical|High)[\]\|]?[\s\S]{0,40})?(?:top[-\s]?)?3/i);
+      // ~40 行 envelope (heading 群 + top-3 の合計目安)
+      expect(sec).toMatch(/(?:~?\s*40|≈\s*40|about\s*40)\s*(?:行|line)/i);
+    });
+
+    it("Gate 2 が current.md は依然 full ingest であることを明示する (既知契約 = 鳥瞰図 ≤ 120 行で低コスト)", () => {
+      const sec = checkSection();
+      // current.md の full ingest 契約 (Gate 2 partial ingest 化対象外)
+      // wording 揺れを許容: 全文 / full / full-context のいずれか + current.md
+      expect(sec).toMatch(/current\.md[\s\S]{0,80}(?:全文|full[-\s]?(?:context|content|ingest))|(?:全文|full[-\s]?(?:context|content|ingest))[\s\S]{0,80}current\.md/i);
+    });
+
+    it("Gate 2 / Output Mode が --verbose flag を明示し、FAIL/WARN ≥ 1 で auto verbose 昇格する", () => {
+      const sec = checkSection();
+      // --verbose flag 存在 (literal)
+      expect(sec).toMatch(/--verbose/);
+      // FAIL/WARN 検出時の auto-promote 明示
+      expect(sec).toMatch(
+        /(?:FAIL|WARN)[\s\S]{0,80}(?:auto[-\s]?(?:promote|verbose|escalat)|verbose[\s\S]{0,40}(?:昇格|escalat|fall.?back|switch|自動))/i,
+      );
+    });
+
+    it("Output Template 言及が concise default + verbose 2 種を明示する (本 spec body または check-details.md link)", () => {
+      const sec = checkSection();
+      // 2 種テンプレ存在を spec body で言及 (具体定義は check-details.md 側で持つ)
+      expect(sec).toMatch(/(?:concise|default)[\s\S]{0,60}(?:verbose|template)|(?:verbose)[\s\S]{0,60}(?:concise|default)/i);
+      // 5 行 summary (concise PASS path) の量的指標
+      expect(sec).toMatch(/(?:5\s*行|five[-\s]?line|5[-\s]?line)\s*(?:summary|サマリ)/i);
+    });
+
+    it("Gate 2 が S-04 (PR ref scan) を partial mode でも全 backlog 範囲で実行する (cheap Bash grep、Read で context に入れず silent miss を防ぐ)", () => {
+      const sec = checkSection();
+      // S-04 silent-miss 回避: partial ingest で context に入れないが、Bash grep で
+      // 全 backlog 範囲の PR ref を report-only に拾うことを明示。これがないと
+      // top-3 圏外 entry の S-04 が partial mode で silent skip となり regression。
+      expect(sec).toMatch(
+        /(?:S-04|PR\s*(?:ref|reference|参照))[\s\S]{0,200}(?:Bash|grep|全\s*entry|entire\s*backlog|全\s*backlog|whole\s*file)/i,
+      );
+    });
+
+    it("Gate 2 が Phase C auto-promote (Gate 3 評価後の verbose 昇格 ordering) を明示する (signal evaluation 順の整合)", () => {
+      const sec = checkSection();
+      // Phase C の two-pass 設計を明示: Gate 3 で WARN/FAIL 確定 → backlog 全文
+      // 再 ingest + verbose template 再 emit。「verdict が WARN/FAIL ≥ 1」だけでは
+      // ordering が不明瞭で、Gate 3 信号 (S-02/03/05/...) を Phase A.2 時点で予知
+      // できない問題があるため Phase C を明示分離。
+      expect(sec).toMatch(/Phase\s*C|two[-\s]?pass|2[-\s]?pass|二段|2\s*段/i);
+      expect(sec).toMatch(/(?:Gate\s*3[\s\S]{0,80}(?:評価|after|後|完了))[\s\S]{0,120}(?:auto[-\s]?promote|verbose\s*(?:昇格|escalat|switch|promote))/i);
+    });
+
+    it("Gate 2 が --verbose argv parsing pre-step を明示する (literal token 完全一致 + case-sensitive)", () => {
+      const sec = checkSection();
+      // skill 起動時の argv scan を明示。これがないと「--verbose で起動したか
+      // どうか」を Claude が判別する spec contract が無く、操作の決定論性が
+      // 損なわれる。
+      expect(sec).toMatch(/(?:Argument\s*parsing|argv|引数[\s\S]{0,20}スキャン|argument\s*scan)/i);
+      expect(sec).toMatch(/(?:literal[-\s]?token|case[-\s]?sensitive|完全一致|exact\s*match)/i);
+    });
+
+    it("Anti-pattern #10 が partial ingest 時の backlog 個別 Read を「個別 query 許容」に緩和している (current.md は依然 re-Read 禁止)", () => {
+      const body = readSkill();
+      const antiSection = body.match(
+        /## Anti-patterns[\s\S]*?(?=\n## [^#]|$)/,
+      )?.[0] ?? "";
+      // current.md 側は full ingest 済 → 再 Read 禁止 wording 維持
+      expect(antiSection).toMatch(
+        /current\.md[\s\S]{0,200}(?:再\s*Read|re[-\s]?read)[\s\S]{0,80}(?:禁止|forbidden|圧迫|redundant|冗長)/i,
+      );
+      // backlog 側は partial ingest 済 → 圏外 entry の個別 Read を許容
+      expect(antiSection).toMatch(
+        /backlog[\s\S]{0,250}(?:許容|allow|個別|individual)[\s\S]{0,80}(?:Read|query)/i,
+      );
+      // verbose で再 check し直す代替経路への言及
+      expect(antiSection).toMatch(/--verbose/);
+    });
   });
 });
 
@@ -4904,6 +5001,39 @@ describe("session-handoff skill — Layer 3 (archive 最終報告 emit step + do
   it("commands/session-handoff.md が docs/references/check-details.md を `check` 群から link 参照する", () => {
     const body = readSkill();
     expect(body).toMatch(/docs\/references\/check-details\.md/);
+  });
+
+  // ----------------------------------------------------------------
+  // Phase A-1 — check-details.md が
+  // 2 種 Output Template (concise default + verbose) を持つこと、
+  // および baseline / -60% reduction の measurement methodology を
+  // 公開していることを regression guard 化する。
+  // ----------------------------------------------------------------
+  it("Phase A-1: docs/references/check-details.md が Output Template (concise default) と Output Template (verbose) の 2 種を定義する", () => {
+    const content = readFileSync(checkDetailsPath, "utf-8");
+    // 2 種テンプレ heading が独立に存在する (concise + verbose)
+    expect(content).toMatch(/Output\s+Template\b[\s\S]{0,80}(?:concise|default)/i);
+    expect(content).toMatch(/Output\s+Template\b[\s\S]{0,80}verbose/i);
+    // concise の量的指標 (5 行 summary)
+    expect(content).toMatch(/(?:5\s*行|five[-\s]?line|5[-\s]?line)\s*(?:summary|サマリ)/i);
+    // FAIL/WARN ≥ 1 で auto verbose 昇格 (default → verbose) の明示
+    expect(content).toMatch(
+      /(?:FAIL|WARN)[\s\S]{0,80}(?:auto[-\s]?(?:promote|verbose|escalat)|verbose[\s\S]{0,40}(?:昇格|escalat|fall.?back|switch|自動))/i,
+    );
+    // --verbose flag 明示 trigger
+    expect(content).toMatch(/--verbose/);
+  });
+
+  it("Phase A-1: docs/references/check-details.md が token reduction baseline と methodology を公開する (-60% goal)", () => {
+    const content = readFileSync(checkDetailsPath, "utf-8");
+    // baseline 計算 / methodology section が存在
+    expect(content).toMatch(/(?:baseline|measurement|methodology|削減|reduction)/i);
+    // 数値目標 (-60% or 60%)
+    expect(content).toMatch(/(?:-60%|60\s*%|-50%|50\s*%)/);
+    // 計算根拠 = ingest + output template 2 軸
+    expect(content).toMatch(/(?:ingest|partial[-\s]?ingest)[\s\S]{0,200}(?:output\s+template|template)/i);
+    // PASS path での適用域 (PASS は concise、FAIL/WARN は verbose 同等)
+    expect(content).toMatch(/(?:PASS|concise)[\s\S]{0,200}(?:FAIL|WARN|verbose)/i);
   });
 
   it("Self-Validation Checklist の `archive` (mutating subcommand) 群に最終報告 emit step 走行確認 item が含まれる", () => {

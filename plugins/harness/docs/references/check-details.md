@@ -13,22 +13,55 @@ imported on demand by humans / agents reviewing or implementing
 
 ---
 
-## Output Template (実行結果の提示形式)
+## Output Template (default = concise, opt-in verbose via `--verbose`)
 
-`check` 実行後の report 形式 (heading には bold を使い、`##` は避ける —
-consumer document の regex-based scanner が誤検知しないため):
+Phase A-1 (v2.1) で `check` の出力 template は **2 種** に分割した:
+**concise (default)** と **verbose (`--verbose` 明示 or WARN/FAIL auto-promote)**。
+default では PASS verdict を 5 行 summary に圧縮し、tool 結果文字列の context
+肥大を削減 (-50% 〜 -60% target、§ Token reduction baseline 参照)。
+
+heading には bold を使い、`##` は避ける —
+consumer document の regex-based scanner が誤検知しないため。
+
+### Output Template (concise default)
+
+PASS verdict 時の **5 行 summary** (session-handoff.md spec の固定 5 項目と一致):
+
+```markdown
+**session-handoff check** — <YYYY-MM-DD HH:MM> — PASS
+Branch: <branch> | Commit: <hash> <msg> (<date>)
+Top priority: <extracted one-liner>
+Context loaded: <N> lines (current: {X}, backlog: {Y}, mode: concise)
+Next: <recommended action; "ready to start next task" if nothing pending>
+```
+
+5 行 summary 設計意図:
+- **行 1**: timestamp + verdict (`PASS` 限定、WARN/FAIL は auto-promote で verbose 経路)
+- **行 2**: branch + latest commit (S-02/S-03/S-05 突合済の事実)
+- **行 3**: Top priority one-liner (current.md から抽出した即着手タスク)
+- **行 4**: Context loaded metadata (再肥大化検知、`mode: concise|verbose` で ingest mode 開示)
+- **行 5**: Next 推奨アクション (PASS なら "ready"、軽微 INFO ありなら 1 行で示唆)
+
+backlog Top 3 IDs は **partial ingest 時の Bash grep 結果** として Claude context
+内に保持される (verdict 判定材料)。concise summary には混入させず、必要なら
+`--verbose` で verbose template (Backlog Top 3 を Gate 2 表に明示) に切替。
+
+### Output Template (verbose)
+
+`--verbose` 明示指定 / WARN・FAIL auto-promote 時の **詳細 template**:
 
 ```markdown
 **session-handoff check** — <YYYY-MM-DD HH:MM>
 
 **Summary**
-<PASS|WARN|FAIL|INIT_REQUIRED> — Structural: {P}/{W}/{F} | Content: {Extracted|Partial|Missing} | Synthesis: <Ready|Partial|Stale|N/A> | Context loaded: <N> lines (current: {X}, backlog: {Y})
+<PASS|WARN|FAIL|INIT_REQUIRED> — Structural: {P}/{W}/{F} | Content: {Extracted|Partial|Missing} | Synthesis: <Ready|Partial|Stale|N/A> | Context loaded: <N> lines (current: {X}, backlog: {Y}, mode: verbose)
 
 **Context loaded**: Gate 2 で `Read` した `current + backlog` の行数合計。
 300 行超は S-12 (current 90+) または S-13 (backlog 150+) のいずれかが既に
-WARN 以上の状態を示唆 (分割検討)。report 要約外の詳細 (Quick-start bash 全文、
-運用ルール、背景 docs 等) も **Claude context に ingest 済**なので、check 後の
-再 Read は不要 (Anti-pattern #10)。
+WARN 以上の状態を示唆 (分割検討)。verbose mode では report 要約外の詳細 (Quick-start
+bash 全文、運用ルール、背景 docs 等) も **Claude context に ingest 済**なので、
+check 後の再 Read は不要 (Anti-pattern #10、verbose 路は current/backlog 共に full
+ingest なので個別 Read 圏外)。
 
 **INIT_REQUIRED**: `.docs/handoff/` が空/未作成時の独立 verdict。他 3 verdict と
 orthogonal、Structural/Content/Synthesis 実行前に判定、`init` 案内を表示。
@@ -54,7 +87,7 @@ orthogonal、Structural/Content/Synthesis 実行前に判定、`init` 案内を�
 - **Top priority**: <extracted one-liner>
 - **Quick-start command**: ✅ / ⚠️ missing
 - **Pointers**: N 件 (全て実在確認済 / N 件 broken)
-- **Backlog Top 3 [High]**: 1. ... / 2. ... / 3. ...
+- **Backlog Top 3 [Critical|High]**: 1. ... / 2. ... / 3. ...
 
 ---
 
@@ -72,6 +105,74 @@ orthogonal、Structural/Content/Synthesis 実行前に判定、`init` 案内を�
 **Recommended Remediation**
 <FAIL があれば具体的な次アクション、PASS なら「次タスクに着手可能」の一言>
 ```
+
+### Mode selection (どちらの template を emit するか)
+
+| trigger | mode | rationale |
+| --- | --- | --- |
+| 引数なし + verdict = PASS | **concise** (default) | 通常 happy-path、context 削減を最大化 |
+| 引数なし + verdict = WARN/FAIL | **verbose** (auto-promote) | 診断情報が必要、failsafe な可観測性 |
+| `/session-handoff check --verbose` | **verbose** (明示) | operator が詳細を欲しい時の opt-in 経路 |
+| 引数なし + verdict = INIT_REQUIRED | **concise** (init 案内のみ 1-2 行) | template 適用前段、`init` 一語で済む |
+
+backlog ingest mode (partial / full) と Output Template (concise / verbose) は
+**同期して切替** される (`--verbose` も auto-promote も、両方を verbose 側に倒す)。
+
+---
+
+## Token reduction baseline (Phase A-1 measurement methodology)
+
+Phase A-1 は (a) backlog partial ingest +
+(b) concise default output で **PASS path に対し -60% stretch target / 観測値
+-45% 〜 -53%** の context 圧迫削減を目指す (handoff サイズ依存、下記 Reduction
+表参照)。実 token 測定の baseline / methodology を以下に開示する。
+
+### Baseline (v2.0、full ingest + verbose template only)
+
+代表 consumer handoff 2 件で測定 (PASS path、Phase A-1 着手前の sample):
+
+| handoff | current.md | backlog.md | output template (verbose) | 合計 (≈ token) |
+| --- | --- | --- | --- | --- |
+| handoff #1 | 77 行 | 147 行 | ~35 行 | ~259 行 (~1.8K token) |
+| handoff #2 | 97 行 | 126 行 | ~35 行 | ~258 行 (~1.8K token) |
+
+平均 ~258 行 / ~1800 token 相当 (1 行 ≈ 7 token、tool result wrapping 別途)。
+これに加えて `session-handoff.md` spec body の自己参照 read と reference docs
+(`check-details.md` 等) で実体感としては **10K token 弱** が `check` 1 回で消費される
+(200K context window の **~5%** 相当)。
+
+### v2.1 (partial ingest + concise default、Phase A-1)
+
+| handoff | current.md (full) | backlog.md (partial ~40 行) | output template (concise 5 行) | 合計 (≈ token) |
+| --- | --- | --- | --- | --- |
+| handoff #1 | 77 行 | ~40 行 | ~5 行 | ~122 行 (~0.85K token) |
+| handoff #2 | 97 行 | ~40 行 | ~5 行 | ~142 行 (~1.0K token) |
+
+### Reduction (PASS path)
+
+- **(a) ingest 削減**: backlog 147→40 行 = **-73% (per file)** / 全 ingest 224→117 行 = **-48%**
+  (handoff #1 ベース、current.md は変えていない)
+- **(b) output 削減**: 35→5 行 = **-86%**
+- **PASS 合算**: 259→122 行 = **-53% (handoff #1)** / 258→142 行 = **-45% (handoff #2)**
+
+current.md が大きい handoff #2 では (a) の効果が薄まり -45% に留まる。**観測値は
+-45% 〜 -53% で -60% target には届かない**。 -60% を上振れさせるには current.md
+側 slim 化 (90 行以下、S-12 WARN 圏外) を併用する必要あり (Post-Check Verification
+経路で operator が判断)。**-60% は upper-bound stretch target と位置付け**、
+default-applicable な保守的削減目標は **-45%** とする。verbose 昇格時 (WARN/FAIL
+auto-promote) は v2.0 と同等の token 消費に戻り、概ね **PASS path 専用の最適化**
+として適用される。
+
+### 適用範囲 (どの verdict でどの template / ingest を使うか)
+
+- **PASS** → concise output + partial ingest = **削減フル適用**
+- **WARN** → verbose output + full ingest (auto-promote) = **v2.0 同等**
+- **FAIL** → verbose output + full ingest (auto-promote) = **v2.0 同等**
+- **INIT_REQUIRED** → 1-2 行 init 案内のみ = **削減フル適用 (template 自体不適用)**
+
+PASS が圧倒的多数 (handoff 健全運用時) のため、運用平均では **概ね -50% 〜 -55% の
+token 削減** が見込める。-60% への上振れには current.md 側 slim 化 (90 行以下に保つ)
+が併走条件。
 
 ---
 
