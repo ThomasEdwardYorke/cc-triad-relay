@@ -240,7 +240,7 @@ describe("harness.config.json schema: clarify config 宣言 (audience-aware doub
   });
 
   it("clarify オブジェクトが required: [] を明示宣言 (default 適用条件の drift 防止)", () => {
-    // CR Round 1 inline: schema が `required` を省略すると JSON Schema 仕様上は
+    // CodeRabbit feedback inline: schema が `required` を省略すると JSON Schema 仕様上は
     // `required: []` と等価だが、後続 PR で `required: ["audienceLevel"]` 等が
     // 追加された場合に「全 key optional」契約が壊れる。明示的に `required: []`
     // が宣言されていることを CI で fixate し、この契約変更には test 同時更新を強制する。
