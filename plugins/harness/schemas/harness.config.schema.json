@@ -536,7 +536,8 @@
     "clarify": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Configuration for the `/harness:clarify` skill (depth-first interview). Controls how each AskUserQuestion option `description` is composed per absolute rule 7 (audience-aware double-expression + concrete example). All keys optional; defaults equivalent to `{ audienceLevel: \"both\", includeConcreteExamples: true, exampleCount: 1 }`. See `commands/clarify.md` § '絶対原則' rule 7 for the rendering contract.",
+      "required": [],
+      "description": "Configuration for the `/harness:clarify` skill (depth-first interview). Controls how each AskUserQuestion option `description` is composed per absolute rule 7 (audience-aware double-expression + concrete example). All keys optional (`required: []` is explicit so future maintainers don't need to infer it); defaults equivalent to `{ audienceLevel: \"both\", includeConcreteExamples: true, exampleCount: 1 }`. See `commands/clarify.md` § '絶対原則' rule 7 for the rendering contract.",
       "properties": {
         "audienceLevel": {
           "type": "string",

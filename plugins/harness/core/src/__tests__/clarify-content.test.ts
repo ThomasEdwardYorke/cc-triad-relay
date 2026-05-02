@@ -64,13 +64,18 @@ describe("clarify command: frontmatter 5-field 完備 (description-ja は新規 
     expect((fm["description-ja"] as string).length).toBeGreaterThan(50);
   });
 
-  it("allowed-tools に AskUserQuestion / Read / Grep / Glob / Bash / Write が含まれる", () => {
+  it("allowed-tools に AskUserQuestion / Read / Grep / Glob / Bash / Write が含まれる + extra なし (size===6)", () => {
     const tools = fm["allowed-tools"];
     expect(Array.isArray(tools)).toBe(true);
     const set = new Set(tools as string[]);
     for (const required of ["Read", "Grep", "Glob", "Bash", "AskUserQuestion", "Write"]) {
       expect(set.has(required), `allowed-tools missing ${required}`).toBe(true);
     }
+    // CR Codex review (Nitpick 2): allowed-tools に Agent / Monitor 等の extra tool が
+    // accidentally 追加された場合に regression を捉えるための size 検証。clarify は
+    // depth-first interview に必要な 6 tool で機能上完結する。新たに tool が必要に
+    // なった時はこの test と SKILL.md 第 7 原則を同時に update する規律を強制。
+    expect(set.size).toBe(6);
   });
 
   it("argument-hint が定義済", () => {
@@ -90,6 +95,17 @@ describe("clarify command: legacy trigger 互換 (`grill me` / `/grill-me` は d
     // 判断され silently 削除されるリスクがある。
     expect(ja).toMatch(/grill me/);
     expect(ja).toMatch(/\/grill-me/);
+  });
+
+  it("legacy trigger が `legacy` ラベル付きで co-located されている (split deprecation 防止)", () => {
+    const ja = fm["description-ja"] as string;
+    // CR Codex review (Nitpick 3): grill me と /grill-me が「legacy trigger」の
+    // ラベルと同じ context で記載されていることを保証。後続 PR で legacy trigger を
+    // 別の deprecation notice section に移動した場合、独立 grep test は通り続けるが
+    // user-facing description で legacy 性が失われる regression が起きうる。
+    // 「legacy trigger」 label が両 trigger と同 description 内に存在することを
+    // 強制し、機能としての連続性を CI で fixate。
+    expect(ja).toMatch(/grill me[\s\S]{0,50}legacy[\s_-]*trigger|legacy[\s_-]*trigger[\s\S]{0,50}grill me/i);
   });
 
   it("description (英) にも legacy trigger が記載 (English-speaking user discovery)", () => {
