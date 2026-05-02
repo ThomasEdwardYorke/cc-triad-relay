@@ -313,20 +313,21 @@ prose / yaml 詳細は context 未 ingest** — Top 3 圏外詳細は check 後�
 
 1. `Read` で `current.md` **全文** 取込 → Latest state / Top priority /
    Quick-start / Pointers (max 4、各 `Glob` で実在確認) を抽出して report
-2. **Backlog ingest** (mode 別):
-   - **mode=concise (default)**:
-     - `Bash: wc -l <backlog>` で Y_total (S-13 用、`wc` 失敗 → `Y_total = N/A` で
-       fallback `Glob` 行数推定; 取得不能なら S-13 を SKIP)
-     - `Bash: grep -nE '^###|^##' <backlog>` で heading 行抽出 (~13 件目安)
-     - `Bash: grep -nE '#[0-9]+|/pull/[0-9]+|pr:\s*[0-9]+|PR\s*#[0-9]+' <backlog>`
-       で **PR 参照を全 entry 範囲で抽出** (S-04 用、Bash report 参照のみ — Read で
-       context に入れず、partial mode でも S-04 圏外 silent miss を防ぐ設計)
-     - `Read` (offset/limit) で **Top [Critical|High] top-3 entry** YAML/1-line summary
-       のみ追加 ingest (各 5-8 行 × 3 = ~20 行)
-     - 合計 Y_partial ≈ heading + top-3 詳細 + metadata = **~40 行 envelope**
+2. **Backlog ingest** (mode 別、taskTrackerMode 両対応):
+   - **mode=concise (default)**: cheap Bash probes (`wc -l` で Y_total = S-13 用 /
+     `grep -nE '^###|^##|^- \[(Critical|High|Med|Low)\]'` で heading + plans-mode
+     list item 両方を抽出 / `grep -nE '#[0-9]+|/pull/[0-9]+|pr:\s*...'` で全 entry
+     範囲の PR ref = S-04 silent miss 防止) + **Top top-3 entry** 追加 ingest (各
+     5-8 行 × 3 = ~20 行、handoff-mode は `Read` で `### [Critical|High]` heading
+     直下の YAML block / plans-mode は前段 grep の `- [High|Med]` 上位 3 行をそのまま
+     採用)。合計 Y_partial ≈ heading + top-3 詳細 + metadata = **~40 行 envelope**
+     (詳細手順 + `wc` failure fallback は [check-details.md](../docs/references/check-details.md))
    - **mode=verbose** (--verbose 明示 / 後段 auto-promote): 上記を skip し `Read`
-     で `backlog.md` 全文 ingest (Y_full = Y_total)
-3. `Bash: git log --oneline -5` と Latest state 突合 (不一致 → Gate 3 FAIL)
+     で `backlog.md` 全文 ingest (Y_full = Y_total、taskTrackerMode 不問)
+3. **S-05 突合** — `Read` 済 `current.md` から branch + commit hash 抽出 →
+   `Bash: git log -1 --oneline <branch-from-current>` で Latest state 突合 (S-02
+   先行 FAIL = branch 不在なら S-05 を SKIP)。invariant: default branch (`HEAD`)
+   ではなく **current.md 記載 branch** の `git log` を使う
 4. archive/ 最新 session archive (`session-<YYYY-MM-DD>-*.md` のみ、
    `summary-*` / `pre-*` 除外) と current.md を日付比較 (current が古ければ WARN)
 5. **Context loaded 行数** 記録: current (X) / backlog (Y) 別々に保持、
@@ -453,8 +454,8 @@ Gate 3 部分実行 + `required_section_missing: FAIL`) は
 
 - **[MEMORY.md pattern][anthropic-memory]**: concise index + topic files
 - **[SKILL.md pattern][anthropic-skills]**: overview + supporting files (本 skill は
-  **≤ 500 行** hard limit。機能追加は `docs/references/<helper>.md` 分離で維持。
-  Layer 3 (2026-04-27) で [post-check-verification.md](../docs/references/post-check-verification.md) /
+  **≤ 500 行** hard limit。機能追加は `docs/references/<helper>.md` 分離で維持、
+  既に [post-check-verification.md](../docs/references/post-check-verification.md) /
   [final-report-format.md](../docs/references/final-report-format.md) /
   [check-details.md](../docs/references/check-details.md) に分離済)
 - **[context window 推奨][anthropic-context]**: 変動する情報と always-on を分離
@@ -491,8 +492,7 @@ Gate 3 部分実行 + `required_section_missing: FAIL`) は
 - consumer 側で **8 section 最終報告 format に project-specific フィールド** (compliance / on-call rotation 等) を追加したい場合は memory `reference_session_final_report_template.md` (consumer-side) を保持。`archive` 最終報告 emit step は plugin generic template ([`docs/references/final-report-format.md`](../docs/references/final-report-format.md)) と consumer memory を **merge** emit (base 8 section の順序は変更しない、downstream reader 固定順序前提)
 - 本 skill は破壊的操作を行わない。archive 書出は常に追加、既存 file 削除はユーザー明示承認要求
 - `update` / `archive` 自動 trigger は `SessionEnd` hook 推奨。手軽な freshness reminder
-  なら `Stop` hook + [`docs/handoff-stop-reminder-sample.md`](../docs/handoff-stop-reminder-sample.md) 代替経路あり (Layer 3 同梱)
+  なら `Stop` hook + [`docs/handoff-stop-reminder-sample.md`](../docs/handoff-stop-reminder-sample.md) 代替経路あり
 
 ---
-
 **本 skill**: v2.1 (partial-ingest + concise default)

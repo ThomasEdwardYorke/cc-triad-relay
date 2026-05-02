@@ -120,6 +120,33 @@ backlog ingest mode (partial / full) と Output Template (concise / verbose) は
 
 ---
 
+## Gate 2 partial-ingest 詳細手順 (concise mode 補助)
+
+session-handoff.md `### check` Gate 2 の concise mode 詳細手順 (taskTrackerMode
+両対応):
+
+1. **`wc -l <backlog>` で Y_total** (S-13 用):
+   - `wc` 失敗 → `Y_total = N/A` で fallback `Glob` (file 行数推定)
+   - `Glob` でも取得不能なら **S-13 を SKIP** (output に明示)
+2. **`grep -nE '^###|^##|^- \[(Critical|High|Med|Low)\]' <backlog>`** で heading
+   + plans-mode list item を 1 発抽出 (~13 件目安):
+   - **handoff-mode**: `### [Critical|High|Med|Low] <id> <title>` heading が拾われる
+   - **plans-mode**: `- [High|Med|Low] <Phase>: <description>` 1-line list item が拾われる
+3. **`grep -nE '#[0-9]+|/pull/[0-9]+|pr:\s*[0-9]+|PR\s*#[0-9]+' <backlog>`** で
+   全 backlog 範囲の PR 参照を抽出 (S-04 用、Bash report 経由で参照、Read で
+   context に入れない設計 → partial mode でも S-04 圏外 silent miss を防ぐ)
+4. **Top top-3 entry 追加 ingest** (各 5-8 行 × 3 = ~20 行):
+   - **handoff-mode**: `Read` (offset/limit) で `### [Critical|High]` heading 直下の
+     fenced YAML block を ingest (`id` / `priority` / `status` / `roadmap_ref` 等)
+   - **plans-mode**: 前段 grep の `- [High|Med]` 上位 3 行を Bash 結果からそのまま
+     採用 (1 line/entry なので追加 Read 不要、Bash 結果が要約として機能)
+5. 合計 Y_partial ≈ heading + top-3 詳細 + metadata = **~40 行 envelope**
+
+mode=verbose (--verbose 明示 / 後段 auto-promote) は上記を全て skip し `Read` で
+`backlog.md` 全文 ingest (Y_full = Y_total、taskTrackerMode 不問)。
+
+---
+
 ## Token reduction baseline (v2.1 measurement methodology)
 
 v2.1 は (a) backlog partial ingest +
