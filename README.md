@@ -157,23 +157,32 @@ budget and the full quality-gate chain per worktree, switch to Model B.
 ## Task tracker modes — Plans vs handoff
 
 `/harness:harness-work` and the lifecycle hooks read tasks from one of two
-sources, selected by `harness.config.json`:
+sources, selected by `harness.config.json`. Pick one of the two snippets
+below (they are valid as-is — no comma fix-ups needed when copying):
 
-```jsonc
+**Plans-mode** (default — flat single-file flow):
+
+```json
 {
   "work": {
-    // default — flat single-file flow
     "taskTrackerMode": "plans",
     "plansFile": "Plans.md"
+  }
+}
+```
 
-    // OR opt in to the 4-layer handoff structure:
-    // "taskTrackerMode": "handoff",
-    // "handoffPaths": {
-    //   "roadmap":   ".docs/handoff/<project>-roadmap.md",
-    //   "backlog":   ".docs/handoff/<project>-backlog.md",
-    //   "current":   ".docs/handoff/<project>-current.md",
-    //   "decisions": ".docs/handoff/<project>-design-decisions.md"
-    // }
+**Handoff-mode** (opt-in — 4-layer structure):
+
+```json
+{
+  "work": {
+    "taskTrackerMode": "handoff",
+    "handoffPaths": {
+      "roadmap":   ".docs/handoff/<project>-roadmap.md",
+      "backlog":   ".docs/handoff/<project>-backlog.md",
+      "current":   ".docs/handoff/<project>-current.md",
+      "decisions": ".docs/handoff/<project>-design-decisions.md"
+    }
   }
 }
 ```
