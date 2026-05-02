@@ -192,7 +192,13 @@ describe("/harness-work v6 parallel-mode (commands/harness-work.md)", () => {
 
     it("件数ベース判定 (1 / 2-3 / 4+) が legacy 経路として保持", () => {
       expect(content).toMatch(/n_tasks\s*==\s*1|タスク数.*1\s*件|1\s*件.*solo/i);
-      expect(content).toMatch(/n_tasks\s*<=?\s*3|2-3\s*件|2\s*to\s*3/i);
+      // 2-3 帯は **両方の境界** (>=2 AND <=3) を求める。`<=3` 単独だと
+      // 1 を含む `<=3` (e.g. `n_tasks <= 3` 単独) も通ってしまうため、
+      // `>=2 ... <=3` または `<=3 ... >=2` の組合せ、あるいは明示の
+      // `2-3 件` / `2 to 3` 形のみ受理する (CR refactor suggestion 対応)。
+      expect(content).toMatch(
+        /(?:n_tasks\s*>=?\s*2[\s\S]{0,120}?n_tasks\s*<=?\s*3|n_tasks\s*<=?\s*3[\s\S]{0,120}?n_tasks\s*>=?\s*2|2\s*-\s*3\s*件|2\s*to\s*3)/i,
+      );
       expect(content).toMatch(/n_tasks\s*>?=?\s*4|4\s*件\s*以上|4\s*\+|4\s*or\s*more/i);
     });
   });
