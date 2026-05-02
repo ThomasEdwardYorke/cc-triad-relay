@@ -555,7 +555,7 @@
           "minimum": 1,
           "maximum": 3,
           "default": 1,
-          "description": "Number of `例: ...` lines per option `description`. 1 (default) is sufficient for most binary or 2-3 way choices. 2-3 is appropriate when the trade-off requires comparing concrete scenarios side-by-side (e.g., parent-child cascade vs restrict on multiple table pairs)."
+          "description": "Number of `例: ...` lines per option `description`. 1 (default) is sufficient for most binary or 2-3 way choices. 2-3 is appropriate when the trade-off requires comparing concrete scenarios side-by-side (e.g., parent-child cascade vs restrict on multiple table pairs). Upper bound 3 reflects clarity degradation in option `description` text when >3 examples crowd the 1-3 sentence envelope of `AskUserQuestion`; if more concrete cases are needed, prefer splitting into multiple sequential clarify questions over packing into one option `description`."
         }
       }
     }
