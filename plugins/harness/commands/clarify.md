@@ -45,7 +45,7 @@ argument-hint: "[topic|free-form]"
    - 選択肢を事前に列挙する規律が働く（中立性の検証 + 漏れの早期検出）
    - 回答が transcript に構造化記録される（後で clarify サマリーに転記しやすい）
 
-   推奨選択肢には label 末尾に `(推奨)` を付け、必ず option 配列の先頭に置く。複数論点を並列に問いたい誘惑があっても **1 呼出 = 1 question** を厳守する（depth-first 原則のため）。tool が未ロードなら `ToolSearch query="select:AskUserQuestion"` で取得してから問う。
+   推奨選択肢には label 末尾に `(推奨)` を付け、必ず option 配列の先頭に置く。複数論点を並列に問いたい誘惑があっても **1 呼出 = 1 question** を厳守する（depth-first 原則のため）。tool が未ロードなら `ToolSearch` を `query="select:AskUserQuestion"` で呼び出して取得してから問う。
 
 7. **具体例 + 二重表現 — 初学者・ベテラン両層に届く言葉で問う**
 
@@ -53,7 +53,7 @@ argument-hint: "[topic|free-form]"
 
    - **(a) ベテラン向け技術用語による短い結論** — 設計 trade-off / 失敗モード / 既存パターン用語で 1 文 (例: **ON DELETE CASCADE**, **optimistic lock**, **path traversal**, **idempotency key**)
    - **(b) 初学者向け業務影響・後続コストの 1 文補足** — 「これを選ぶと次に X が必要」「使い方を間違えると Y が壊れる」のように、技術用語を業務上の帰結に翻訳した平易な日本語
-   - **(c) 具体例最低 1 つ** — 抽象論で終わらせず「例: 親 record `orders` の `O-1` を削除すると紐づく子 record `line_items` 100 件も同時に消える」のような実物を添える
+   - **(c) 具体例最低 1 つ** — 抽象論で終わらせず「例: 親 record `orders` の `O-1` を削除すると紐づく子 record `line_items` 100 件も同時に消える」のような実物を添える。`includeConcreteExamples: false` でも「最低 1 つの具体例を保持」契約は維持される (簡略化 / 重複排除のみ許容、完全削除は不可)
 
    ### `description` テンプレ (option 内 1〜3 文の枠を 3 行で配分)
 
@@ -84,7 +84,7 @@ argument-hint: "[topic|free-form]"
        ベテラン: ON DELETE CASCADE vs RESTRICT。
        例: orders O-1 削除で line_items 100 件も自動削除 vs 削除拒否。
        ```
-   - `includeConcreteExamples`: false にすると例を省略可 (大量質問でテンポ重視のとき)
+   - `includeConcreteExamples`: false で各 option `description` の **複数例 / 説明的修飾** を省略可 (大量質問でテンポ重視のとき)。**ただし最低 1 つの具体例 (絶対原則 7-c) は必ず残す** — false が許容するのは簡略化 / 重複排除であり、完全削除ではない
    - `exampleCount`: 1〜3、複雑論点で 2〜3 例を比較したい場合に増やす
 
    ### Bad / Good 対比
@@ -115,7 +115,7 @@ argument-hint: "[topic|free-form]"
          例: orders `O-1` 削除 → line_items 100 件も同 transaction で削除。
      - label: "RESTRICT で削除拒否"
        description: |
-         ベテラン: ON DELETE RESTRICT、子が残る限り親削除を 23503 でブロック。
+         ベテラン: ON DELETE RESTRICT、子が残る限り親削除を制約違反エラー (例: Postgres 23503) でブロック。
          初学者: 親を消すには子を先に整理する必要、誤削除を防げる代わりに片付け作業が増える。
          例: orders `O-1` 削除 → line_items が残っていたら error、operator は別 order へ移すか個別削除する。
    ```
