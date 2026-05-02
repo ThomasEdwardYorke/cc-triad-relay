@@ -102,19 +102,19 @@ root:
    │ 1. /harness:clarify  │ →  │ 2. /harness:harness-plan│ →  │ 3. /harness:harness-  │ →  │ 4. /harness:coderabbit-  │
    │    "<topic>"         │    │    create               │    │    work <task-id>     │    │    review <PR>           │
    └──────────────────────┘    └─────────────────────────┘    └───────────────────────┘    └──────────────────────────┘
-       depth-first               reviewer-driven split             TDD Phase 1-7 with         Background watch +
-       decision interview,       into priority-ordered             Codex parallel /           auto-respond loop
-       1 question per turn       Plans.md tasks                    Pseudo CR / Real CR        until Real CodeRabbit
-       (no code yet)                                               / Codex Phase 7            Strong Clear + polish
+       depth-first               reviewer-driven split             full TDD quality-gate      Background watch +
+       decision interview,       into priority-ordered             chain with Codex           auto-respond loop
+       1 question per turn       Plans.md tasks                    parallel / Pseudo CR /     until Real CodeRabbit
+       (no code yet)                                               Real CR / final review     Strong Clear + polish
 ```
 
 Step 1 produces a *shared understanding* of the work. Step 2 turns it into a
 backlog. Step 3 implements one task end-to-end through the full quality-gate
 chain (TDD → Codex parallel → refactor → Pseudo CodeRabbit → push → Real
-CodeRabbit → Codex Phase 7 second opinion). Step 4 watches CodeRabbit on
-the resulting PR and applies fixes until the review clears. After Step 4,
-run `/codex-team` for adversarial second-opinion (Phase 7) and then squash
-merge (manually or via `/harness-merge-train` for multi-PR batches).
+CodeRabbit → Codex final review). Step 4 watches CodeRabbit on the resulting
+PR and applies fixes until the review clears. After Step 4, run
+`/codex-team` for adversarial second-opinion and then squash merge (manually
+or via `/harness-merge-train` for multi-PR batches).
 
 ## Core skills — front-line entry points
 
@@ -126,7 +126,7 @@ front-line entry points:
 | `/harness:clarify "<topic>"` | "clarify", "design review", new feature / refactor / migration / new PRD | Pre-implementation interview that walks the decision tree depth-first, one question per turn |
 | `/harness:harness-plan create` | "create a plan", "split into tasks" | Reviewer-driven Plans.md construction (interactive hearing → reviewer pass → save) |
 | `/harness:harness-work [task]` | "implement", "fix bug", "add feature", `/work`, `/breezing` | Plans-driven dispatcher; Auto Mode Detection picks Solo (1 task) / Parallel (2-3) / Breezing (4+) and delegates to `/tdd-implement` v2 or `/parallel-worktree` |
-| `/harness:parallel-worktree-v2` | 3+ independent sub-tasks, long-running TDD, need per-worktree skill access | **Model B** orchestrator — one independent top-level `claude` per worktree (in tmux), each runs the full TDD Phase 1-7 |
+| `/harness:parallel-worktree-v2` | 3+ independent sub-tasks, long-running TDD, need per-worktree skill access | **Model B** orchestrator — one independent top-level `claude` per worktree (in tmux), each runs the full TDD quality-gate chain end-to-end |
 | `/harness:session-handoff check` | session start / session end, "handoff", "rehydration" | Read-only 3-gate check (structural integrity + content comprehension + rehydration synthesis) |
 | `/harness:coderabbit-review <PR>` | after pushing a PR, "handle CodeRabbit review" | Background watch for CodeRabbit reviews + auto-respond loop until Strong Clear |
 
@@ -147,7 +147,7 @@ dispatch into: `/tdd-implement`, `/parallel-worktree` (Model A legacy),
 | per-worktree | `Agent`-tool subagent (`harness:worker`) | independent top-level `claude` process in a tmux window |
 | skill access | restricted (subagents cannot use `Skill`) | full skills / agents / MCP / hooks |
 | context budget | shared with coordinator | each worktree has its own |
-| Phases 5.5 / 6 / 7 | coordinator-serialized after workers finish | each worktree runs them itself |
+| late-stage quality gates (Pseudo CR / Real CR / adversarial review) | coordinator-serialized after workers finish | each worktree runs them itself |
 | good for | 2-3 short sub-task batches, stable subagent flows | 3+ long-running tasks, true per-worktree quality gates |
 
 When the workload is small (2-3 sub-tasks, short runtime), Model A is the
