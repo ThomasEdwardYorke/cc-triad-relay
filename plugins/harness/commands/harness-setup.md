@@ -115,6 +115,7 @@ And that the skills exist (5 verb skills plus 14 workflow skills):
   - `commands/harness-setup.md`
 - Workflow skills
   - `commands/branch-merge.md`
+  - `commands/clarify.md`
   - `commands/claude-oneshot.md`
   - `commands/new-feature-branch.md`
   - `commands/coderabbit-review.md`

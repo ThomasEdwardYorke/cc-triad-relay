@@ -63,18 +63,19 @@ describe("clarify command: frontmatter 5-field 完備 (description-ja は新規 
     expect((fm["description-ja"] as string).length).toBeGreaterThan(50);
   });
 
-  it("allowed-tools に AskUserQuestion / Read / Grep / Glob / Bash / Write が含まれる + extra なし (size===6)", () => {
+  it("allowed-tools に AskUserQuestion / Read / Grep / Glob / Bash / ToolSearch / Write が含まれる + extra なし (size===7)", () => {
     const tools = fm["allowed-tools"];
     expect(Array.isArray(tools)).toBe(true);
     const set = new Set(tools as string[]);
-    for (const required of ["Read", "Grep", "Glob", "Bash", "AskUserQuestion", "Write"]) {
+    // ToolSearch は body の AskUserQuestion fallback ロジック (`ToolSearch query="select:AskUserQuestion"`)
+    // を allowed-tools 側で許可するために必須。frontmatter から外すと body の自己整合性が崩れる。
+    for (const required of ["Read", "Grep", "Glob", "Bash", "AskUserQuestion", "ToolSearch", "Write"]) {
       expect(set.has(required), `allowed-tools missing ${required}`).toBe(true);
     }
-    // CR Codex review (Nitpick 2): allowed-tools に Agent / Monitor 等の extra tool が
-    // accidentally 追加された場合に regression を捉えるための size 検証。clarify は
-    // depth-first interview に必要な 6 tool で機能上完結する。新たに tool が必要に
-    // なった時はこの test と SKILL.md 第 7 原則を同時に update する規律を強制。
-    expect(set.size).toBe(6);
+    // size 検証: Agent / Monitor 等の extra tool が accidentally 追加された場合に regression を
+    // 捉える。clarify は depth-first interview に必要な 7 tool で機能上完結する。新たに tool
+    // が必要になった時はこの test と SKILL.md 第 7 原則を同時に update する規律を強制。
+    expect(set.size).toBe(7);
   });
 
   it("argument-hint が定義済", () => {
@@ -236,5 +237,17 @@ describe("harness.config.json schema: clarify config 宣言 (audience-aware doub
       additionalProperties: boolean;
     };
     expect(clarify.additionalProperties).toBe(false);
+  });
+
+  it("clarify オブジェクトが required: [] を明示宣言 (default 適用条件の drift 防止)", () => {
+    // CR Round 1 inline: schema が `required` を省略すると JSON Schema 仕様上は
+    // `required: []` と等価だが、後続 PR で `required: ["audienceLevel"]` 等が
+    // 追加された場合に「全 key optional」契約が壊れる。明示的に `required: []`
+    // が宣言されていることを CI で fixate し、この契約変更には test 同時更新を強制する。
+    const clarify = schema.properties.clarify as {
+      required?: string[];
+    };
+    expect(Array.isArray(clarify.required), "clarify.required must be an array").toBe(true);
+    expect(clarify.required).toEqual([]);
   });
 });

@@ -2,7 +2,7 @@
 name: clarify
 description: "Pre-implementation clarification mode: depth-first interview that drills decision-tree branches one question at a time via `AskUserQuestion`. Surfaces ambiguity, undecided trade-offs, and implicit assumptions before code is written. Trigger on: new feature / refactor / migration / data-model change / new PRD. Recommended option + audience-aware double-expression (senior + beginner) + concrete example are mandatory per absolute rule 7. Pairs naturally as a precursor to `/harness:harness-plan`. Legacy triggers `grill me` / `/grill-me` continue to work."
 description-ja: "計画・設計・要件を実装着手前に 1 問ずつ深さ優先で詰める明確化 (clarification) モード。曖昧さ・未決定・暗黙の前提・回避されたトレードオフを、質問の力だけで言語化させる。ユーザーが「clarify」「明確化して」「詰めて」「分析を深めて」「プラン前に詰めたい」「/clarify」「design review」「この計画を叩いて」「要件が曖昧」「grill me」(legacy trigger)「/grill-me」(legacy trigger) などと言ったとき、または新機能・リファクタ・移行・データモデル変更・新規 PRD の着手前に必ずこのスキルを使う。コードを 1 行も書く前に決定木の各枝を掘り切るのが目的。`/harness:harness-plan` など計画立案スキルの前段として使うと効果が高い。**AskUserQuestion ツール経由 1 呼出 = 1 question を厳守** (深さ優先 / depth-first 原則)。**第 7 原則 (具体例 + 二重表現) により、各質問は「ベテラン向け技術用語結論 + 初学者向け業務影響 + 具体例 1 つ」の 3 要素を併記する。**"
-allowed-tools: ["Read", "Grep", "Glob", "Bash", "AskUserQuestion", "Write"]
+allowed-tools: ["Read", "Grep", "Glob", "Bash", "AskUserQuestion", "ToolSearch", "Write"]
 argument-hint: "[topic|free-form]"
 ---
 
@@ -57,7 +57,7 @@ argument-hint: "[topic|free-form]"
 
    ### `description` テンプレ (option 内 1〜3 文の枠を 3 行で配分)
 
-   ```
+   ```text
    ベテラン: <技術用語結論>。
    初学者: <業務影響 1 文>。
    例: <具体例>。
@@ -148,7 +148,7 @@ argument-hint: "[topic|free-form]"
 
 通算番号 / カテゴリ / 深さ / 枝 は質問直前のテキスト行で示す (AskUserQuestion 自体には載せない、UI 側の chip / label と冗長になるため):
 
-```
+```text
 【Q<番号> / カテゴリ: <名> / 深さ: <n> / 枝: <論点>】
 <context 1〜3 文 (絶対原則 7 に従い、ベテラン視点 + 初学者視点 + 具体例の 3 要素を含める)> → AskUserQuestion 呼出
 ```
@@ -175,7 +175,7 @@ argument-hint: "[topic|free-form]"
 
 決定木が迷子にならないよう、以下を挟む:
 
-```
+```text
 📍 進捗サマリー
 
 ✅ 決定済み
@@ -208,7 +208,7 @@ argument-hint: "[topic|free-form]"
 
 Clarify を締めるときは以下を**構造化して**出す。これは次に `/harness:harness-plan` など計画スキルへ渡す入力になる:
 
-```
+```text
 🎯 Clarify サマリー
 
 ## 題材
