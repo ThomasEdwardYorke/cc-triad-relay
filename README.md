@@ -5,9 +5,9 @@ A portable, TypeScript-powered guardrail and agent harness for [Claude Code](htt
 ## What this gives you
 
 - **13 guardrail rules** (R01–R13) that block dangerous operations: `sudo`, `rm -rf`, force-push, `curl | bash`, `.env` leakage, and more. Configurable via `harness.config.json`.
-- **3 general-purpose agents**: `worker` (implement + self-review + verify + commit), `reviewer` (read-only multi-angle review), `scaffolder` (docs + state sync). Plus `security-auditor` and `codex-sync` helpers.
-- **5 verb skills**: `/harness-plan`, `/harness-work`, `/harness-review`, `/harness-release`, `/harness-setup`.
-- **Zero native dependencies** in v0.1.0 (pure JS JSON state store) — works on macOS, Linux, and Windows without `npm install` native rebuilds.
+- **5 native agents** (no Codex required): `worker` (implement + self-review + verify + commit), `reviewer` (read-only multi-angle review), `scaffolder` (docs + state sync), `security-auditor`, `context-audit-agent`. **2 optional** Codex-backed agents — `codex-sync` (synchronous second-opinion review) and `coderabbit-mimic` (local pseudo-CodeRabbit loop) — fail fast if Codex is not installed.
+- **19 slash commands**: 5 verb (`/harness-plan`, `/harness-work`, `/harness-review`, `/harness-release`, `/harness-setup`) plus 14 workflow primitives (`/clarify`, `/tdd-implement`, `/parallel-worktree`, `/parallel-worktree-v2`, `/coderabbit-review`, `/pseudo-coderabbit-loop`, `/session-handoff`, `/harness-merge-train`, `/codex-team`, `/context-audit`, `/branch-merge`, `/new-feature-branch`, `/claude-oneshot`, `/harness-self-improve`).
+- **Zero native dependencies** (pure JS JSON state store) — works on macOS, Linux, and Windows without `npm install` native rebuilds.
 
 ## Installation
 
@@ -55,7 +55,7 @@ therefore optional**:
 
 | Plugin installed | What works | What errors on invocation |
 |------------------|------------|---------------------------|
-| `harness` only (default) | All 13 guardrails, 13 commands (5 verb + 8 workflow), 4 agents (worker / reviewer / scaffolder / security-auditor), all 12 lifecycle hooks | `codex-sync` fails fast with `ERROR: Codex plugin not found` and `coderabbit-mimic` fails with `ERROR: codex-companion.mjs not found.` — both hard errors that stop the agent before any work starts. Other agents and commands are unaffected. |
+| `harness` only (default) | All 13 guardrails, 19 commands (5 verb + 14 workflow), 5 native agents (`worker` / `reviewer` / `scaffolder` / `security-auditor` / `context-audit-agent`), all 12 lifecycle hooks | `codex-sync` fails fast with `ERROR: Codex plugin not found` and `coderabbit-mimic` fails with `ERROR: codex-companion.mjs not found.` — both hard errors that stop the agent before any work starts. Other agents and commands are unaffected. |
 | `harness` + `codex` | Everything above **plus** Codex-powered synchronous second-opinion review (`codex-sync`) and local pseudo-CodeRabbit loop (`coderabbit-mimic`) | — |
 
 `install-project.sh --with-codex` flips the opt-in; otherwise run
@@ -90,6 +90,116 @@ Surfaces:
 - Project-local skill directory (`.claude/skills/`).
 - User-level overlays (`~/.claude/{skills,commands,agents}/`) — useful
   when diagnosing which layer a skill / command came from.
+
+## Quickstart — 4-step day-1 flow
+
+After `harness doctor` reports green, the canonical day-1 workflow is four
+slash commands. Run each from inside a Claude Code session in your project
+root:
+
+```text
+   ┌──────────────────────┐    ┌─────────────────────────┐    ┌───────────────────────┐    ┌──────────────────────────┐
+   │ 1. /harness:clarify  │ →  │ 2. /harness:harness-plan│ →  │ 3. /harness:harness-  │ →  │ 4. /harness:coderabbit-  │
+   │    "<topic>"         │    │    create               │    │    work <task-id>     │    │    review <PR>           │
+   └──────────────────────┘    └─────────────────────────┘    └───────────────────────┘    └──────────────────────────┘
+       depth-first               reviewer-driven split             full TDD quality-gate      Background watch +
+       decision interview,       into priority-ordered             chain with Codex           auto-respond loop
+       1 question per turn       Plans.md tasks                    parallel / Pseudo CR /     until Real CodeRabbit
+       (no code yet)                                               Real CR / final review     Strong Clear + polish
+```
+
+Step 1 produces a *shared understanding* of the work. Step 2 turns it into a
+backlog. Step 3 implements one task end-to-end through the full quality-gate
+chain (TDD → Codex parallel → refactor → Pseudo CodeRabbit → push → Real
+CodeRabbit → Codex final review). Step 4 watches CodeRabbit on the resulting
+PR and applies fixes until the review clears. After Step 4, run
+`/codex-team` for adversarial second-opinion and then squash merge (manually
+or via `/harness-merge-train` for multi-PR batches).
+
+## Core skills — front-line entry points
+
+The 19 commands fall into two layers. Most day-to-day work goes through six
+front-line entry points:
+
+| skill | trigger phrases | role |
+|---|---|---|
+| `/harness:clarify "<topic>"` | "clarify", "design review", new feature / refactor / migration / new PRD | Pre-implementation interview that walks the decision tree depth-first, one question per turn |
+| `/harness:harness-plan create` | "create a plan", "split into tasks" | Reviewer-driven Plans.md construction (interactive hearing → reviewer pass → save) |
+| `/harness:harness-work [task]` | "implement", "fix bug", "add feature", `/work`, `/breezing` | Plans-driven dispatcher; Auto Mode Detection picks Solo (1 task) / Parallel (2-3) / Breezing (4+) and delegates to `/tdd-implement` v2 or `/parallel-worktree` |
+| `/harness:parallel-worktree-v2` | 3+ independent sub-tasks, long-running TDD, need per-worktree skill access | **Model B** orchestrator — one independent top-level `claude` per worktree (in tmux), each runs the full TDD quality-gate chain end-to-end |
+| `/harness:session-handoff check` | session start / session end, "handoff", "rehydration" | Read-only 3-gate check (structural integrity + content comprehension + rehydration synthesis) |
+| `/harness:coderabbit-review <PR>` | after pushing a PR, "handle CodeRabbit review" | Background watch for CodeRabbit reviews + auto-respond loop until Strong Clear |
+
+The remaining 13 commands are workflow primitives that the entry points
+dispatch into: `/tdd-implement`, `/parallel-worktree` (Model A legacy),
+`/pseudo-coderabbit-loop`, `/codex-team`, `/harness-merge-train`,
+`/branch-merge`, `/new-feature-branch`, `/context-audit`, `/claude-oneshot`,
+`/harness-self-improve`, plus the three other verb skills (`/harness-review`,
+`/harness-release`, `/harness-setup`).
+
+## Parallel execution: Model A vs Model B
+
+`/harness:parallel-worktree` (Model A, legacy) and
+`/harness:parallel-worktree-v2` (Model B) coexist. Pick one per batch:
+
+| | Model A (`/parallel-worktree`) | Model B (`/parallel-worktree-v2`) |
+|---|---|---|
+| per-worktree | `Agent`-tool subagent (`harness:worker`) | independent top-level `claude` process in a tmux window |
+| skill access | restricted (subagents cannot use `Skill`) | full skills / agents / MCP / hooks |
+| context budget | shared with coordinator | each worktree has its own |
+| late-stage quality gates (Pseudo CR / Real CR / adversarial review) | coordinator-serialized after workers finish | each worktree runs them itself |
+| good for | 2-3 short sub-task batches, stable subagent flows | 3+ long-running tasks, true per-worktree quality gates |
+
+When the workload is small (2-3 sub-tasks, short runtime), Model A is the
+default. When sub-tasks are independent enough to deserve their own context
+budget and the full quality-gate chain per worktree, switch to Model B.
+
+## Task tracker modes — Plans vs handoff
+
+`/harness:harness-work` and the lifecycle hooks read tasks from one of two
+sources, selected by `harness.config.json`. Pick one of the two snippets
+below (they are valid as-is — no comma fix-ups needed when copying):
+
+**Plans-mode** (default — flat single-file flow):
+
+```json
+{
+  "work": {
+    "taskTrackerMode": "plans",
+    "plansFile": "Plans.md"
+  }
+}
+```
+
+**Handoff-mode** (opt-in — 4-layer structure):
+
+```json
+{
+  "work": {
+    "taskTrackerMode": "handoff",
+    "handoffPaths": {
+      "roadmap":   ".docs/handoff/<project>-roadmap.md",
+      "backlog":   ".docs/handoff/<project>-backlog.md",
+      "current":   ".docs/handoff/<project>-current.md",
+      "decisions": ".docs/handoff/<project>-design-decisions.md"
+    }
+  }
+}
+```
+
+- **Plans-mode** (`"plans"`, default): legacy single-file flow. One
+  `Plans.md` holds active tasks, completed history, and the assignment
+  table.
+- **Handoff-mode** (`"handoff"`, opt-in): four files split the
+  responsibilities — `roadmap.md` (Phase / Week / AC source-of-truth) +
+  `backlog.md` (priority-ordered dispatchable view) + `current.md`
+  (bird's-eye index) + `design-decisions.md` (append-only). All four paths
+  are required when `taskTrackerMode === "handoff"`; missing or malformed
+  entries cause a silent fallback to Plans-mode with a stderr warning. Use
+  `/harness:session-handoff init` to scaffold.
+
+Both modes coexist indefinitely — Plans-mode stays the safe default for
+long-lived projects.
 
 ## Quick configuration
 
