@@ -2742,17 +2742,17 @@ describe("session-handoff skill — check v2 3 機能 (Structural / Content / Sy
 
   // PR #6: full-context ingestion + backlog 再肥大化 guard の 5 追加改善
 
-  it("Gate 2 が full-context ingestion (current.md) を明示する (Read で full 読込 = Claude context に入る旨、Phase A-1 v2.1 後は backlog partial / current full の split を厳格化)", () => {
+  it("Gate 2 が full-context ingestion (current.md) を明示する (Read で full 読込 = Claude context に入る旨、v2.1 後は backlog partial / current full の split を厳格化)", () => {
     const sec = checkSection();
     // Gate 2 description に「全文 / full content / context に入る」相当の明示が必要。
     // 単なる「抽出 (extract)」だけでは、Read 済の full content が Claude context に
     // 残ることが伝わらない。明示することで「check 後に current.md を別途 Read」
     // という冗長運用を予防。
-    // CR Phase 4 (Codex MINOR #5): 旧 regex は単独 `ingestion` / `Claude...context`
-    // で false-pass する brittle assertion。Phase A-1 で current/backlog split が
-    // 仕様化されたため、`current.md` が full ingest であることを明示的に要求して
-    // 将来の意図しない仕様後退を捕捉する (backlog 側の partial ingest assertion は
-    // 別 test で別途 enforce、本 test は current full ingest 契約のみを担保)。
+    // 旧 regex は単独 `ingestion` / `Claude...context` で false-pass する brittle
+    // assertion。v2.1 で current/backlog split が仕様化されたため、`current.md` が
+    // full ingest であることを明示的に要求して将来の意図しない仕様後退を捕捉する
+    // (backlog 側の partial ingest assertion は別 test で別途 enforce、本 test は
+    // current full ingest 契約のみを担保)。
     expect(sec).toMatch(
       /current\.md[\s\S]{0,100}(?:全文|full[-\s]?(?:context|content|ingest))|(?:全文|full[-\s]?(?:context|content|ingest))[\s\S]{0,100}current\.md/i,
     );
@@ -2800,13 +2800,13 @@ describe("session-handoff skill — check v2 3 機能 (Structural / Content / Sy
   });
 
   // ----------------------------------------------------------------
-  // Phase A-1: partial-ingest + concise-default
-  // -60% context 圧迫削減 改修。Gate 2 を current full + backlog partial
-  // (heading + Top [Critical|High] top-3 + 行数 metadata) に分解し、
-  // Output Template を concise default + verbose の 2 種に分け、`--verbose`
-  // flag 明示時 / FAIL/WARN 自動昇格時のみ verbose で emit する。
+  // v2.1 partial-ingest + concise-default の context 圧迫削減 改修。
+  // Gate 2 を current full + backlog partial (heading + Top [Critical|High]
+  // top-3 + 行数 metadata) に分解し、Output Template を concise default +
+  // verbose の 2 種に分け、`--verbose` flag 明示時 / FAIL/WARN 自動昇格時
+  // のみ verbose で emit する。
   // ----------------------------------------------------------------
-  describe("Phase A-1 partial-ingest + concise default (-60% context 圧迫削減)", () => {
+  describe("v2.1 partial-ingest + concise default (context 圧迫削減 改修)", () => {
     it("Gate 2 が backlog partial-ingest (heading + Top [Critical|High] top-3 + 行数 metadata, ~40 行 envelope) を明示する", () => {
       const sec = checkSection();
       // partial ingest contract: backlog は heading-only + Top High/Critical top-3
@@ -2854,14 +2854,14 @@ describe("session-handoff skill — check v2 3 機能 (Structural / Content / Sy
       );
     });
 
-    it("Gate 2 が Phase C auto-promote (Gate 3 評価後の verbose 昇格 ordering) を明示する (signal evaluation 順の整合)", () => {
+    it("Gate 2 が auto-promote escalation step (Gate 3 評価後の verbose 昇格 ordering) を明示する (signal evaluation 順の整合)", () => {
       const sec = checkSection();
-      // Phase C の two-pass 設計を明示: Gate 3 で WARN/FAIL 確定 → backlog 全文
-      // 再 ingest + verbose template 再 emit。「verdict が WARN/FAIL ≥ 1」だけでは
-      // ordering が不明瞭で、Gate 3 信号 (S-02/03/05/...) を Phase A.2 時点で予知
-      // できない問題があるため Phase C を明示分離。
-      expect(sec).toMatch(/Phase\s*C|two[-\s]?pass|2[-\s]?pass|二段|2\s*段/i);
-      expect(sec).toMatch(/(?:Gate\s*3[\s\S]{0,80}(?:評価|after|後|完了))[\s\S]{0,120}(?:auto[-\s]?promote|verbose\s*(?:昇格|escalat|switch|promote))/i);
+      // two-pass 設計を明示: Gate 3 で WARN/FAIL 確定 → backlog 全文 再 ingest +
+      // verbose template 再 emit。「verdict が WARN/FAIL ≥ 1」だけでは ordering が
+      // 不明瞭で、Gate 3 信号 (signal-NN) を backlog ingest 時点で予知できない問題が
+      // あるため auto-promote escalation step を明示分離。
+      expect(sec).toMatch(/auto[-\s]?promote\s*(?:escalation|step|path)|two[-\s]?pass|2[-\s]?pass|二段|2\s*段|stage\s*[123]/i);
+      expect(sec).toMatch(/(?:Gate\s*3[\s\S]{0,80}(?:評価|after|後|完了))[\s\S]{0,200}(?:auto[-\s]?promote|verbose\s*(?:昇格|escalat|switch|promote))/i);
     });
 
     it("Gate 2 が --verbose argv parsing pre-step を明示する (literal token 完全一致 + case-sensitive)", () => {
@@ -5004,12 +5004,11 @@ describe("session-handoff skill — Layer 3 (archive 最終報告 emit step + do
   });
 
   // ----------------------------------------------------------------
-  // Phase A-1 — check-details.md が
-  // 2 種 Output Template (concise default + verbose) を持つこと、
-  // および baseline / -60% reduction の measurement methodology を
+  // v2.1 — check-details.md が 2 種 Output Template (concise default +
+  // verbose) を持つこと、および baseline / reduction methodology を
   // 公開していることを regression guard 化する。
   // ----------------------------------------------------------------
-  it("Phase A-1: docs/references/check-details.md が Output Template (concise default) と Output Template (verbose) の 2 種を定義する", () => {
+  it("v2.1: docs/references/check-details.md が Output Template (concise default) と Output Template (verbose) の 2 種を定義する", () => {
     const content = readFileSync(checkDetailsPath, "utf-8");
     // 2 種テンプレ heading が独立に存在する (concise + verbose)
     expect(content).toMatch(/Output\s+Template\b[\s\S]{0,80}(?:concise|default)/i);
@@ -5024,7 +5023,7 @@ describe("session-handoff skill — Layer 3 (archive 最終報告 emit step + do
     expect(content).toMatch(/--verbose/);
   });
 
-  it("Phase A-1: docs/references/check-details.md が token reduction baseline と methodology を公開する (-60% goal)", () => {
+  it("v2.1: docs/references/check-details.md が token reduction baseline と methodology を公開する", () => {
     const content = readFileSync(checkDetailsPath, "utf-8");
     // baseline 計算 / methodology section が存在
     expect(content).toMatch(/(?:baseline|measurement|methodology|削減|reduction)/i);

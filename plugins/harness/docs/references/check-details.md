@@ -15,7 +15,7 @@ imported on demand by humans / agents reviewing or implementing
 
 ## Output Template (default = concise, opt-in verbose via `--verbose`)
 
-Phase A-1 (v2.1) で `check` の出力 template は **2 種** に分割した:
+v2.1 で `check` の出力 template は **2 種** に分割した:
 **concise (default)** と **verbose (`--verbose` 明示 or WARN/FAIL auto-promote)**。
 default では PASS verdict を 5 行 summary に圧縮し、tool 結果文字列の context
 肥大を削減 (-50% 〜 -60% target、§ Token reduction baseline 参照)。
@@ -120,16 +120,16 @@ backlog ingest mode (partial / full) と Output Template (concise / verbose) は
 
 ---
 
-## Token reduction baseline (Phase A-1 measurement methodology)
+## Token reduction baseline (v2.1 measurement methodology)
 
-Phase A-1 は (a) backlog partial ingest +
+v2.1 は (a) backlog partial ingest +
 (b) concise default output で **PASS path に対し -60% stretch target / 観測値
 -45% 〜 -53%** の context 圧迫削減を目指す (handoff サイズ依存、下記 Reduction
 表参照)。実 token 測定の baseline / methodology を以下に開示する。
 
 ### Baseline (v2.0、full ingest + verbose template only)
 
-代表 consumer handoff 2 件で測定 (PASS path、Phase A-1 着手前の sample):
+代表 consumer handoff 2 件で測定 (PASS path、v2.1 着手前の sample):
 
 | handoff | current.md | backlog.md | output template (verbose) | 合計 (≈ token) |
 | --- | --- | --- | --- | --- |
@@ -141,7 +141,7 @@ Phase A-1 は (a) backlog partial ingest +
 (`check-details.md` 等) で実体感としては **10K token 弱** が `check` 1 回で消費される
 (200K context window の **~5%** 相当)。
 
-### v2.1 (partial ingest + concise default、Phase A-1)
+### v2.1 (partial ingest + concise default)
 
 | handoff | current.md (full) | backlog.md (partial ~40 行) | output template (concise 5 行) | 合計 (≈ token) |
 | --- | --- | --- | --- | --- |

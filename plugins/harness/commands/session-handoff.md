@@ -222,8 +222,8 @@ session-<YYYY-MM-DD>-<phase-slug>.md
     圏外 entry を無条件再 Read (partial-ingest 趣旨を破壊、注意)**
     - **`current.md`**: Gate 2 で常に全文 ingest 済 → check 後 再 Read は冗長・禁止
       (context 圧迫主因)。詳細は ingest 済 content を直接 query。
-    - **`backlog.md`**: Phase A-1 改修 (v2.1) で default は partial ingest (heading +
-      Top [Critical|High] top-3 + 行数 metadata、~40 行)。Top 3 圏外 entry / 詳細
+    - **`backlog.md`**: v2.1 改修で default は partial ingest (heading + Top
+      [Critical|High] top-3 + 行数 metadata、~40 行)。Top 3 圏外 entry / 詳細
       prose が必要なら `Read` (offset/limit) での **個別 query を許容** (partial
       ingest の trade-off で発生する正規補完経路)。**ただし** 個別 query を 2 回以上
       行うなら最初から `--verbose` で再 check (`/session-handoff check --verbose`) し
@@ -294,10 +294,10 @@ comprehension) と理解 (understanding synthesis)** まで一貫して確認す
 
 #### Gate 2 — Content Comprehension (内容把握、v2.1 partial-ingest 既定)
 
-**Argument parsing (Phase A-1)**: 起動時に slash-command 引数をスキャン、literal
+**Argument parsing (v2.1)**: 起動時に slash-command 引数をスキャン、literal
 token `--verbose` 完全一致 / case-sensitive で初期 mode を決定。`--verbose` あり →
 `mode=verbose` 起動、なし → `mode=concise` (default)。Gate 3 で WARN/FAIL ≥ 1 →
-auto verbose 昇格 (下記 Phase C)。
+auto verbose 昇格 (下記 auto-promote escalation step 参照)。
 
 **partial-ingest by default + opt-in full-context (`--verbose`)**:
 `current.md` は **全文 (full-context) ingest** (鳥瞰図 ≤ 120 行、低コスト)。
@@ -307,11 +307,13 @@ verbose 昇格時のみ backlog も全文 ingest。**partial 時は backlog 各 
 prose / yaml 詳細は context 未 ingest** — Top 3 圏外詳細は check 後に `Read`
 (offset/limit) で個別 query (Anti-pattern #10 緩和)。
 
-実行手順 (Phase A: cheap probes / Phase B: signal eval / Phase C: auto-promote):
+実行手順 (3 stage two-pass): **stage 1 = cheap probes** (steps 1-5、Gate 2 ingest
+& report) / **stage 2 = signal evaluation** (Gate 3 で staleness 判定) / **stage 3
+= auto-promote escalation** (concise で WARN/FAIL ≥ 1 → verbose ingest + 再 emit、step 6):
 
-1. **Phase A.1** — `Read` で `current.md` **全文** 取込 → Latest state / Top priority /
+1. `Read` で `current.md` **全文** 取込 → Latest state / Top priority /
    Quick-start / Pointers (max 4、各 `Glob` で実在確認) を抽出して report
-2. **Phase A.2 — Backlog ingest** (mode 別):
+2. **Backlog ingest** (mode 別):
    - **mode=concise (default)**:
      - `Bash: wc -l <backlog>` で Y_total (S-13 用、`wc` 失敗 → `Y_total = N/A` で
        fallback `Glob` 行数推定; 取得不能なら S-13 を SKIP)
@@ -324,30 +326,30 @@ prose / yaml 詳細は context 未 ingest** — Top 3 圏外詳細は check 後�
      - 合計 Y_partial ≈ heading + top-3 詳細 + metadata = **~40 行 envelope**
    - **mode=verbose** (--verbose 明示 / 後段 auto-promote): 上記を skip し `Read`
      で `backlog.md` 全文 ingest (Y_full = Y_total)
-3. **Phase A.3** — `Bash: git log --oneline -5` と Latest state 突合 (不一致 → Gate 3 FAIL)
-4. **Phase A.4** — archive/ 最新 session archive (`session-<YYYY-MM-DD>-*.md` のみ、
+3. `Bash: git log --oneline -5` と Latest state 突合 (不一致 → Gate 3 FAIL)
+4. archive/ 最新 session archive (`session-<YYYY-MM-DD>-*.md` のみ、
    `summary-*` / `pre-*` 除外) と current.md を日付比較 (current が古ければ WARN)
-5. **Phase A.5 — Context loaded 行数**記録: current (X) / backlog (Y) 別々に保持、
+5. **Context loaded 行数** 記録: current (X) / backlog (Y) 別々に保持、
    合計 N=X+Y を Summary `Context loaded: <N> lines (current: {X}, backlog: {Y},
    mode: {concise|verbose})` で可視化。S-13 は Y_total (partial 時は `wc` metadata、
    verbose 時は実 ingest = 総行数) を閾値判定 — partial ingest は **signal 覆滅
    ではなく context 圧迫のみ削減** する設計
-6. **Phase C — Gate 3 評価後の auto-promote**: mode=concise で Phase B (Gate 3
-   完了) 結果 WARN/FAIL ≥ 1 → auto-promote 発火 (backlog を `Read` 全文 ingest
-   し直し、1 回追加 Read で `mode=verbose` 格上げ + verbose Output Template 再 emit)。
-   mode=verbose 起動時は Phase A.2 で full ingest 済 → Phase C は no-op。S-04/S-13/S-18
-   など全 backlog scan 依存 signal は Phase A cheap probes で取得済 → Phase C 時
-   再評価不要 (auto-promote = **template 詳細化 + ingest 拡大のみ**、verdict 確定済)
+6. **Auto-promote escalation step (Gate 3 評価後の verbose 昇格)**: mode=concise
+   で stage 2 (Gate 3) 結果 WARN/FAIL ≥ 1 → auto-promote 発火 (backlog を `Read` で
+   全文 ingest し直し、1 回追加 Read で `mode=verbose` + verbose Output Template
+   再 emit)。mode=verbose 起動時は step 2 で full ingest 済 → 本 step は no-op。
+   S-04/S-13/S-18 など全 backlog scan 依存 signal は stage 1 cheap probes で取得済
+   → 本 step 時に再評価不要 (auto-promote = **template 詳細化 + ingest 拡大のみ**、
+   verdict は stage 2 で確定済)
 
-#### Output Mode (`--verbose` flag — Phase A-1)
+#### Output Mode (`--verbose` flag、v2.1)
 
-`check` は 2 種 Output Template (concise default + verbose) を持つ
-([詳細](../docs/references/check-details.md) § Output Template): **concise (default)**
-= PASS verdict のみ **5 行 summary** (verdict / branch+commit / top priority /
-context loaded / next action) emit。**`--verbose`** 明示
-(`/session-handoff check --verbose`) または **WARN/FAIL ≥ 1 で auto verbose 昇格**で
-詳細 template (Gate 1-3 表 + signal 列挙 + Recommended Remediation) に切替。
-backlog ingest mode と Output Template は同期切替 (両方 verbose に倒れる)。
+`check` は 2 種 Output Template (concise default + verbose) を持つ ([詳細](../docs/references/check-details.md)
+§ Output Template): **concise (default)** = PASS verdict のみ **5 行 summary**
+(verdict / branch+commit / top priority / context loaded / next action) emit。
+**`--verbose`** 明示 (`/session-handoff check --verbose`) または **WARN/FAIL ≥ 1 で auto
+verbose 昇格** で詳細 template (Gate 1-3 表 + signal 列挙 + Recommended Remediation)
+に切替。backlog ingest mode と Output Template は同期切替 (両方 verbose に倒れる)。
 
 #### Gate 3 — Understanding Synthesis (理解の総合判定、v2 新設)
 
@@ -493,4 +495,4 @@ Gate 3 部分実行 + `required_section_missing: FAIL`) は
 
 ---
 
-**本 skill**: v2.1 / 最終更新 2026-05-03 (Phase A-1 partial-ingest + concise default)
+**本 skill**: v2.1 (partial-ingest + concise default)
