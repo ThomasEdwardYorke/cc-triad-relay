@@ -51,7 +51,7 @@ argument-hint: "[topic|free-form]"
 
    各質問の context (assistant text) と AskUserQuestion option `description` には、以下 3 要素を **必ず併記** する:
 
-   - **(a) ベテラン向け技術用語による短い結論** — 設計 trade-off / 失敗モード / 既存パターン用語で 1 文 (例: `ON DELETE CASCADE`, `optimistic lock`, `path traversal`, `idempotency key`)
+   - **(a) ベテラン向け技術用語による短い結論** — 設計 trade-off / 失敗モード / 既存パターン用語で 1 文 (例: **ON DELETE CASCADE**, **optimistic lock**, **path traversal**, **idempotency key**)
    - **(b) 初学者向け業務影響・後続コストの 1 文補足** — 「これを選ぶと次に X が必要」「使い方を間違えると Y が壊れる」のように、技術用語を業務上の帰結に翻訳した平易な日本語
    - **(c) 具体例最低 1 つ** — 抽象論で終わらせず「例: 親 record `orders` の `O-1` を削除すると紐づく子 record `line_items` 100 件も同時に消える」のような実物を添える
 
@@ -94,7 +94,7 @@ argument-hint: "[topic|free-form]"
    ✅ 二重表現 + 具体例:
 
    > 「親レコードを削除した時に子レコードを一緒に消すか、削除自体を拒否するか?
-   > **ベテラン**: `ON DELETE CASCADE` (一緒に消える) vs `ON DELETE RESTRICT` (削除拒否)。
+   > **ベテラン**: **ON DELETE CASCADE** (一緒に消える) vs **ON DELETE RESTRICT** (削除拒否)。
    > **初学者**: CASCADE は履歴ごと消えるので復元不能、RESTRICT は親を消す前に子を片付けるオペレーションが必要。
    > **例**: 親レコード `orders` の `O-1` を削除した時、紐づく子レコード `line_items` 100 件を自動削除するか、`O-1` 削除前に line_items 100 件を別 order へ移すか?」
 
