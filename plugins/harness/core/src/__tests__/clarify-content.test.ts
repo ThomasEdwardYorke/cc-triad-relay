@@ -5,16 +5,15 @@
  * コンテンツ不変条件 (strict pre-parse regression).
  *
  * 目的:
- *   clarify command の絶対原則 7「具体例 + 二重表現」が後続 PR で
- *   silently 削除 / 弱体化されないように、prompt 上の構造的契約を CI 時点で
- *   強制する。第 7 原則は「初学者・ベテラン両層に届く言葉で問う」ための
- *   最低保証であり、この欠落は clarify が用語のみ / 業務影響のみの
- *   片肺質問に逆戻りすることを意味する。
+ *   clarify command の絶対原則 7「具体例 + 二重表現」 (audience-aware
+ *   double-expression rule) が後続 PR で silently 削除 / 弱体化されないように、
+ *   prompt 上の構造的契約を CI 時点で強制する。第 7 原則は「初学者・ベテラン両層に
+ *   届く言葉で問う」ための最低保証であり、この欠落は clarify が用語のみ /
+ *   業務影響のみの片肺質問に逆戻りすることを意味する。
  *
  * 対応する harness 機能:
  *   - commands/clarify.md § 絶対原則 7
  *   - schemas/harness.config.schema.json clarify オブジェクト
- *   - parts-management 本流 2026-05-02 user 議論 (D-clarify-audience entry)
  *
  * 期待 (高水準):
  *   1. frontmatter 5 field (name / description / description-ja / allowed-tools / argument-hint) 完備
@@ -114,14 +113,14 @@ describe("clarify command: legacy trigger 互換 (`grill me` / `/grill-me` は d
   });
 });
 
-describe("clarify command: 絶対原則 7 「具体例 + 二重表現」 — 初学者・ベテラン両層 (D-clarify-audience)", () => {
+describe("clarify command: 絶対原則 7 「具体例 + 二重表現」 — 初学者・ベテラン両層 (audience-aware double-expression rule)", () => {
   const content = readCommand("clarify");
 
   it("第 7 原則 section が body に存在 (`絶対原則` 配下、見出し 7)", () => {
     // 第 1〜6 までは個人 skill 由来、第 7 は plugin 取込時の新規追加。
     // この見出しを CI で固定しないと、後続 PR で「冗長」と判断され
-    // silently 削除されるリスクがある (parts-management 本流 2026-05-02
-    // user 議論で明示要望、plugin 取込の核心)。
+    // silently 削除されるリスクがある (audience-aware double-expression rule
+    // は plugin 取込時の核心要件)。
     expect(content).toMatch(/7\.\s*\*\*具体例\s*\+\s*二重表現/);
   });
 
@@ -182,7 +181,7 @@ describe("clarify command: AskUserQuestion 経由必須 + 1-呼出-1-question �
   });
 });
 
-describe("harness.config.json schema: clarify config 宣言 (D-clarify-audience)", () => {
+describe("harness.config.json schema: clarify config 宣言 (audience-aware double-expression rule)", () => {
   const schemaPath = resolve(PLUGIN_ROOT, "schemas/harness.config.schema.json");
   const schema = JSON.parse(readFileSync(schemaPath, "utf-8")) as {
     properties: Record<string, unknown>;

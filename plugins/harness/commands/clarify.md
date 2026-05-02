@@ -53,7 +53,7 @@ argument-hint: "[topic|free-form]"
 
    - **(a) ベテラン向け技術用語による短い結論** — 設計 trade-off / 失敗モード / 既存パターン用語で 1 文 (例: `ON DELETE CASCADE`, `optimistic lock`, `path traversal`, `idempotency key`)
    - **(b) 初学者向け業務影響・後続コストの 1 文補足** — 「これを選ぶと次に X が必要」「使い方を間違えると Y が壊れる」のように、技術用語を業務上の帰結に翻訳した平易な日本語
-   - **(c) 具体例最低 1 つ** — 抽象論で終わらせず「例: 工事番号 `P-001` を削除すると紐づく部品行 100 件も同時に消える」のような実物を添える
+   - **(c) 具体例最低 1 つ** — 抽象論で終わらせず「例: 親 record `orders` の `O-1` を削除すると紐づく子 record `line_items` 100 件も同時に消える」のような実物を添える
 
    ### `description` テンプレ (option 内 1〜3 文の枠を 3 行で配分)
 
@@ -77,7 +77,7 @@ argument-hint: "[topic|free-form]"
 
    - `audienceLevel`: `"beginner"` | `"senior"` | `"both"` (default `both`)
      - `both` 以外の場合も**両層を併記**する (片側非表示にせず、relative な強弱で調整 — 「ベテラン読者はこの行を読み飛ばして OK」のような注記でユーザーの読み下しコストを下げる)
-     - **具体的な強調方法**: option `description` 内で対応 layer の行頭に `[ベテラン向け]` / `[初学者向け]` の prefix を付け、非対象 layer は 1 行 skim 用に短く保持する (例: `audienceLevel: "beginner"` の時 → `[初学者向け] CASCADE は履歴ごと消えて復元不能、RESTRICT は親を消す前に子を片付ける必要。/ ベテラン: ON DELETE CASCADE vs RESTRICT。/ 例: P-001 削除で部品 100 件も自動削除 vs 削除拒否。`)
+     - **具体的な強調方法**: option `description` 内で対応 layer の行頭に `[ベテラン向け]` / `[初学者向け]` の prefix を付け、非対象 layer は 1 行 skim 用に短く保持する (例: `audienceLevel: "beginner"` の時 → `[初学者向け] CASCADE は履歴ごと消えて復元不能、RESTRICT は親を消す前に子を片付ける必要。/ ベテラン: ON DELETE CASCADE vs RESTRICT。/ 例: orders `O-1` 削除で line_items 100 件も自動削除 vs 削除拒否。`)
    - `includeConcreteExamples`: false にすると例を省略可 (大量質問でテンポ重視のとき)
    - `exampleCount`: 1〜3、複雑論点で 2〜3 例を比較したい場合に増やす
 
@@ -96,7 +96,7 @@ argument-hint: "[topic|free-form]"
    > 「親レコードを削除した時に子レコードを一緒に消すか、削除自体を拒否するか?
    > **ベテラン**: `ON DELETE CASCADE` (一緒に消える) vs `ON DELETE RESTRICT` (削除拒否)。
    > **初学者**: CASCADE は履歴ごと消えるので復元不能、RESTRICT は親を消す前に子を片付けるオペレーションが必要。
-   > **例**: 工事番号 `P-001` (親) を削除した時、紐づく部品行 100 件 (子) を自動削除するか、`P-001` 削除前に部品 100 件を別工事へ移すか?」
+   > **例**: 親レコード `orders` の `O-1` を削除した時、紐づく子レコード `line_items` 100 件を自動削除するか、`O-1` 削除前に line_items 100 件を別 order へ移すか?」
 
    ### 推奨選択肢の `description` 例
 
@@ -106,12 +106,12 @@ argument-hint: "[topic|free-form]"
        description: |
          ベテラン: ON DELETE CASCADE、子レコードを atomically 連鎖削除。
          初学者: 親を消すと子も自動で消える、operator は親 1 つだけ意識すれば良い。
-         例: 工事 P-001 削除 → 部品 100 件も同 transaction で削除。
+         例: orders `O-1` 削除 → line_items 100 件も同 transaction で削除。
      - label: "RESTRICT で削除拒否"
        description: |
          ベテラン: ON DELETE RESTRICT、子が残る限り親削除を 23503 でブロック。
          初学者: 親を消すには子を先に整理する必要、誤削除を防げる代わりに片付け作業が増える。
-         例: 工事 P-001 削除 → 部品が残っていたら error、operator は別工事へ移すか個別削除する。
+         例: orders `O-1` 削除 → line_items が残っていたら error、operator は別 order へ移すか個別削除する。
    ```
 
 ## 質問カテゴリ（7 種類・ローテーション）
