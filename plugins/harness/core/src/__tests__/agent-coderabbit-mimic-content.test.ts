@@ -1,3 +1,4 @@
+/* generality-exemption: B-3h | HARNESS-harness-work-v6-parallel-mode | 2099-12-31 | content test が legitimate に過去 design decision tracker ID (D-49 = codex-sync output-file redirect 契約) を引用する fixture、本 test 自体が agents/coderabbit-mimic.md の D-49 contract reference を validation する目的で D-49 を保持する必要がある (B-3h は shipped surface 向け forcing function、本 test は test surface) */
 /**
  * core/src/__tests__/agent-coderabbit-mimic-content.test.ts
  *

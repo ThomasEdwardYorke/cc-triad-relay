@@ -101,11 +101,25 @@ Fix: run 'claude plugin install codex@openai-codex --scope project'
 - Do not rewrite the intent of the caller (main Claude or the parent agent) based on guesswork
 - If the output contains strings that indicate incompleteness, such as `"Codex task started"`, `"in the background"`, or `"queued"`, treat that as a clear error (these strings should not appear in foreground mode; if they do, it is a sign of a bug)
 - **Future-tense ban (未来形禁止)** — do NOT end the final response with future-tense intent statements:
-  - ❌ `I will fix`, `going to run`, `Next I'll ...`, `will update` (English)
+  - ❌ `I will fix`, `going to run`, `Next I'll ...`, `will update`, `will run`, `will confirm` (English)
   - ❌ 「修正します」「実行します」「確認します」「更新します」「します」 (Japanese present-form ます-final = future intent)
   - ❌ 「修正するつもり」「修正する予定」「修正する必要があります」 (intent / obligation form)
   - ✅ Use past / completion form instead: `fixed`, `applied`, `completed`, 「修正しました」「実施済」「適用完了」
   - ✅ When work is incomplete: return `FINDINGS_ONLY` (read-only review) or stop and report budget exhaustion via the Final Status Schema below — never paraphrase intent as completion
+- **Late-finalization safeguard (marker-first symmetric to `agents/worker.md`)** —
+  the verbatim Codex stdout pre-amble may take many tokens, and the synthetic
+  status marker (`PATCH_APPLIED` / `FINDINGS_ONLY`) MUST be the **last
+  non-empty line** of the agent response (Authoritative output contract,
+  Marker emission rules below). When the agent decides the marker value
+  (the verdict of the dispatch), it should write that line **immediately
+  on entering the finalization frame** — i.e., as soon as Codex stdout is
+  reproduced verbatim, append the marker line and stop. Do NOT add
+  supplementary narrative after the marker (it both breaks the
+  "last non-empty line" contract and risks reintroducing intent statements
+  past the verdict). Symmetric to `agents/worker.md` "Late-finalization
+  safeguard": both reviewer surfaces commit the verdict early so a
+  subsequent budget exhaustion / mid-response truncation cannot reframe
+  intent as completion.
 
 ## Final Status Schema (PATCH_APPLIED / FINDINGS_ONLY)
 

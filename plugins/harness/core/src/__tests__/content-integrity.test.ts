@@ -1,3 +1,4 @@
+/* generality-exemption: B-3h | HARNESS-harness-work-v6-parallel-mode | 2099-12-31 | content-integrity test が legitimate に過去 design-decisions tracker IDs (D-49 codex-sync output-file redirect / D-88 doc-drift / D-91 forbidden ID literal / D-124 drift guard pattern) を引用する fixture、test 自身がこれらの invariant を maintainer-side で固定する目的で D-NN を保持する必要がある (B-3h は shipped surface 向け forcing function、本 test は test surface) */
 /**
  * core/src/__tests__/content-integrity.test.ts
  * agents / commands Markdown の不変条件を検証するリグレッションテスト。

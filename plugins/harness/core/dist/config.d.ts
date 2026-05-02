@@ -474,8 +474,9 @@ export interface ContextBudgetConfig {
      */
     enabled: boolean;
     /**
-     * Auto-load total byte budget. Default `35000` (matches the parts-management
-     * precedent recorded in `harness-model-b-design-decisions.md` D-145).
+     * Auto-load total byte budget. Default `35000` matches the test-bed
+     * precedent recorded in the model-b design-decisions ledger
+     * (`docs/maintainer/`).
      * Range: 1024 - 524288.
      */
     budgetBytes: number;
@@ -732,6 +733,18 @@ export interface HarnessConfig {
     userPromptSubmit: UserPromptSubmitConfig;
     postToolUseFailure: PostToolUseFailureConfig;
     configChange: ConfigChangeConfig;
+    /**
+     * Per-project infrastructure manifest injected into worker prompts so
+     * subagents can detect infra-driven failure (e.g. local DB version differs
+     * from CI) without exploring forbidden workarounds. Optional, free-form
+     * object; coordinator (parallel-worktree / harness-work / tdd-implement)
+     * materializes this into a markdown bullet list and prepends it to the
+     * worker prompt. When undefined, coordinator emits an empty manifest
+     * section. See `commands/parallel-worktree.md` "Environment Manifest
+     * injection" for the materialization algorithm and recommended sub-keys
+     * (`postgres` / `node` / `ci_environment` / `forbidden_workarounds`).
+     */
+    environmentManifest?: Record<string, unknown>;
     subagentStart: SubagentStartConfig;
     /**
      * Optional context-budget audit knobs. Always populated post-merge —

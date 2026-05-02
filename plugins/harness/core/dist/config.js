@@ -195,6 +195,32 @@ export const DEFAULT_CONFIG = {
  * from having to defensively handle an unexpected fifth case in their
  * switch statements.
  */
+/**
+ * Validate `environmentManifest` field shape: must be `undefined` or a plain
+ * object (`Record<string, unknown>`). Reject `null` / array / scalar types as
+ * fatal config errors so malformed manifests (e.g.
+ * `{"environmentManifest": "oops"}` or `[]`) cannot reach runtime where
+ * coordinator skills (`commands/parallel-worktree.md` /
+ * `commands/tdd-implement.md`) attempt JSON-to-markdown materialization.
+ *
+ * This implements the fatal-error contract documented in
+ * `commands/parallel-worktree.md` "Materialization (JSON → markdown
+ * transformation algorithm)" — silent fallback would inject garbage into
+ * worker prompts.
+ */
+function validateEnvironmentManifest(value) {
+    if (value === undefined)
+        return undefined;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        const got = value === null
+            ? "null"
+            : Array.isArray(value)
+                ? "array"
+                : typeof value;
+        throw new Error(`harness.config.json: environmentManifest must be a plain object (got ${got})`);
+    }
+    return value;
+}
 function mergeConfig(partial) {
     const partialWork = partial.work ?? {};
     const baseWork = {
@@ -291,6 +317,14 @@ function mergeConfig(partial) {
         ...(() => {
             const merged = mergeModelsConfig(partial.models);
             return merged ? { models: merged } : {};
+        })(),
+        // environmentManifest is optional. validateEnvironmentManifest throws on
+        // non-object input (rejecting `"oops"` / `[]` / `42` etc.) so malformed
+        // manifests cannot reach worker prompt materialization. Spread above
+        // would have carried any garbage type through verbatim.
+        ...(() => {
+            const validated = validateEnvironmentManifest(partial.environmentManifest);
+            return validated !== undefined ? { environmentManifest: validated } : {};
         })(),
     };
 }

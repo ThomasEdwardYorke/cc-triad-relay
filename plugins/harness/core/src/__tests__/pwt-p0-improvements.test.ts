@@ -186,6 +186,27 @@ describe("P0-1+2+4: agents/worker.md — subagent failure mode 撲滅", () => {
       expect(content).toMatch(/maxTurns:\s*\d+/);
     });
   });
+
+  describe("Late-finalization safeguard (status-marker first、dogfood-driven safeguard)", () => {
+    it("Late-finalization safeguard / status-marker first セクションが存在", () => {
+      expect(content).toMatch(
+        /Late-finalization\s+safeguard|status-?marker\s+first|finalization\s+frame/i,
+      );
+    });
+
+    it("`STATUS:` 行を最初に出力する旨を明示 (8-field schema の他 field より前)", () => {
+      // 「最初に」「最初」「先頭」「first」相当の動詞 + STATUS field 言及
+      expect(content).toMatch(
+        /STATUS[\s\S]{0,300}?(?:最初|先頭|first|まず|冒頭)|(?:最初|先頭|first|まず|冒頭)[\s\S]{0,300}?STATUS/i,
+      );
+    });
+
+    it("補足セクションの未来形を NEXT_ACTION に閉じ込める旨を明示", () => {
+      expect(content).toMatch(
+        /(?:NEXT_ACTION|next-action|next\s*action)[\s\S]{0,300}?(?:閉じ込め|限定|含める|入れる|confine|restrict)|未来形[\s\S]{0,300}?NEXT_ACTION/i,
+      );
+    });
+  });
 });
 
 // =============================================================================
@@ -226,6 +247,28 @@ describe("P1-3 (P0 入り): agents/codex-sync.md — child agent budget exhausti
   describe("frontmatter 不変条件", () => {
     it("frontmatter `name: codex-sync` を維持", () => {
       expect(content).toMatch(/^---[\s\S]*?name:\s*codex-sync/);
+    });
+  });
+
+  describe("Late-finalization safeguard (worker.md と対称、symmetric fix)", () => {
+    it("Late-finalization safeguard / marker-first セクションが存在", () => {
+      expect(content).toMatch(
+        /Late-finalization\s+safeguard|marker-?first|finalization\s+frame/i,
+      );
+    });
+
+    it("`PATCH_APPLIED` / `FINDINGS_ONLY` の marker を最後に emit する契約と整合", () => {
+      // marker は last non-empty line である規約は既存 + 新 safeguard で
+      // 「finalization frame に入った瞬間 emit する」ことを明示
+      expect(content).toMatch(
+        /(?:PATCH_APPLIED|FINDINGS_ONLY)[\s\S]{0,300}?(?:last\s+non-?empty\s+line|最後|finalization\s+frame|directly|immediately)/i,
+      );
+    });
+
+    it("worker.md との対称性 (symmetric to agents/worker.md) を明示", () => {
+      expect(content).toMatch(
+        /(?:symmetric|対称)[\s\S]{0,300}?(?:agents\/worker\.md|worker\.md|worker\s+agent)|(?:agents\/worker\.md|worker\.md|worker\s+agent)[\s\S]{0,300}?(?:symmetric|対称)/i,
+      );
     });
   });
 });

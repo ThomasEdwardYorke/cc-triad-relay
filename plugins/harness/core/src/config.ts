@@ -525,8 +525,9 @@ export interface ContextBudgetConfig {
    */
   enabled: boolean;
   /**
-   * Auto-load total byte budget. Default `35000` (matches the parts-management
-   * precedent recorded in `harness-model-b-design-decisions.md` D-145).
+   * Auto-load total byte budget. Default `35000` matches the test-bed
+   * precedent recorded in the model-b design-decisions ledger
+   * (`docs/maintainer/`).
    * Range: 1024 - 524288.
    */
   budgetBytes: number;
