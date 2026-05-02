@@ -77,7 +77,13 @@ argument-hint: "[topic|free-form]"
 
    - `audienceLevel`: `"beginner"` | `"senior"` | `"both"` (default `both`)
      - `both` 以外の場合も**両層を併記**する (片側非表示にせず、relative な強弱で調整 — 「ベテラン読者はこの行を読み飛ばして OK」のような注記でユーザーの読み下しコストを下げる)
-     - **具体的な強調方法**: option `description` 内で対応 layer の行頭に `[ベテラン向け]` / `[初学者向け]` の prefix を付け、非対象 layer は 1 行 skim 用に短く保持する (例: `audienceLevel: "beginner"` の時 → `[初学者向け] CASCADE は履歴ごと消えて復元不能、RESTRICT は親を消す前に子を片付ける必要。/ ベテラン: ON DELETE CASCADE vs RESTRICT。/ 例: orders `O-1` 削除で line_items 100 件も自動削除 vs 削除拒否。`)
+     - **具体的な強調方法**: option `description` 内で対応 layer の行頭に `[ベテラン向け]` / `[初学者向け]` の prefix を付け、非対象 layer は 1 行 skim 用に短く保持する。例えば `audienceLevel` を `beginner` にした場合:
+
+       ```text
+       [初学者向け] CASCADE は履歴ごと消えて復元不能、RESTRICT は親を消す前に子を片付ける必要。
+       ベテラン: ON DELETE CASCADE vs RESTRICT。
+       例: orders O-1 削除で line_items 100 件も自動削除 vs 削除拒否。
+       ```
    - `includeConcreteExamples`: false にすると例を省略可 (大量質問でテンポ重視のとき)
    - `exampleCount`: 1〜3、複雑論点で 2〜3 例を比較したい場合に増やす
 
