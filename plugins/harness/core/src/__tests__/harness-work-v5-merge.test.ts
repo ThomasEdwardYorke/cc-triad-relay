@@ -1,3 +1,4 @@
+/* generality-exemption: B-3h | HARNESS-harness-work-v6-parallel-mode | 2099-12-31 | v5 update history は backlog tracker ID (D-74 / D-75 / D-76) を引用する fixture、本 test 自体が v5 entry の tracker-ID 引用を validation する目的で D-7N を保持する必要がある (B-3h は shipped surface 向け forcing function、本 test は test surface) */
 /**
  * core/src/__tests__/harness-work-v5-merge.test.ts
  *

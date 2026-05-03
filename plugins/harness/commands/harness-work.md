@@ -1,12 +1,14 @@
 ---
 name: harness-work
-description: "Plans.md 駆動の実装 + merge orchestration ディスパッチャ (v5)。タスク数で Auto Mode Detection (Solo / Parallel / Breezing) し内部的に `/tdd-implement` v2 / `/parallel-worktree` v1 に委譲、また `--merge` flag または detect_merge_orchestration() シグナル成立で `/harness-merge-train` (multi-PR squash merge) に委譲し、TDD + Codex チーム並列 + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオン + skill connectivity の完全品質ゲートを常時強制する。バグ修正・機能追加・複数 PR squash merge orchestration を統合。Use when user mentions: implement, execute, fix bug, add feature, merge multiple PRs, /harness-work, /work, /breezing, /fix-bug, /add-feature, --parallel, --merge. Do NOT load for: planning (use harness-plan), code review (use harness-review), release (use harness-release)."
-description-ja: "Harness v5 統合実行 + merge orchestration ディスパッチャ。Plans.md 駆動で Auto Mode Detection (1件=Solo、2-3件=Parallel、4件以上=Breezing) しつつ、複数 PR の squash merge 局面を `--merge` flag / detect_merge_orchestration() シグナルで検知して `/harness-merge-train` に委譲。内部的に /tdd-implement v2 / /parallel-worktree v1 / /harness-merge-train (v5 で新設) に委譲することで TDD + Codex チーム + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオン (Phase 7) + Skill connectivity 原則 の完全品質ゲートを常時強制。以下で起動: 実装して、バグ修正、機能追加、複数 PR を merge、/harness-work、/work、/breezing、/fix-bug、/add-feature、--parallel、--merge。プランニング・レビュー・リリース・セットアップには使わない。"
+description: "Plans.md 駆動の実装 + merge orchestration ディスパッチャ (v6、v5 互換)。タスク数 + recent_subagent_failures で Auto Mode Detection (Solo / Parallel v1 = Model A / Parallel v2 = Model B / Breezing) し内部的に `/tdd-implement` v2 / `/parallel-worktree` (v1) / `/parallel-worktree-v2` に委譲、また `--merge` flag または detect_merge_orchestration() シグナル成立で `/harness-merge-train` (multi-PR squash merge) に委譲し、TDD + Codex チーム並列 + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオン + skill connectivity の完全品質ゲートを常時強制する。新 flag `--parallel-mode=v1|v2` (default v1、互換維持) で Model A / Model B を明示選択可能。Use when user mentions: implement, execute, fix bug, add feature, merge multiple PRs, /harness-work, /work, /breezing, /fix-bug, /add-feature, --parallel, --parallel-mode, --merge. Do NOT load for: planning (use harness-plan), code review (use harness-review), release (use harness-release)."
+description-ja: "Harness v6 (v5 互換) 統合実行 + merge orchestration ディスパッチャ。Plans.md 駆動で Auto Mode Detection (1件=Solo、2-3件=Parallel、4件以上=Breezing) しつつ、`recent_subagent_failures>=2` 検出時 (opt-in `work.allowAutoModelB`) は Model B (`/parallel-worktree-v2`) に自動降格、`n_tasks>=3` も同 opt-in gate で v2 default。複数 PR の squash merge 局面は `--merge` flag / detect_merge_orchestration() シグナルで検知して `/harness-merge-train` に委譲。新 flag `--parallel-mode=v1|v2` で Model A / Model B 明示選択可能 (default v1 互換維持)。内部的に /tdd-implement v2 / /parallel-worktree v1 / /parallel-worktree-v2 / /harness-merge-train に委譲することで TDD + Codex チーム + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオン (Phase 7) + Skill connectivity 原則 の完全品質ゲートを常時強制。以下で起動: 実装して、バグ修正、機能追加、複数 PR を merge、/harness-work、/work、/breezing、/fix-bug、/add-feature、--parallel、--parallel-mode、--merge。プランニング・レビュー・リリース・セットアップには使わない。"
 allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput", "Skill"]
-argument-hint: "[all|task-number|N-M|PR-number|fix|feature|parallel|breezing|sequential|merge|no-commit|dry-run]"
+argument-hint: "[all|task-number|N-M|PR-number|fix|feature|parallel|parallel-mode|breezing|sequential|merge|no-commit|dry-run]"
 ---
 
-# Harness Work (v5) — Plans.md 駆動 + merge orchestration ディスパッチャ
+# Harness Work (v6) — Plans.md 駆動 + merge orchestration ディスパッチャ
+
+**v6 改修要旨 (2026-05-03)**: Auto Mode Detection を Model B 経路まで拡張。Step 2 モード判定に **`recent_subagent_failures >= 2` の v2 降格 rule** + **`n_tasks >= 3` の v2 default rule** を追加 (両者 opt-in gate `work.allowAutoModelB: true`、default `false` で v5 互換)。新 flag **`--parallel-mode=v1|v2`** で Model A (`/parallel-worktree`) / Model B (`/parallel-worktree-v2`) を明示選択可能 (default `v1` 互換維持)。Step 4 委譲表に **`/parallel-worktree-v2` (Model B) 行を追加**。これで「Model B (`/parallel-worktree-v2`) への自動委譲経路は spec 上 **未実装**」spec gap を構造解消。v5 互換性 (solo / parallel / breezing / sequential / merge / dry-run / fix-bug / add-feature) は破壊しない。
 
 **v5 改修要旨 (2026-04-26)**: Step 2 モード判定に `merge` mode を追加し、複数 PR の squash merge orchestration を **`/harness-merge-train` (v5 で新設)** に委譲する経路を spec に明記。これで prior review で認識された「review/merge orchestration が dispatcher のスコープ外」spec gap を構造解消。**Skill connectivity 原則** (user / agent から直接 Bash / gh CLI で多 PR orchestration を実行するのは構造規律違反、skill 内部実装として gh / git を呼ぶのは設計) を v5 で固定する。v4 互換性 (solo / parallel / breezing / sequential / dry-run / fix-bug / add-feature) は破壊しない。
 
@@ -392,6 +394,7 @@ Auto mode で worktree を使うかの判定:
 | `--fix <説明>` | バグ修正フローを起動 (一時タスク追加) | - |
 | `--feature <機能名>` | 機能追加フローを起動 (一時タスク追加) | - |
 | `--parallel N` | 並列ワーカー数を強制指定 | auto |
+| `--parallel-mode=v1\|v2` | 並列実装エンジンの明示選択 (`v1` = Model A = `/parallel-worktree`、`v2` = Model B = `/parallel-worktree-v2`)。Solo モードでは無視される (`/tdd-implement` v2 直接) | v1 |
 | `--sequential` | 直列実行強制 (Solo を逐次) | - |
 | `--breezing` | Parallel 強制 + 全未着手タスク対象 | false |
 | `--no-commit` | 自動コミット抑制 | false |
@@ -661,8 +664,31 @@ else:
     n_tasks = len(selected_tasks)
     if n_tasks == 0: mode = "no-task"
     elif n_tasks == 1: mode = "solo"        # -> /tdd-implement v2
-    elif n_tasks <= 3: mode = "parallel"    # -> /parallel-worktree
-    else: mode = "breezing"                 # -> /parallel-worktree (並列度上限)
+    elif n_tasks <= 3: mode = "parallel"    # -> /parallel-worktree (Model A / Model B は parallel_mode で決定)
+    else: mode = "breezing"                 # -> /parallel-worktree (並列度上限、parallel_mode 同上)
+
+# v6: parallel / breezing 選択時の **エンジン (Model A / Model B)** を `parallel_mode` で決める。
+# `--parallel-mode=v1|v2` は最優先、続いて opt-in auto rule、最後に harness.config.json の default
+# が適用される (resolveParallelMode 詳細は core/src/work/parallel-mode-resolver.ts を参照)。
+if mode in ("parallel", "breezing"):
+    # `recent_subagent_failures` は consumer が宣言した
+    # `harness.config.json.work.qualityGates.disciplineLedgerPath` の Markdown 表行を
+    # 30 日窓で skill: G3 / SubagentStop failure 等の subagent failure entry でカウント。
+    # 未宣言 / 読取不能なら 0 (auto rule が過剰に v2 へ降格しないよう fail-safe)。
+    recent_subagent_failures = read_optional(
+        harness_config.work.qualityGates.disciplineLedgerPath,
+    ) | grep "skill: G3" | count_recent(days=30)
+
+    parallel_mode = resolve_parallel_mode(
+        cli_flag=args.parallel_mode,                              # `--parallel-mode=v1|v2`
+        n_tasks=n_tasks,
+        recent_subagent_failures=recent_subagent_failures,
+        allow_auto_model_b=harness_config.work.allowAutoModelB,   # default false (opt-in)
+        harness_config_default=harness_config.work.parallelMode,  # optional, default `v1`
+    )
+    # 結果:
+    #   parallel_mode == "v2"  → Step 4.2 で `/parallel-worktree-v2` (Model B) に委譲
+    #   parallel_mode == "v1"  → Step 4.2 で `/parallel-worktree` (Model A、v5 互換) に委譲
 
 # worktree 非対応プロジェクト / wt:avoid タスクなら Solo に降格 (merge mode は不変)
 if mode != "merge" and harness_config.worktree_enabled == False:
@@ -670,6 +696,24 @@ if mode != "merge" and harness_config.worktree_enabled == False:
 if mode != "merge" and any(task.has_label("wt:avoid") for task in selected_tasks):
     warn_and_downgrade_to_sequential()
 ```
+
+**parallel-mode (`v1` = Model A / `v2` = Model B) の解決規則 (v6 新規)**:
+
+| precedence | 入力 | 採用条件 |
+|---|---|---|
+| 1 (最強) | `--parallel-mode=v1\|v2` flag (本 skill 引数) | 値が allowlist (`v1` / `v2`) に一致 |
+| 2 | Auto rule (failure-history) | `n_tasks >= 2` AND `recent_subagent_failures >= 2` AND `harness.config.json.work.allowAutoModelB == true` → `v2` |
+| 3 | Auto rule (task-count) | `n_tasks >= 3` AND `harness.config.json.work.allowAutoModelB == true` → `v2` |
+| 4 | `harness.config.json.work.parallelMode` | project-side default (`v1` / `v2`) |
+| 5 (fallback) | built-in default | `v1` (v5 互換維持) |
+
+`work.allowAutoModelB` は **default `false`** で **明示 opt-in**。default 値のままなら v6 改修後も v5 と同じ振る舞い (Model A 一択)。auto rule に乗せたい consumer のみ opt-in。
+
+`recent_subagent_failures` の供給元は `harness.config.json.work.qualityGates.disciplineLedgerPath` で宣言された Markdown ledger (path 未宣言なら 0、読取失敗時も 0 で fail-safe — これは過剰な Model B 降格を防ぐ)。
+
+**実装は `core/src/work/parallel-mode-resolver.ts` (`resolveParallelMode`) を参照** (純粋関数、env / fs を読まない)。
+
+---
 
 **merge mode の `detect_merge_orchestration()` 4 シグナル** (詳細は前掲「判定フロー」section):
 
@@ -739,20 +783,40 @@ Skill({skill: "tdd-implement", args: "<task description + AC + forbidden files> 
 
 #### 4.2 Parallel / Breezing モード — worktree 利用可
 
-**handoff materialize 必須** (4.1 と同じ原則)。coordinator は `$PROFILE` を実値に置換してから Skill を呼び出す:
+**handoff materialize 必須** (4.1 と同じ原則)。coordinator は `$PROFILE` を実値に置換してから Skill を呼び出す。**v6 から `parallel_mode` (= `v1` / `v2`) で委譲先 skill を切替**する:
 
-```
-# テンプレート表記 (<PROFILE> は spec 上のプレースホルダ)
+| `parallel_mode` | 委譲先 skill | エンジン |
+|---|---|---|
+| `v1` (default) | `/parallel-worktree` | Model A (単一 Claude + Agent-tool subagent fan-out、v5 互換) |
+| `v2` | `/parallel-worktree-v2` | Model B (各 worktree で独立 claude プロセス + tmux orchestration) |
+
+`v2` は **3+ サブタスク + per-worktree skill access (Pseudo CR + Real CR + Codex Phase 7 を各 worktree で個別実行)** が必要なケースで選ぶ。`v1` で context contention / subagent failure が頻発する場合は opt-in auto rule (`work.allowAutoModelB: true` + `recent_subagent_failures >= 2`) で v2 に降格させる経路もあり。
+
+```text
+# v1 (Model A) — テンプレート表記 (<PROFILE> / <N> は spec 上のプレースホルダ)
 Skill({skill: "parallel-worktree", args: "--max-parallel=<N> --feature-branch=<branch> --profile=<PROFILE> --spec=<inline-spec>"})
 
-# 実際の呼出例 (PROFILE=strict の場合)
+# v1 (Model A) — 実際の呼出例 (PROFILE=strict の場合)
 Skill({skill: "parallel-worktree", args: "--max-parallel=3 --feature-branch=feature/foo --profile=strict --spec=<inline-spec>"})
+
+# v2 (Model B) — テンプレート表記
+Skill({skill: "parallel-worktree-v2", args: "--max-parallel=<N> --feature-branch=<branch> --profile=<PROFILE> --spec=<inline-spec>"})
+
+# v2 (Model B) — 実際の呼出例 (PROFILE=assertive の場合)
+Skill({skill: "parallel-worktree-v2", args: "--max-parallel=4 --feature-branch=feature/foo --profile=assertive --spec=<inline-spec>"})
 ```
 
-`/parallel-worktree` v1 が:
+**禁止**: `--parallel-mode=v2` 解決後も `Skill({skill: "parallel-worktree", ...})` を呼ぶ (skill 名と mode の drift)。`parallel_mode` の解決値が `v2` のときは必ず `parallel-worktree-v2` skill 名で dispatch する (skill connectivity 原則)。
+
+`/parallel-worktree` v1 (Model A) が:
 - N worktree 生成
 - 各 worktree で `harness:worker` agent 起動、内部で `/tdd-implement` v2 強制実行
 - coordinator が本物 CodeRabbit + マージ順序 + コンフリクト解消 + 担当表クリア
+
+`/parallel-worktree-v2` (Model B) が:
+- N worktree + N tmux window 生成 + N 独立 `claude` プロセス起動
+- 各プロセス内で `/tdd-implement` v2 を **完全実行** (Pseudo CR / Real CR / Codex Phase 7 を per-worktree で実行)
+- coordinator は session-manager.ts で進捗監視 + 全 worktree 完了後の merge train を担当
 
 #### 4.2b Parallel (Agent tool) モード — wt:avoid 混在、worktree 使えない
 
@@ -1125,7 +1189,8 @@ v3 のコマンド互換は維持される (`--parallel N` / `--breezing` / `--f
 | スキル | 役割 | 呼び出し関係 |
 |---|---|---|
 | `/tdd-implement` v2 | 単一タスク実装エンジン (primitive) | `/harness-work` Solo / Sequential が呼ぶ |
-| `/parallel-worktree` v1 | worktree 並列オーケストレータ | `/harness-work` Parallel / Breezing が呼ぶ |
+| `/parallel-worktree` v1 (Model A) | worktree 並列オーケストレータ (単一 Claude + Agent-tool subagent fan-out) | `/harness-work` Parallel / Breezing で `parallel_mode == "v1"` のとき呼ぶ |
+| **`/parallel-worktree-v2` (Model B)** (v6 から auto 委譲対応) | **per-worktree 独立 claude + tmux orchestration、各 worktree で `/tdd-implement` v2 を完全実行** | **`/harness-work` v6 Parallel / Breezing で `parallel_mode == "v2"` のとき呼ぶ** |
 | **`/harness-merge-train` v1** (v5 で新設) | **複数 PR squash merge orchestrator (M0-M9 phase chain)** | **`/harness-work` v5 Merge mode が呼ぶ** |
 | `/pseudo-coderabbit-loop` | 疑似 CodeRabbit (Phase 5.5) | `/tdd-implement` v2 / `/harness-merge-train` M2.2 が呼ぶ |
 | `/coderabbit-review` | 本物 CodeRabbit 監視 (Phase 6) | `/tdd-implement` v2 / `/parallel-worktree` / `/harness-merge-train` M5 が呼ぶ |
@@ -1193,6 +1258,7 @@ Gate 1-5 は worktree / Agent 内で blocking 実行、Gate 6 は coordinator �
 
 ## スキル更新履歴
 
+- **v6 (2026-05-03)**: Auto Mode Detection を Model B 経路まで拡張。Step 2 モード判定の parallel / breezing 選択時に **`parallel_mode` (= `v1` / `v2`) で委譲先 skill を `/parallel-worktree` (Model A) / `/parallel-worktree-v2` (Model B) に切替**。`parallel_mode` 解決は precedence chain (`--parallel-mode=v1\|v2` flag → opt-in auto rule (`work.allowAutoModelB: true` + `n_tasks >= 2 && recent_subagent_failures >= 2` で v2 降格、`n_tasks >= 3` で v2 default) → `harness.config.json.work.parallelMode` → fallback `v1`) で `core/src/work/parallel-mode-resolver.ts` (純粋関数 `resolveParallelMode`) が担当。新 flag `--parallel-mode=v1\|v2` を `argument-hint` / options 表 / Step 4.2 に追加。Step 4.2 委譲表に **`/parallel-worktree-v2` 行を追加**、v1 / v2 の skill 切替契約と禁止事項 (skill 名と mode の drift 禁止) を明示。**v5 互換性 (solo / parallel / breezing / sequential / merge / dry-run / fix-bug / add-feature) は破壊しない**: `work.allowAutoModelB` default `false` で auto rule は静かに opt-out、`--parallel-mode` 未指定時は v1 fallback。これで「Model B (`/parallel-worktree-v2`) への自動委譲経路は spec 上 **未実装**」spec gap を構造解消、dogfood 環境で繰り返し観測された subagent failure 頻発時の Model B 自動降格経路が opt-in 完備。
 - **v5 (2026-04-26)**: Step 2 モード判定に **`merge` mode 最優先評価** を追加し、複数 PR の squash merge orchestration を **`/harness-merge-train` (v5 で新設)** に委譲する経路を spec 化。`detect_merge_orchestration()` シグナル (PR 番号 ≥ 2 / handoff backlog merge keyword / `gh pr list` open PR ≥ 2 + 追加 guard / `--merge` flag) で auto-detect (Signal 3 は default opt-out、`work.allowMergeAutoSignal3: true` で opt-in)。`--merge` flag を `argument-hint` に追加。**Skill connectivity 原則** (user / agent から直接 Bash / gh CLI で多 PR orchestration は構造規律違反、skill 内部で gh/git を使うのは設計、skill bypass は consumer-side discipline ledger に append-only 自動追記) を frontmatter 直下に固定 box として宣言。Step 4 に **4.6 Merge mode** delegation section 追加 (PROFILE materialize 規約継承)。関連スキル table に `/harness-merge-train` / `/branch-merge` / `/session-handoff` を追加 (skill connectivity の網羅性確保)。**v4 互換性は破壊しない** (solo / parallel / breezing / sequential / dry-run / fix-bug / add-feature 経路は不変、merge mode は最優先評価で先取り)。
 - **v4.2 (2026-04-22)**: project-specific pipeline 検証サブフローフラグ (ダブルダッシュ prefix 付き `test-pipeline`) を除去 (breaking change)。`harness-work.md` のフラグ定義 / mode table / pseudocode / 独立サブフローセクション / description frontmatter を合わせて 6+2 箇所削除、generality guard pattern B-2f で再導入を CI blocking。移行先: project-local skill (例: `.claude/skills/<project>-local-rules/references/pipeline-check.md`) 経由で受ける。歴史的記述 (v3/v2/v1 の `test-pipeline` 言及) は経緯保持のため残置。
 - **v4.1 (2026-04-19 Codex 調査反映)**: Auto Mode Detection v2 (依存グラフ考慮、独立グループ数ベース)、`--affected` オプション追加 (Nx 流)、Phase fan-out パターン明示化、`harness.config.json` 拡張フィールド詳細化 (tddEnforce / worktree.forceDisableReasons / codeRabbit bucket size)、品質ゲート一覧、follow-up notes セクション、フォールバック戦略追加。

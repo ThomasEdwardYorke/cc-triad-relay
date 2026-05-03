@@ -259,7 +259,33 @@ export interface WorkConfig {
      * values fall back to `undefined` after a stderr warning.
      */
     pipelineCheckPath?: string;
+    /**
+     * Project-side default for `/harness-work`'s parallel implementation
+     * engine. `"v1"` (default, back-compat) delegates Parallel / Breezing
+     * modes to `/parallel-worktree` (Model A). `"v2"` delegates to
+     * `/parallel-worktree-v2` (Model B, per-worktree independent claude
+     * processes). Overridden by `--parallel-mode=v1|v2` flag and by opt-in
+     * auto rules (see `allowAutoModelB`). Resolver:
+     * `core/src/work/parallel-mode-resolver.ts`. Invalid values fall back
+     * to `"v1"` after a stderr warning.
+     */
+    parallelMode: ParallelMode;
+    /**
+     * Opt-in gate for `/harness-work` v6 auto Model B downgrade rules.
+     * When `true`, the resolver picks `"v2"` automatically when
+     * `n_tasks >= 2 && recent_subagent_failures >= 2` (failure-history rule)
+     * OR `n_tasks >= 3` (task-count rule). Default `false` preserves v5
+     * behaviour exactly — auto rules are silent until explicit opt-in.
+     */
+    allowAutoModelB: boolean;
 }
+/**
+ * Allowed values for `WorkConfig.parallelMode` and the `--parallel-mode`
+ * flag. Single source of truth; the resolver
+ * (`core/src/work/parallel-mode-resolver.ts`) re-exports its own copy
+ * for runtime validation.
+ */
+export type ParallelMode = "v1" | "v2";
 export interface SecurityConfig {
     /**
      * Relative path to a project-local security checklist. security-auditor
@@ -474,8 +500,8 @@ export interface ContextBudgetConfig {
      */
     enabled: boolean;
     /**
-     * Auto-load total byte budget. Default `35000` (matches the parts-management
-     * precedent recorded in `harness-model-b-design-decisions.md` D-145).
+     * Auto-load total byte budget. Default `35000` keeps the auto-load
+     * budget consistent with the maintainer-documented baseline.
      * Range: 1024 - 524288.
      */
     budgetBytes: number;
@@ -732,6 +758,18 @@ export interface HarnessConfig {
     userPromptSubmit: UserPromptSubmitConfig;
     postToolUseFailure: PostToolUseFailureConfig;
     configChange: ConfigChangeConfig;
+    /**
+     * Per-project infrastructure manifest injected into worker prompts so
+     * subagents can detect infra-driven failure (e.g. local DB version differs
+     * from CI) without exploring forbidden workarounds. Optional, free-form
+     * object; coordinator (parallel-worktree / harness-work / tdd-implement)
+     * materializes this into a markdown bullet list and prepends it to the
+     * worker prompt. When undefined, coordinator emits an empty manifest
+     * section. See `commands/parallel-worktree.md` "Environment Manifest
+     * injection" for the materialization algorithm and recommended sub-keys
+     * (`postgres` / `node` / `ci_environment` / `forbidden_workarounds`).
+     */
+    environmentManifest?: Record<string, unknown>;
     subagentStart: SubagentStartConfig;
     /**
      * Optional context-budget audit knobs. Always populated post-merge —

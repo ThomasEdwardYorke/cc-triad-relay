@@ -210,6 +210,26 @@ P3.1-P3.3 完了後、Phase 2/3 累計成果を含めて `v0.5.0` release。
 - [ ] P3.4 v0.5.0 tag + Release published
 - [ ] upstream consumers (≥ 1) で Model B default 採用済
 
+### P3.5 — `/harness-work` v6: Auto Mode Detection に Model B 経路を追加 (2026-05-03)
+
+**着手 / 完了** (Phase A-2 dogfood、cc-triad-relay shipped 改修):
+
+| # | ファイル | 修正内容 |
+|---|---|---|
+| P3.5.1 | `plugins/harness/commands/harness-work.md` | v6 spec: 新 flag `--parallel-mode=v1\|v2` (default `v1` 互換) + Auto rule (`work.allowAutoModelB: true` opt-in 下で `n_tasks >= 2 && recent_subagent_failures >= 2` で v2 降格、`n_tasks >= 3` で v2 default) + Step 4.2 委譲表に `/parallel-worktree-v2` (Model B) 行追加 |
+| P3.5.2 | `plugins/harness/core/src/work/parallel-mode-resolver.ts` (新規) | precedence chain (cli → auto rule → harness config default → fallback `v1`) を純粋関数で実装 |
+| P3.5.3 | `plugins/harness/core/src/__tests__/generality.test.ts` | Pattern B-3h 追加 (`\bD-\d+\b` numeric backlog tracker ID forcing function、shipped surface での leak 防止) |
+| P3.5.4 | `plugins/harness/agents/worker.md` + `plugins/harness/agents/codex-sync.md` | Late-finalization safeguard (status-marker first) を対称追加 — Round 9 / Phase 7 dogfood で観測された「intent 文を最後に emit してから interrupt される subagent failure」への構造的対症療法。worker は `STATUS:` を最初に emit、codex-sync は marker (`PATCH_APPLIED` / `FINDINGS_ONLY`) を finalization frame に入った瞬間 emit して supplementary narrative を後付けしない |
+| P3.5.5 | `plugins/harness/core/src/__tests__/harness-work-v6-parallel-mode.test.ts` (新規) + `pwt-p0-improvements.test.ts` 拡張 | content test で v6 spec / safeguard を CI 固定 |
+
+**完了条件**:
+- [x] commands/harness-work.md v6 spec 拡張 (Auto Mode に Model B 経路 + `--parallel-mode=v1\|v2`)
+- [x] core/src/work/ flag parser (`parallel-mode-resolver.ts`) 追加
+- [x] generality.test.ts Pattern B-3h 追加
+- [ ] parts-management 本流 dogfood (cc-triad-relay 側 PR merge 後、consumer 側で auto rule opt-in 検証)
+- [x] ROADMAP Phase 3 整合 (本 entry P3.5)
+- [x] worker / codex-sync 対称 fix (Round 9 / Phase 7 dogfood の subagent failure に対する Late-finalization safeguard)
+
 ---
 
 ## 重要な設計判断

@@ -1,4 +1,4 @@
-/* generality-exemption: B-1,B-2c | HARNESS-test-self-reference | 2026-Q4 | detector self-reference unavoidable: this content test asserts that commands/harness-merge-train.md does NOT contain project-specific branch names or paths, so the leak strings appear here as test inputs. CONTRIBUTING.md §3.1 exemption grammar (file-head form) per harness-plugin-dev.md R3 example. */
+/* generality-exemption: B-1,B-2c,B-3h | HARNESS-test-self-reference | 2099-12-31 | detector self-reference unavoidable: this content test asserts that commands/harness-merge-train.md does NOT contain project-specific branch names or paths, so the leak strings appear here as test inputs (B-1, B-2c). Additionally B-3h is exempt because the v5 design-decisions ledger (D-74 / D-75 / D-76 / D-77) is referenced in the test as a fixture for cross-PR consistency assertions. CONTRIBUTING.md §3.1 exemption grammar (file-head form) per harness-plugin-dev.md R3 example. */
 
 /**
  * core/src/__tests__/harness-merge-train-content.test.ts

@@ -64,6 +64,11 @@ export const DEFAULT_CONFIG = {
             enforceHarnessWorkEssence: false,
         },
         failFast: true,
+        // Default to Model A (`v1`) for back-compat. Consumers opt in to
+        // Model B by setting `parallelMode` to `v2` and / or enabling the
+        // auto rules with `allowAutoModelB`.
+        parallelMode: "v1",
+        allowAutoModelB: false,
     },
     security: {
         enabledChecks: [
@@ -195,6 +200,32 @@ export const DEFAULT_CONFIG = {
  * from having to defensively handle an unexpected fifth case in their
  * switch statements.
  */
+/**
+ * Validate `environmentManifest` field shape: must be `undefined` or a plain
+ * object (`Record<string, unknown>`). Reject `null` / array / scalar types as
+ * fatal config errors so malformed manifests (e.g.
+ * `{"environmentManifest": "oops"}` or `[]`) cannot reach runtime where
+ * coordinator skills (`commands/parallel-worktree.md` /
+ * `commands/tdd-implement.md`) attempt JSON-to-markdown materialization.
+ *
+ * This implements the fatal-error contract documented in
+ * `commands/parallel-worktree.md` "Materialization (JSON → markdown
+ * transformation algorithm)" — silent fallback would inject garbage into
+ * worker prompts.
+ */
+function validateEnvironmentManifest(value) {
+    if (value === undefined)
+        return undefined;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        const got = value === null
+            ? "null"
+            : Array.isArray(value)
+                ? "array"
+                : typeof value;
+        throw new Error(`harness.config.json: environmentManifest must be a plain object (got ${got})`);
+    }
+    return value;
+}
 function mergeConfig(partial) {
     const partialWork = partial.work ?? {};
     const baseWork = {
@@ -219,7 +250,7 @@ function mergeConfig(partial) {
             baseWork.handoffPaths = partialWork.handoffPaths;
         }
     }
-    const mergedWork = validateWorkPipelineCheckPath(validateWorkTaskTracker(baseWork));
+    const mergedWork = validateWorkPipelineCheckPath(validateWorkTaskTracker(validateWorkParallelMode(baseWork)));
     // repoKind is a top-level scalar with strict enum validation.
     // Throws on shape error (e.g. non-string, unknown value) so the
     // misconfiguration surfaces early rather than silently downgrading.
@@ -291,6 +322,14 @@ function mergeConfig(partial) {
         ...(() => {
             const merged = mergeModelsConfig(partial.models);
             return merged ? { models: merged } : {};
+        })(),
+        // environmentManifest is optional. validateEnvironmentManifest throws on
+        // non-object input (rejecting `"oops"` / `[]` / `42` etc.) so malformed
+        // manifests cannot reach worker prompt materialization. Spread above
+        // would have carried any garbage type through verbatim.
+        ...(() => {
+            const validated = validateEnvironmentManifest(partial.environmentManifest);
+            return validated !== undefined ? { environmentManifest: validated } : {};
         })(),
     };
 }
@@ -568,6 +607,29 @@ const VALID_TASK_TRACKER_MODES = [
     "plans",
     "handoff",
 ];
+const VALID_PARALLEL_MODES = ["v1", "v2"];
+/**
+ * Guard against `work.parallelMode` / `work.allowAutoModelB` being set
+ * to invalid values. Invalid `parallelMode` falls back to DEFAULT
+ * (`"v1"`); invalid `allowAutoModelB` (non-boolean) falls back to
+ * DEFAULT (`false`). Both emit a stderr warning so the consumer learns
+ * the rejected payload, then keep the loader fail-open (consistent with
+ * `validateWorkTaskTracker` / `validateWorkPipelineCheckPath`).
+ */
+function validateWorkParallelMode(cfg) {
+    let next = cfg;
+    // parallelMode enum check
+    if (!VALID_PARALLEL_MODES.includes(next.parallelMode)) {
+        process.stderr.write(`[harness config] work.parallelMode=${sanitiseConfigValueForStderr(next.parallelMode)} is not in ${JSON.stringify(VALID_PARALLEL_MODES)}; falling back to "${DEFAULT_CONFIG.work.parallelMode}".\n`);
+        next = { ...next, parallelMode: DEFAULT_CONFIG.work.parallelMode };
+    }
+    // allowAutoModelB type check (boolean only)
+    if (typeof next.allowAutoModelB !== "boolean") {
+        process.stderr.write(`[harness config] work.allowAutoModelB=${sanitiseConfigValueForStderr(next.allowAutoModelB)} is not a boolean; falling back to ${String(DEFAULT_CONFIG.work.allowAutoModelB)}.\n`);
+        next = { ...next, allowAutoModelB: DEFAULT_CONFIG.work.allowAutoModelB };
+    }
+    return next;
+}
 const VALID_REPO_KINDS = ["consumer", "harness-itself"];
 /**
  * Guard against `repoKind` being set to a non-string or to a string not in

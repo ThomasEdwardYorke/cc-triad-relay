@@ -1,4 +1,4 @@
-/* generality-exemption: B-1,B-2a,B-2b,B-2c,B-2d,B-2e,B-2f,B-3a,B-3b,B-3c,B-3d,B-3e,B-3f,B-3g,B-4a,B-4b,B-5,B-6,B-7,B-8,B-9,B-10 | HARNESS-generality-self | 2099-12-31 | detector harness itself must reference patterns it blocks (self-reference unavoidable, until v1.0 redesign) */
+/* generality-exemption: B-1,B-2a,B-2b,B-2c,B-2d,B-2e,B-2f,B-3a,B-3b,B-3c,B-3d,B-3e,B-3f,B-3g,B-3h,B-4a,B-4b,B-5,B-6,B-7,B-8,B-9,B-10 | HARNESS-generality-self | 2099-12-31 | detector harness itself must reference patterns it blocks (self-reference unavoidable, until v1.0 redesign) */
 /**
  * core/src/__tests__/generality.test.ts
  *
@@ -283,6 +283,43 @@ const BLOCK_PATTERNS: BlockPattern[] = [
       "shipped spec では既存 `work.taskTrackerMode = \"handoff\"` config field の活用、" +
       "または generic flag (`--source plans|roadmap` 等) で受けるべきです。" +
       "本 pattern は将来の leak 予防 (B-3 系 tracker-id forcing function)。",
+    appliesToTests: true,
+  },
+  // B-3h: 内部 backlog tracker ID `D-<digits>` (e.g. `D-74`, `D-150`, `D-165`) を
+  // shipped spec で blocking する forcing function。test-bed の handoff backlog
+  // (`.docs/handoff/<project>-backlog.md`) では `id: D-74` のような numeric な
+  // 内部 tracker ID が legitimate に運用されているが、それを `commands/*.md` /
+  // `agents/*.md` 等 shipped surface に転載すると R2 (内部識別子 leak) になる。
+  //
+  // 対象は **数字のみ** の suffix (`D-74` / `D-150` / `D-165`) に絞り、descriptive
+  // suffix (`D-handoff-check-lightweight` / `D-harness-work-parallel-mode-v2`) は
+  // negative cases として残す — descriptive ID は意味が文脈に近く leak リスクが
+  // 低い。numeric ID は内部 tracker としてのみ意味を持つので、shipped spec から
+  // 除外しても情報損失なし (代わりに `spec gap` / `feature flag X` 等の意味語に
+  // 置換すべし)。
+  //
+  // 左境界の厳格化 (Codex Phase 7 minor 対応): 旧 regex `/\bD-\d+\b/g` は
+  // `\b` が ASCII word/non-word 境界で成立するため `25-D-37` のような
+  // hyphen-compound でも誤 match した。`(?<![\w-])` で左側が word char (ASCII)
+  // / hyphen の場合を除外し、左境界を「文頭 or 純粋空白 / 純粋句読点」に
+  // 限定する (B-3f の `gen-N` pattern と同じ lookbehind 設計)。
+  //
+  // **既知 boundary**: JS の `\w` は ASCII 限定 (`[A-Za-z0-9_]`) のため、
+  // CJK-adjacent (`漢字D-37` など) は依然として match する (regression test
+  // 内で known boundary として固定済)。CJK leak が実害化したら Unicode
+  // property escape `(?<![\p{L}\p{N}_-])D-\d+\b` + `/u` flag に upgrade する。
+  //
+  // shipped spec で過去の関連 entry を参照したい場合は `git log` / CHANGELOG.md /
+  // `docs/maintainer/` に移管する。
+  {
+    id: "B-3h",
+    category: "tracker-id",
+    pattern: /(?<![\w-])D-\d+\b/g,
+    message:
+      "内部 backlog tracker ID (`D-<digits>` 形式、例: `D-74` / `D-150`) が含まれています。" +
+      "shipped spec から除外し、CHANGELOG.md / `docs/maintainer/` / commit message に移管してください。" +
+      "意味のある descriptive suffix (例: `D-handoff-check-lightweight`) は対象外で、" +
+      "numeric tracker ID のみが leak として扱われます。",
     appliesToTests: true,
   },
 
@@ -2267,6 +2304,91 @@ describe("exemption grammar (unified, pipe-separated)", () => {
 
     it("negative: `--maintainermode` (hyphen 不在) は match しない (`\\b` boundary)", () => {
       expect(matches("--maintainermode")).toBe(false);
+    });
+  });
+
+  // ─────────────── B-3h numeric backlog tracker ID guard (forcing function) ───────────────
+  // D-harness-work-parallel-mode-v2 (Phase A-2) で追加。test-bed handoff backlog の
+  // `D-74` / `D-150` / `D-165` のような numeric tracker ID が shipped spec
+  // (`commands/*.md` / `agents/*.md`) に転載されるのを CI で blocking する。
+  // descriptive suffix (`D-handoff-check-lightweight`) は negative cases、
+  // 単独の `D-` / `D-abc` も対象外。
+  describe("B-3h numeric backlog tracker ID guard (positive / negative)", () => {
+    const b3h = BLOCK_PATTERNS.find((p) => p.id === "B-3h");
+    if (!b3h) {
+      throw new Error("B-3h pattern is missing from BLOCK_PATTERNS");
+    }
+    const pat = b3h.pattern;
+    const matches = (src: string): boolean => {
+      pat.lastIndex = 0;
+      return pat.test(src);
+    };
+
+    it("positive: `D-74` (numeric) は match する", () => {
+      expect(matches("D-74")).toBe(true);
+    });
+
+    it("positive: `D-150` / `D-165` (3-digit) は match する", () => {
+      expect(matches("D-150")).toBe(true);
+      expect(matches("D-165")).toBe(true);
+    });
+
+    it("positive: 文中の `D-1` / `D-9999` (任意の桁数) は match する", () => {
+      expect(matches("intro D-1 outro")).toBe(true);
+      expect(matches("intro D-9999 outro")).toBe(true);
+    });
+
+    it("negative: `D-handoff-check-lightweight` (descriptive suffix) は match しない", () => {
+      expect(matches("D-handoff-check-lightweight")).toBe(false);
+    });
+
+    it("negative: `D-harness-work-parallel-mode-v2` (descriptive ID) は match しない", () => {
+      expect(matches("D-harness-work-parallel-mode-v2")).toBe(false);
+    });
+
+    it("negative: `D-` 単体 / `D-abc` (numeric 不在) は match しない", () => {
+      expect(matches("D-")).toBe(false);
+      expect(matches("D-abc")).toBe(false);
+    });
+
+    it("negative: `XD-74` (前置 word char で `\\b` 不成立) は match しない", () => {
+      expect(matches("XD-74")).toBe(false);
+    });
+
+    it("negative: `D-74a` (後置 word char) は match しない (`\\b` boundary)", () => {
+      expect(matches("D-74a")).toBe(false);
+    });
+
+    it("negative: `d-74` (小文字) は match しない (case-sensitive)", () => {
+      expect(matches("d-74")).toBe(false);
+    });
+
+    // Codex Phase 7 minor 対応: lookbehind `(?<![\w-])` 強化で左境界を厳格化。
+    // 旧 `\bD-\d+\b` は word/non-word 境界で成立するため hyphen-compound や
+    // CJK-adjacent などを誤 match していた。
+    it("negative: `25-D-37` (hyphen-compound、左に `-`) は match しない (lookbehind 強化)", () => {
+      expect(matches("25-D-37")).toBe(false);
+    });
+
+    it("negative: `foo-D-12` (左 word + hyphen compound) は match しない", () => {
+      expect(matches("foo-D-12")).toBe(false);
+    });
+
+    // CJK-adjacent caveat: JavaScript `\w` is ASCII only ([A-Za-z0-9_])
+    // unless the `/u` flag + Unicode property escapes are used. The
+    // lookbehind `(?<![\w-])` therefore does NOT exclude CJK adjacency
+    // — `漢字D-37` still matches because `字` is not in `\w`. Documented
+    // here as a known boundary; if CJK leaks become a real issue later,
+    // upgrade the pattern to `/(?<![\p{L}\p{N}_-])D-\d+\b/gu` (Unicode-
+    // aware) and re-pin this case as a negative.
+    it("known boundary: CJK-adjacent `漢字D-37` STILL matches (ASCII `\\w` limitation)", () => {
+      expect(matches("漢字D-37")).toBe(true);
+    });
+
+    it("positive (regression): 文頭 / whitespace 後の `D-74` は match する", () => {
+      expect(matches("D-74")).toBe(true);
+      expect(matches("note: D-74 was filed")).toBe(true);
+      expect(matches("(D-74)")).toBe(true); // 括弧 = 非 word 非 hyphen
     });
   });
 });

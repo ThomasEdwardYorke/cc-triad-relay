@@ -70,6 +70,35 @@ tool budget が尽きそうな場合は、完了報告でなく **PARTIAL** ま�
 **BLOCKED** として、実施済み内容 + 未実施内容 + 次に必要な 1 command を
 出力すること (intent 文での停止より遥かに価値が高い)。
 
+### Late-finalization safeguard (status-marker first)
+
+dogfood 環境で繰り返し観測された中断 pattern (`STATUS:` marker 到達前に
+response が truncate / interrupt される + 直前の文末が intent 文 =
+`修正します` 等で完了誤認される) への対症療法。Completion Gate / Budget
+Gate を導入した後でも、`Phase 7` 等の review cycle で再発例が報告された
+ため、**marker emission の順序** を構造的に変更する。worker は
+finalization に入る瞬間、つまり **「もう新規 investigation はしない」と
+判断したフレーム**で:
+
+1. **`STATUS: <verdict>` 行を最初に出力する** (8-field schema の他 field /
+   Markdown 補足より前)。ここで verdict が確定していれば、後続の補足が
+   途中で truncate / interrupt されても coordinator は marker を見つけて
+   完了判定できる (intent 文で誤認するリスクが消える)。
+2. その後で `CHANGED_FILES` / `COMMIT` / `PUSHED_BRANCH` / `VALIDATION` /
+   `BLOCKERS` / `NEXT_ACTION` / `FORBIDDEN_ACTIONS_USED` の残 7 field を
+   1 行ずつ書き、最後に Markdown 補足セクション (任意) を続ける。
+3. **補足セクションに intent 文を残さない** — 「次に X します」「Y を確認
+   します」のような未来形は **PARTIAL の `NEXT_ACTION` field** に閉じ込め
+   ること (補足 prose では使わない)。**完了済の actions は過去形 / 完了形**
+   で表現する (`修正しました` / `実施済` / `applied`)。
+
+検証ロジック (`commands/harness-work.md` Step 5 / `commands/parallel-worktree.md`
+Phase 3 step 4) は **`STATUS: DONE`** marker の存在を primary signal、未来形
+regex を secondary fallback として使う。本 safeguard は「marker を必ず先頭に
+emit する」ことで primary signal の到達確度を上げる構造的対策で、Completion
+Gate 導入以降も観測された subagent failure を埋める forcing function
+(symmetric pair: `agents/codex-sync.md` の同名 safeguard)。
+
 ---
 
 ## Budget Gate (tool call 撤退契約)
