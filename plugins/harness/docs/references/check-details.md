@@ -135,12 +135,17 @@ session-handoff.md `### check` Gate 2 の concise mode 詳細手順 (taskTracker
 3. **`grep -nE '#[0-9]+|/pull/[0-9]+|pr:\s*[0-9]+|PR\s*#[0-9]+' <backlog>`** で
    全 backlog 範囲の PR 参照を抽出 (S-04 用、Bash report 経由で参照、Read で
    context に入れない設計 → partial mode でも S-04 圏外 silent miss を防ぐ)
-4. **Top top-3 entry 追加 ingest** (各 5-8 行 × 3 = ~20 行):
+4. **`grep -nE 'session-[0-9]{4}-[0-9]{2}-[0-9]{2}-' <backlog>`** で全 backlog 範囲の
+   archive reference を抽出 (S-18 用、carry-over item の構造的可視化、Bash report
+   経由で参照、Read で context に入れない → partial mode でも S-18 silent miss を
+   防ぐ。S-04 と同じ「全 entry scan を Bash で safety-net」パターン)
+5. **Top top-3 entry 追加 ingest** (各 5-8 行 × 3 = ~20 行):
    - **handoff-mode**: `Read` (offset/limit) で `### [Critical|High]` heading 直下の
      fenced YAML block を ingest (`id` / `priority` / `status` / `roadmap_ref` 等)
-   - **plans-mode**: 前段 grep の `- [High|Med]` 上位 3 行を Bash 結果からそのまま
-     採用 (1 line/entry なので追加 Read 不要、Bash 結果が要約として機能)
-5. 合計 Y_partial ≈ heading + top-3 詳細 + metadata = **~40 行 envelope**
+   - **plans-mode**: 前段 grep の `- [Critical|High|Med]` 上位 3 行を Bash 結果から
+     そのまま採用 (1 line/entry なので追加 Read 不要、Bash 結果が要約として機能、
+     Critical は plans-mode 拡張 + handoff-mode 互換のため許容)
+6. 合計 Y_partial ≈ heading + top-3 詳細 + metadata = **~40 行 envelope**
 
 mode=verbose (--verbose 明示 / 後段 auto-promote) は上記を全て skip し `Read` で
 `backlog.md` 全文 ingest (Y_full = Y_total、taskTrackerMode 不問)。
@@ -150,13 +155,38 @@ mode=verbose (--verbose 明示 / 後段 auto-promote) は上記を全て skip �
 ## Token reduction baseline (v2.1 measurement methodology)
 
 v2.1 は (a) backlog partial ingest +
-(b) concise default output で **PASS path に対し -60% stretch target / 観測値
--45% 〜 -53%** の context 圧迫削減を目指す (handoff サイズ依存、下記 Reduction
-表参照)。実 token 測定の baseline / methodology を以下に開示する。
+(b) concise default output で **PASS path に対し -60% stretch target / -45% 〜
+-53% (本書サンプル 2 件で観測した行数ベース概算)** の context 圧迫削減を目指す
+(handoff サイズ依存、下記 Reduction 表参照)。実 token 測定の baseline /
+methodology を以下に開示する。
+
+### Methodology (再現手順 / disclaimers)
+
+行数ベースの概算で公開する。token は LLM tokenizer / context wrapping overhead で
+変動するため、**運用 reproducible commands は行数値**:
+
+```bash
+wc -l <handoff>/{*-current.md,*-backlog.md}        # ingest 行数
+# Output template 行数は spec の concise (~5 行) / verbose (~35 行) を参照
+```
+
+token 換算は **1 行 ≈ 7 token (英語混じり日本語平均)** で粗概算 (実 LLM
+tokenizer 結果ではなく order-of-magnitude estimate)。実 token を厳密に測りたい場合は
+[Anthropic 公式 token counting API](https://docs.claude.com/en/docs/build-with-claude/token-counting)
+で `Read` tool result 文字列を投げて比較するのが最も confident だが、本 spec の目的
+(運用 PR で「概ねこの規模の削減が起きる」を示す) には行数概算で十分。
+
+**variance 注意**:
+- 観測値は **本書の handoff #1 / #2 サンプル 2 件のみ**。other repos / 他 size の
+  handoff では reduction% が異なる。再現したい consumer は同じ `wc -l` を自分の
+  handoff に対して計測し、同じ計算 (`(old - new) / old`) で % を算出すること。
+- `運用平均 概ね -50% 〜 -55%` のような broader claim は **PASS / WARN / FAIL
+  distribution 計測に依存** するが、本 spec ではその distribution を未計測 →
+  運用平均値は disclose しない。**サンプル 2 件の概算値のみを根拠に主張する**。
 
 ### Baseline (v2.0、full ingest + verbose template only)
 
-代表 consumer handoff 2 件で測定 (PASS path、v2.1 着手前の sample):
+サンプル 2 handoff で計測 (PASS path、v2.1 着手前):
 
 | handoff | current.md | backlog.md | output template (verbose) | 合計 (≈ token) |
 | --- | --- | --- | --- | --- |
@@ -182,13 +212,14 @@ v2.1 は (a) backlog partial ingest +
 - **(b) output 削減**: 35→5 行 = **-86%**
 - **PASS 合算**: 259→122 行 = **-53% (handoff #1)** / 258→142 行 = **-45% (handoff #2)**
 
-current.md が大きい handoff #2 では (a) の効果が薄まり -45% に留まる。**観測値は
--45% 〜 -53% で -60% target には届かない**。 -60% を上振れさせるには current.md
-側 slim 化 (90 行以下、S-12 WARN 圏外) を併用する必要あり (Post-Check Verification
-経路で operator が判断)。**-60% は upper-bound stretch target と位置付け**、
-default-applicable な保守的削減目標は **-45%** とする。verbose 昇格時 (WARN/FAIL
-auto-promote) は v2.0 と同等の token 消費に戻り、概ね **PASS path 専用の最適化**
-として適用される。
+current.md が大きい handoff #2 では (a) の効果が薄まり -45% に留まる。**サンプル
+2 件の観測値 -45% 〜 -53% で -60% target には届かない**。-60% を上振れさせるには
+current.md 側 slim 化 (90 行以下、S-12 WARN 圏外) を併用する必要あり (Post-Check
+Verification 経路で operator が判断)。**-60% は upper-bound stretch target、default
+適用の保守的削減目標は -45%** とする (本書サンプル下限)。verbose 昇格時 (WARN/FAIL
+auto-promote) は v2.0 同等 token 消費に戻り、**PASS path 限定の最適化**。
+broader 運用平均は repo 毎の PASS distribution 依存 → 本 spec では未公開、
+個別計測を推奨。
 
 ### 適用範囲 (どの verdict でどの template / ingest を使うか)
 
@@ -197,9 +228,10 @@ auto-promote) は v2.0 と同等の token 消費に戻り、概ね **PASS path �
 - **FAIL** → verbose output + full ingest (auto-promote) = **v2.0 同等**
 - **INIT_REQUIRED** → 1-2 行 init 案内のみ = **削減フル適用 (template 自体不適用)**
 
-PASS が圧倒的多数 (handoff 健全運用時) のため、運用平均では **概ね -50% 〜 -55% の
-token 削減** が見込める。-60% への上振れには current.md 側 slim 化 (90 行以下に保つ)
-が併走条件。
+PASS が大半を占める運用 (handoff 健全運用時) では削減が effect する path が支配的。
+**運用平均値は repo 毎の PASS / WARN / FAIL distribution に依存**するため本 spec では
+明示の数値主張をしない (個別計測推奨)。-60% への上振れ条件は current.md 側 slim
+化 (90 行以下に保つ、S-12 WARN 圏外)。
 
 ---
 

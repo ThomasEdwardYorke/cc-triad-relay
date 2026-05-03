@@ -314,14 +314,14 @@ prose / yaml 詳細は context 未 ingest** — Top 3 圏外詳細は check 後�
 1. `Read` で `current.md` **全文** 取込 → Latest state / Top priority /
    Quick-start / Pointers (max 4、各 `Glob` で実在確認) を抽出して report
 2. **Backlog ingest** (mode 別、taskTrackerMode 両対応):
-   - **mode=concise (default)**: cheap Bash probes (`wc -l` で Y_total = S-13 用 /
-     `grep -nE '^###|^##|^- \[(Critical|High|Med|Low)\]'` で heading + plans-mode
-     list item 両方を抽出 / `grep -nE '#[0-9]+|/pull/[0-9]+|pr:\s*...'` で全 entry
-     範囲の PR ref = S-04 silent miss 防止) + **Top top-3 entry** 追加 ingest (各
-     5-8 行 × 3 = ~20 行、handoff-mode は `Read` で `### [Critical|High]` heading
-     直下の YAML block / plans-mode は前段 grep の `- [High|Med]` 上位 3 行をそのまま
-     採用)。合計 Y_partial ≈ heading + top-3 詳細 + metadata = **~40 行 envelope**
-     (詳細手順 + `wc` failure fallback は [check-details.md](../docs/references/check-details.md))
+   - **mode=concise (default)**: cheap Bash probes (`wc -l` Y_total / `grep` で
+     heading + plans-mode list item / 全 entry 範囲 PR ref = S-04 silent miss 防止 /
+     全 entry 範囲 `session-YYYY-MM-DD-` archive ref = S-18 carry-over 検出維持) +
+     **Top top-3 entry** 追加 ingest (handoff-mode は `Read` で `### [Critical|High]`
+     heading 直下 YAML block / plans-mode は前段 grep の `- [Critical|High|Med]`
+     上位 3 行をそのまま採用、各 5-8 行 × 3 = ~20 行)。合計 Y_partial ≈ heading +
+     top-3 詳細 + metadata = **~40 行 envelope** (詳細手順 + 全 grep regex + `wc`
+     failure fallback は [check-details.md](../docs/references/check-details.md))
    - **mode=verbose** (--verbose 明示 / 後段 auto-promote): 上記を skip し `Read`
      で `backlog.md` 全文 ingest (Y_full = Y_total、taskTrackerMode 不問)
 3. **S-05 突合** — `Read` 済 `current.md` から branch + commit hash 抽出 →
