@@ -4,7 +4,7 @@
 > spec body keeps only the Gate 1-3 + 4 (handoff mode) signal table and
 > high-level Post-Check Verification summary. **The full Output Template,
 > the Forbidden ops list, and the degraded-mode Edge Cases live here** so
-> the spec stays under the Anthropic SKILL.md focused-pattern limit
+> the spec stays under the SKILL.md focused-pattern guideline
 > (≤ 500 lines).
 
 This document is **not** a slash command — it is reference material
@@ -42,7 +42,7 @@ Next: <recommended action; "ready to start next task" if nothing pending>
 - **行 4**: Context loaded metadata (再肥大化検知、`mode: concise|verbose` で ingest mode 開示)
 - **行 5**: Next 推奨アクション (PASS なら "ready"、軽微 INFO ありなら 1 行で示唆)
 
-backlog Top 3 IDs は **partial ingest 時の Bash grep 結果** として Claude context
+backlog Top 3 IDs は **partial ingest 時の Bash grep 結果** として agent context
 内に保持される (verdict 判定材料)。concise summary には混入させず、必要なら
 `--verbose` で verbose template (Backlog Top 3 を Gate 2 表に明示) に切替。
 
@@ -59,7 +59,7 @@ backlog Top 3 IDs は **partial ingest 時の Bash grep 結果** として Claud
 **Context loaded**: Gate 2 で `Read` した `current + backlog` の行数合計。
 300 行超は S-12 (current 90+) または S-13 (backlog 150+) のいずれかが既に
 WARN 以上の状態を示唆 (分割検討)。verbose mode では report 要約外の詳細 (Quick-start
-bash 全文、運用ルール、背景 docs 等) も **Claude context に ingest 済**なので、
+bash 全文、運用ルール、背景 docs 等) も **agent context に ingest 済**なので、
 check 後の再 Read は不要 (Anti-pattern #10、verbose 路は current/backlog 共に full
 ingest なので個別 Read 圏外)。
 
@@ -172,8 +172,8 @@ wc -l <handoff>/{*-current.md,*-backlog.md}        # ingest 行数
 
 token 換算は **1 行 ≈ 7 token (英語混じり日本語平均)** で粗概算 (実 LLM
 tokenizer 結果ではなく order-of-magnitude estimate)。実 token を厳密に測りたい場合は
-[Anthropic 公式 token counting API](https://docs.claude.com/en/docs/build-with-claude/token-counting)
-で `Read` tool result 文字列を投げて比較するのが最も confident だが、本 spec の目的
+使用中 LLM ベンダーの公式 token counting API で `Read` tool result 文字列を投げて
+比較するのが最も confident だが、本 spec の目的
 (運用 PR で「概ねこの規模の削減が起きる」を示す) には行数概算で十分。
 
 **variance 注意**:
