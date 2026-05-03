@@ -131,7 +131,10 @@ session-handoff.md `### check` Gate 2 の concise mode 詳細手順 (taskTracker
 2. **`grep -nE '^###|^##|^- \[(Critical|High|Med|Low)\]' <backlog>`** で heading
    + plans-mode list item を 1 発抽出 (~13 件目安):
    - **handoff-mode**: `### [Critical|High|Med|Low] <id> <title>` heading が拾われる
-   - **plans-mode**: `- [High|Med|Low] <Phase>: <description>` 1-line list item が拾われる
+   - **plans-mode**: `- [Critical|High|Med|Low] <Phase>: <description>` 1-line list
+     item が拾われる (canonical convention は `[High|Med|Low]` だが、cross-mode
+     interop / 移行期の `[Critical]` 混入を silent miss しないよう Critical も regex
+     に含める。下記 step 5 plans-mode top-3 grep `[Critical|High|Med]` と整合)
 3. **`grep -nE '#[0-9]+|/pull/[0-9]+|pr:\s*[0-9]+|PR\s*#[0-9]+' <backlog>`** で
    全 backlog 範囲の PR 参照を抽出 (S-04 用、Bash report 経由で参照、Read で
    context に入れない設計 → partial mode でも S-04 圏外 silent miss を防ぐ)
