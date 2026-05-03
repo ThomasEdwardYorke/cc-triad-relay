@@ -1,0 +1,48 @@
+# {{PROJECT_NAME}} — Backlog (Active Dispatchable View)
+
+**最終更新**: (`harness init` で生成された skeleton)
+
+---
+
+## handoff mode active
+
+`harness.config.json` の `work.taskTrackerMode` = `"handoff"`、`handoffPaths.backlog` で本ファイルを参照。`/harness-work` は本ファイル (backlog.md) を **active dispatch source** として読み、priority / status を見て task を選択する。
+
+---
+
+## Top Priority (High)
+
+(初期状態は空。task entry を heading + YAML block で追加)
+
+### [High] T-001 タイトル例
+
+```yaml
+id: T-001
+priority: High
+status: pending
+roadmap_ref: phase-1.week-1.example-task
+depends_on: []  # 他 task id の配列
+```
+
+(本文 = AC / 設計メモ / 着手前の clarify 推奨事項)
+
+---
+
+## Medium Priority
+
+(同上、entry を追加)
+
+---
+
+## Low / Off-scope / 完了済
+
+> 完了済は本 file から **`status: done` に変更** または **削除** + `History.md` `## 完了` section に append。
+
+---
+
+## 管理ルール
+
+- 全 entry に priority / id / `roadmap_ref` を必ず付ける (4-layer dispatch 前提)
+- PR merge / session 完了時に該当 entry を削除 or `status: done` に変更
+- **150 行以下を目標** (`/harness:session-handoff check` S-13 WARN threshold)、200 行超で FAIL
+- 管理 skill: harness plugin `commands/session-handoff.md` (`update` / `archive` / `check`)

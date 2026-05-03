@@ -171,7 +171,7 @@ below (they are valid as-is — no comma fix-ups needed when copying):
 }
 ```
 
-**Handoff-mode** (opt-in — 4-layer structure):
+**Handoff-mode** (recommended for new projects — 4-layer structure):
 
 ```json
 {
@@ -181,25 +181,38 @@ below (they are valid as-is — no comma fix-ups needed when copying):
       "roadmap":   ".docs/handoff/<project>-roadmap.md",
       "backlog":   ".docs/handoff/<project>-backlog.md",
       "current":   ".docs/handoff/<project>-current.md",
-      "decisions": ".docs/handoff/<project>-design-decisions.md"
+      "decisions": ".docs/handoff/<project>-decisions.md"
     }
   }
 }
 ```
 
-- **Plans-mode** (`"plans"`, default): legacy single-file flow. One
-  `Plans.md` holds active tasks, completed history, and the assignment
-  table.
-- **Handoff-mode** (`"handoff"`, opt-in): four files split the
-  responsibilities — `roadmap.md` (Phase / Week / AC source-of-truth) +
-  `backlog.md` (priority-ordered dispatchable view) + `current.md`
-  (bird's-eye index) + `design-decisions.md` (append-only). All four paths
-  are required when `taskTrackerMode === "handoff"`; missing or malformed
-  entries cause a silent fallback to Plans-mode with a stderr warning. Use
-  `/harness:session-handoff init` to scaffold.
+- **Plans-mode** (`"plans"`, in-memory default for backward compat): legacy
+  single-file flow. One `Plans.md` holds active tasks, completed history,
+  and the assignment table.
+- **Handoff-mode** (`"handoff"`, **template default** — new projects):
+  four files split the responsibilities — `roadmap.md` (Phase / Week / AC
+  source-of-truth) + `backlog.md` (priority-ordered dispatchable view) +
+  `current.md` (bird's-eye index) + `decisions.md` (append-only). All four
+  paths are required when `taskTrackerMode === "handoff"`; missing or
+  malformed entries cause a silent fallback to Plans-mode with a stderr
+  warning. Use `/harness:session-handoff init` to scaffold.
 
-Both modes coexist indefinitely — Plans-mode stays the safe default for
-long-lived projects.
+> **Template default vs in-memory default**: New projects bootstrapped via
+> `harness init` get handoff-mode automatically (`template/.claude/harness.config.json.tmpl`
+> ships with `taskTrackerMode = "handoff"` + a populated `handoffPaths`,
+> and `template/.docs/handoff/<project>-{current,backlog,roadmap,decisions}.md.tmpl`
+> + `template/History.md.tmpl` provide the 4-layer skeleton). The
+> `DEFAULT_CONFIG` in-memory default in `plugins/harness/core/src/config.ts`
+> stays `"plans"` to avoid silent regression: switching it to `"handoff"`
+> would make consumers that omit `handoffPaths` fall back to Plans-mode
+> through a stderr WARN that CI logs typically swallow. Existing
+> Plans-mode users see no behaviour change; new projects start with the
+> recommended 4-layer handoff structure via the template.
+
+Both modes coexist indefinitely — Plans-mode remains a first-class option
+for long-lived legacy projects, Handoff-mode is the recommended starting
+point for new projects.
 
 ## Quick configuration
 
