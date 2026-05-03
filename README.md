@@ -256,36 +256,17 @@ MIT. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
    `scripts/set-owner.sh <your-github-user>` to rewrite the owner in
    docs, schema, and `plugin.json` before publishing to your own
    marketplace. Review the diff with `git diff` before committing.
-2. **Parallel build process**: the v0.1.0 implementation used a mixed
-   strategy — Claude Code as the primary author plus three parallel
-   Codex agents. Two of the three Codex jobs failed with a Bash
-   permission issue on the host; the third (the `codex-sync` agent
-   generalization) finished. Claude Code picked up the failed jobs and
-   completed them directly. Keep this in mind when reproducing the
-   build on a host where `codex-companion.mjs` cannot be spawned: fall
-   back to direct in-session edits.
-3. **State store concurrency**: the pure-JS JSON store in
+2. **State store concurrency**: the pure-JS JSON store in
    `plugins/harness/core/src/state/` is safe for single-process use.
    If you run `/breezing`-style parallel sessions against the same
    project, state writes can race. File locking (e.g.
    `proper-lockfile`) is a candidate for future releases; until then,
    avoid simultaneous multi-session writes on the same project.
-4. **`permission.ts` double-encoding**: the reviewer flagged a
-   CRITICAL-tier design concern in
-   `plugins/harness/core/src/guardrails/permission.ts` — the
-   `PermissionResponse` is packaged via `systemMessage` and then
-   unpacked again in `index.ts`. Current behaviour is correct and
-   tested, but the layering is fragile. Avoid adding new behaviour to
-   that path until a refactor is completed in a future release.
-5. **Author metadata note**: commits authored prior to the v0.3.0
-   release reference the maintainer's personal email in the `author`
-   field. From v0.3.0 onward the repository uses the GitHub noreply
-   alias (`<userid>+<handle>@users.noreply.github.com`) so no further
-   personal email is introduced. History rewriting was deliberately
-   avoided to preserve commit SHA stability across already-published
-   releases and CHANGELOG references.
 
-Maintainer notes and implementation logs are kept under
-`docs/maintainer/` (excluded from marketplace distribution). See
-`CHANGELOG.md` for user-facing change history and `CONTRIBUTING.md` for
-the plugin generality policy.
+Maintainer-facing notes (build-process forensics, internal-tier design
+concerns, author metadata history) are kept under
+[`docs/maintainer/known-notes-history.md`](./docs/maintainer/known-notes-history.md);
+the rest of the maintainer documentation lives in `docs/maintainer/`
+(excluded from marketplace distribution). See `CHANGELOG.md` for
+user-facing change history and `CONTRIBUTING.md` for the plugin
+generality policy.
