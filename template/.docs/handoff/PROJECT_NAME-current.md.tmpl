@@ -1,0 +1,54 @@
+# {{PROJECT_NAME}} — Current State (Bird's-eye Index)
+
+**最終更新**: (`harness init` で生成された skeleton。実プロジェクトでは session 終了時に `/harness:session-handoff update` で更新)
+
+> **handoff mode active** (`harness.config.json` `work.taskTrackerMode = "handoff"` + `handoffPaths` 4 keys 設定済)。本ファイルは **鳥瞰図 (bird's-eye index)** の役割。詳細は detail file (backlog / roadmap / decisions) または `History.md` (完了履歴) を参照。
+
+---
+
+## Latest State
+
+| 対象 | Branch / Commit / Note |
+|---|---|
+| `{{PROJECT_NAME}}` 本流 | `main` (初期状態) |
+| HEAD (現在) | (init 後 `git log -1 --oneline` で更新) |
+| 担当表 | **空** |
+| 進行中 worktree | なし |
+| **task tracker mode** | **handoff mode** (`harness.config.json` `work.taskTrackerMode = "handoff"` + `handoffPaths` 4 keys) |
+
+---
+
+## 確立 invariant (1-line takeaway)
+
+(本 file は handoff init 直後の初期状態。実プロジェクトの invariant は `{{PROJECT_NAME}}-decisions.md` に append、本 section に 1-line takeaway を追記)
+
+---
+
+## Top Priority Next Task
+
+(初期状態は空。実 task を `{{PROJECT_NAME}}-backlog.md` に追加後、Top High を抽出してここに記述)
+
+---
+
+## Quick-start Commands
+
+```bash
+cd <project-root>
+/harness:session-handoff check   # PASS なら次タスク着手
+/harness:harness-work <task-id>  # backlog.md 駆動 (handoff mode default)
+```
+
+---
+
+## 詳細へのポインタ (4 件)
+
+| 目的 | ファイル |
+|---|---|
+| 恒久方針 append-only | [{{PROJECT_NAME}}-decisions.md]({{PROJECT_NAME}}-decisions.md) |
+| Active backlog (dispatch source) | [{{PROJECT_NAME}}-backlog.md]({{PROJECT_NAME}}-backlog.md) |
+| Phase / Week / Task SSoT | [{{PROJECT_NAME}}-roadmap.md]({{PROJECT_NAME}}-roadmap.md) |
+| 完了履歴 (handoff mode 用 history doc) | [../../History.md](../../History.md) |
+
+---
+
+**本ファイル**: `.docs/handoff/{{PROJECT_NAME}}-current.md` (gitignored 推奨) / 管理 skill: harness plugin `commands/session-handoff.md`

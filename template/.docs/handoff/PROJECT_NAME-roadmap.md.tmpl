@@ -1,0 +1,37 @@
+# {{PROJECT_NAME}} — Roadmap (Phase / Week / Task Source-of-truth)
+
+**最終更新**: (`harness init` で生成された skeleton)
+
+> **role**: backlog.md entry の `roadmap_ref` field が本ファイル内 task heading id に解決可能。Phase / Week / Task の階層 SSoT として、各 task の AC / acceptance criteria / 実装ノートを管理。
+
+---
+
+## Phase 1 — 初期 phase 例
+
+**目標**: (handoff init 直後の skeleton。実プロジェクトでは Phase / Week / Task の階層を定義)
+
+### Week 1-2 — 例
+
+```yaml
+id: phase-1.week-1-2.example-task
+phase: 1
+week: 1-2
+priority: High
+status: pending
+labels: [feature]
+estimated: 2w
+```
+
+(詳細 AC を本文に記述)
+
+---
+
+## 命名規約
+
+- Task id: `phase-<N>.week-<X>[-Y].<slug>` (kebab-case)
+- backlog `roadmap_ref` から本ファイル内 task heading に解決可能
+- depends_on は task id の配列、本ファイル内 reference
+
+## 詳細仕様
+
+各 Week / Task の詳細仕様 (AC / acceptance criteria / 実装ノート) を本ファイルに記述。長文 spec が必要な場合は `.docs/plan/<topic>.md` に切り出して link。

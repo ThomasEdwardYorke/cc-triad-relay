@@ -23,3 +23,7 @@ harness.config.json.local
 
 # Local-only design notes (not shipped with the plugin)
 .docs/
+# Exception: handoff template ships with the plugin so consumers can `harness init`
+# the 4-layer handoff structure (current / backlog / decisions / roadmap).
+!template/.docs/
+!template/.docs/**

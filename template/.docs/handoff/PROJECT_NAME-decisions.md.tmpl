@@ -1,0 +1,24 @@
+# {{PROJECT_NAME}} — Design Decisions (Append-Only)
+
+**最終更新**: (`harness init` で生成された skeleton)
+
+このファイルは **append-only** で、新しい恒久方針は末尾に追記。**既存エントリの編集・削除禁止** (履歴を破壊するため)。古い方針を廃止する場合は "Superseded by <date>: <理由>" を追記で示す。
+
+---
+
+## D-001: 初期 invariant 例 (Date: YYYY-MM-DD)
+
+**Decision**: (handoff init 直後の例。実プロジェクトでは決定固まったタイミングで append)
+
+**Why**: (この decision の動機・背景)
+
+**How to apply**: (将来 session が judgement する時の guideline)
+
+---
+
+## 管理ルール
+
+- 各 entry は `## D-NNN: タイトル (Date: YYYY-MM-DD)` 形式
+- D-NNN は連番 (整数 ID、project 全体で unique)
+- **編集・削除禁止** (history 保全)、廃止は "Superseded by D-NNN" 形式で append
+- `/harness:session-handoff check` Gate 1 で append-only validation (前回 commit との `git diff` で削除行検出 → FAIL)
