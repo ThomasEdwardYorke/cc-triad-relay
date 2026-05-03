@@ -45,26 +45,33 @@ describe("template default = handoff mode", () => {
     }
   });
 
-  it("template/.docs/handoff/ ships 4 sample tmpl files matching schema field names", () => {
+  it("template/.docs/handoff/ ships exactly 4 sample tmpl files matching schema field names", () => {
     const handoffDir = path.join(templateRoot, ".docs/handoff");
     expect(fs.existsSync(handoffDir)).toBe(true);
 
-    const files = fs.readdirSync(handoffDir);
-    for (const key of HANDOFF_PATH_KEYS) {
-      const expectedFile = `PROJECT_NAME-${key}.md.tmpl`;
-      expect(files).toContain(expectedFile);
-    }
+    const files = fs
+      .readdirSync(handoffDir)
+      .filter((name) => name.endsWith(".md.tmpl"))
+      .sort();
+    const expectedFiles = HANDOFF_PATH_KEYS.map(
+      (key) => `PROJECT_NAME-${key}.md.tmpl`,
+    ).sort();
+    // Full-set equality catches both missing files and unexpected extras
+    // (e.g., a stray placeholder that would dilute the 4-layer dispatch).
+    expect(files).toEqual(expectedFiles);
   });
 
-  it("template/History.md.tmpl ships handoff mode-aware history doc", () => {
+  it("template/History.md.tmpl ships handoff mode-aware history doc (locale-neutral English)", () => {
     const histPath = path.join(templateRoot, "History.md.tmpl");
     expect(fs.existsSync(histPath)).toBe(true);
 
     const content = fs.readFileSync(histPath, "utf-8");
-    expect(content).toContain("handoff mode default project");
+    // Shipped template uses English to stay language-neutral; consumers
+    // localise after `harness init` (per CONTRIBUTING R3 generic rule).
+    expect(content).toContain("Handoff-mode default project");
     expect(content).toContain("{{PROJECT_NAME}}");
-    // role pivot prevention: must explicitly forbid active task append
-    expect(content).toContain("active task 追記は禁止");
+    // Role pivot prevention: must explicitly forbid active task append.
+    expect(content).toContain("Active task append is prohibited");
   });
 
   it("DEFAULT_CONFIG.work.taskTrackerMode stays 'plans' for backward compat", () => {
