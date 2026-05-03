@@ -64,9 +64,9 @@ export const DEFAULT_CONFIG = {
             enforceHarnessWorkEssence: false,
         },
         failFast: true,
-        // /harness-work v6 (Phase A-2): default to Model A (`v1`) for
-        // back-compat. Consumers opt in to Model B by setting `parallelMode`
-        // to `v2` and / or enabling the auto rules with `allowAutoModelB`.
+        // Default to Model A (`v1`) for back-compat. Consumers opt in to
+        // Model B by setting `parallelMode` to `v2` and / or enabling the
+        // auto rules with `allowAutoModelB`.
         parallelMode: "v1",
         allowAutoModelB: false,
     },

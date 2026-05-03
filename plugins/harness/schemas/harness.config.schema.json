@@ -200,12 +200,12 @@
           "type": "string",
           "enum": ["v1", "v2"],
           "default": "v1",
-          "description": "Project-side default for /harness-work's parallel implementation engine. `v1` (default, back-compat) delegates Parallel/Breezing modes to /parallel-worktree (Model A). `v2` delegates to /parallel-worktree-v2 (Model B, per-worktree independent claude processes). Overridden by `--parallel-mode=v1|v2` flag and by opt-in auto rules (see `allowAutoModelB`). Resolver: `core/src/work/parallel-mode-resolver.ts`."
+          "description": "Project-side default for /harness-work's parallel implementation engine. Precedence (highest first): `--parallel-mode=v1|v2` CLI flag → opt-in auto rules when `allowAutoModelB` is true → this config default → `v1` fallback. `v1` (default, back-compat) delegates Parallel/Breezing modes to /parallel-worktree (Model A). `v2` delegates to /parallel-worktree-v2 (Model B, per-worktree independent claude processes). Resolver: `core/src/work/parallel-mode-resolver.ts`."
         },
         "allowAutoModelB": {
           "type": "boolean",
           "default": false,
-          "description": "Opt-in gate for /harness-work v6 auto Model B downgrade rules. When true, the resolver picks `v2` automatically when `n_tasks >= 2 && recent_subagent_failures >= 2` (failure-history rule) OR `n_tasks >= 3` (task-count rule). Default false preserves v5 behaviour exactly — auto rules are silent until explicit opt-in."
+          "description": "Opt-in gate for /harness-work v6 auto Model B downgrade rules. Sits at precedence step 2 of the resolver chain (`--parallel-mode=v1|v2` CLI flag → these auto rules → `parallelMode` config default → `v1` fallback). When true, the resolver picks `v2` automatically when `n_tasks >= 2 && recent_subagent_failures >= 2` (failure-history rule) OR `n_tasks >= 3` (task-count rule). Default false preserves v5 behaviour exactly — auto rules are silent until explicit opt-in. Resolver: `core/src/work/parallel-mode-resolver.ts`."
         }
       },
       "allOf": [

@@ -500,9 +500,8 @@ export interface ContextBudgetConfig {
      */
     enabled: boolean;
     /**
-     * Auto-load total byte budget. Default `35000` matches the test-bed
-     * precedent recorded in the model-b design-decisions ledger
-     * (`docs/maintainer/`).
+     * Auto-load total byte budget. Default `35000` keeps the auto-load
+     * budget consistent with the maintainer-documented baseline.
      * Range: 1024 - 524288.
      */
     budgetBytes: number;

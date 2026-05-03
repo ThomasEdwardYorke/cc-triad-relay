@@ -552,9 +552,8 @@ export interface ContextBudgetConfig {
    */
   enabled: boolean;
   /**
-   * Auto-load total byte budget. Default `35000` matches the test-bed
-   * precedent recorded in the model-b design-decisions ledger
-   * (`docs/maintainer/`).
+   * Auto-load total byte budget. Default `35000` keeps the auto-load
+   * budget consistent with the maintainer-documented baseline.
    * Range: 1024 - 524288.
    */
   budgetBytes: number;
@@ -924,9 +923,9 @@ export const DEFAULT_CONFIG: HarnessConfig = {
       enforceHarnessWorkEssence: false,
     },
     failFast: true,
-    // /harness-work v6 (Phase A-2): default to Model A (`v1`) for
-    // back-compat. Consumers opt in to Model B by setting `parallelMode`
-    // to `v2` and / or enabling the auto rules with `allowAutoModelB`.
+    // Default to Model A (`v1`) for back-compat. Consumers opt in to
+    // Model B by setting `parallelMode` to `v2` and / or enabling the
+    // auto rules with `allowAutoModelB`.
     parallelMode: "v1",
     allowAutoModelB: false,
   },
