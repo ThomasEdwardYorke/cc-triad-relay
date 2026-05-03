@@ -495,4 +495,3 @@ Gate 3 部分実行 + `required_section_missing: FAIL`) は
   なら `Stop` hook + [`docs/handoff-stop-reminder-sample.md`](../docs/handoff-stop-reminder-sample.md) 代替経路あり
 
 ---
-**本 skill**: v2.1 (partial-ingest + concise default)

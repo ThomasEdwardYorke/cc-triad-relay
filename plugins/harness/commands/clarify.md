@@ -273,3 +273,19 @@ Clarify を締めるときは以下を**構造化して**出す。これは次�
 - 新機能・リファクタ・移行・データモデル変更を着手する前に**先に**これを通す運用を推奨する。
 - Clarify 中はコードを書かない・ファイルを編集しない。最終サマリー保存のみ Write 可。
 - 設定 `harness.config.json.clarify.*` で audience / 例の数を調整可 (絶対原則 7 参照)。
+
+
+---
+
+## Handoff-mode Awareness Note
+
+本 spec は legacy plans-mode (`Plans.md` 駆動) を前提とした表現で書かれている。`harness.config.json.work.taskTrackerMode = "handoff"` (template default、`harness init` で適用) project では本文中の `Plans.md` 言及を以下の `handoffPaths.<key>` 契約に従って読み替える (具体 path は consumer が `harness.config.json.work.handoffPaths` で override 可、下記は例示):
+
+- **Active task dispatch / assignment table / progress** → `handoffPaths.backlog` + `handoffPaths.current` (例: `.docs/handoff/<project>-backlog.md` / `.docs/handoff/<project>-current.md`)
+- **Completion log append** → `History.md` (legacy `Plans.md`、`harness init` で生成または migration)
+- **Phase / Week / Task SSoT** → `handoffPaths.roadmap` (例: `.docs/handoff/<project>-roadmap.md`)
+- **Design decisions (append-only)** → `handoffPaths.decisions` (例: `.docs/handoff/<project>-decisions.md`)
+
+詳細は README "Plans-mode vs Handoff-mode" section + `harness.config.json` schema (HANDOFF_PATH_KEYS = `["backlog", "current", "decisions", "roadmap"]`) 参照。
+
+(本 note は generic awareness footer、複数 commands ファイルに一括追加。各 file 本文の `Plans.md` 言及を併記 update せず、handoff-mode user は本 footer を read-and-translate する設計。)
