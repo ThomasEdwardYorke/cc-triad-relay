@@ -299,10 +299,15 @@ const BLOCK_PATTERNS: BlockPattern[] = [
   // 置換すべし)。
   //
   // 左境界の厳格化 (Codex Phase 7 minor 対応): 旧 regex `/\bD-\d+\b/g` は
-  // `\b` が word/non-word 境界で成立するため `25-D-37` のような hyphen-compound
-  // や `漢字D-37` のような CJK-adjacent でも誤 match した。`(?<![\w-])` で
-  // 左側が word char / hyphen の場合を除外し、左境界を「文頭 or 純粋空白 /
-  // 純粋句読点」に限定する (B-3f の `gen-N` pattern と同じ lookbehind 設計)。
+  // `\b` が ASCII word/non-word 境界で成立するため `25-D-37` のような
+  // hyphen-compound でも誤 match した。`(?<![\w-])` で左側が word char (ASCII)
+  // / hyphen の場合を除外し、左境界を「文頭 or 純粋空白 / 純粋句読点」に
+  // 限定する (B-3f の `gen-N` pattern と同じ lookbehind 設計)。
+  //
+  // **既知 boundary**: JS の `\w` は ASCII 限定 (`[A-Za-z0-9_]`) のため、
+  // CJK-adjacent (`漢字D-37` など) は依然として match する (regression test
+  // 内で known boundary として固定済)。CJK leak が実害化したら Unicode
+  // property escape `(?<![\p{L}\p{N}_-])D-\d+\b` + `/u` flag に upgrade する。
   //
   // shipped spec で過去の関連 entry を参照したい場合は `git log` / CHANGELOG.md /
   // `docs/maintainer/` に移管する。
