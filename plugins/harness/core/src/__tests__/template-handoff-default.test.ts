@@ -1,5 +1,5 @@
 /**
- * PR #82 — template default = handoff mode integration test
+ * Template default = handoff mode integration test
  *
  * Verifies that:
  * 1. `template/.claude/harness.config.json.tmpl` ships with handoff mode default
@@ -9,7 +9,7 @@
  * 3. `template/History.md.tmpl` ships handoff mode-aware history doc
  * 4. `DEFAULT_CONFIG.work.taskTrackerMode` stays `"plans"` for backward
  *    compatibility (template default vs in-memory default split — see
- *    config.ts L902-908 comment for rationale)
+ *    config.ts comment near DEFAULT_CONFIG.work for rationale)
  */
 
 import { describe, it, expect } from "vitest";
@@ -20,7 +20,7 @@ import { DEFAULT_CONFIG } from "../config.js";
 const templateRoot = path.resolve(__dirname, "../../../../../template");
 const HANDOFF_PATH_KEYS = ["backlog", "current", "decisions", "roadmap"] as const;
 
-describe("PR #82: template default = handoff mode", () => {
+describe("template default = handoff mode", () => {
   it("template/.claude/harness.config.json.tmpl ships with handoff mode default", () => {
     const tmplPath = path.join(templateRoot, ".claude/harness.config.json.tmpl");
     expect(fs.existsSync(tmplPath)).toBe(true);
@@ -79,9 +79,8 @@ describe("PR #82: template default = handoff mode", () => {
   it("config.ts ships explanatory comment about template default vs in-memory default", () => {
     const configPath = path.resolve(__dirname, "../config.ts");
     const content = fs.readFileSync(configPath, "utf-8");
-    // Per Codex Phase 4 risk #5: comment must document why DEFAULT_CONFIG
-    // stays "plans" while template ships "handoff" (silent regression
-    // prevention).
+    // Rationale: comment must document why DEFAULT_CONFIG stays "plans"
+    // while template ships "handoff" (silent regression prevention).
     expect(content).toContain("silent");
     expect(content).toContain("template default");
   });
