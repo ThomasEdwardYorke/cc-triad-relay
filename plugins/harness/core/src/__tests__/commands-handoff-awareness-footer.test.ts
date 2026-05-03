@@ -43,16 +43,24 @@ describe("commands handoff-mode awareness footer", () => {
       // Header presence
       expect(content).toContain("Handoff-mode Awareness Note");
 
-      // 4-layer dispatch translation
-      expect(content).toContain("backlog.md");
-      expect(content).toContain("History.md");
-      expect(content).toContain("roadmap.md");
-      expect(content).toContain("decisions.md");
+      // 4-layer dispatch — key contract (handoffPaths.<key>), not fixed
+      // file paths. Consumers may override the path values via
+      // `harness.config.json.work.handoffPaths`, so the footer must talk
+      // in terms of the schema keys to remain valid under custom paths.
+      expect(content).toContain("handoffPaths.backlog");
+      expect(content).toContain("handoffPaths.current");
+      expect(content).toContain("handoffPaths.roadmap");
+      expect(content).toContain("handoffPaths.decisions");
 
-      // Schema cross-reference (canonical key list)
+      // History.md is the canonical legacy alias for the completion log,
+      // referenced by name (not via handoffPaths).
+      expect(content).toContain("History.md");
+
+      // Schema cross-reference (canonical key list, sourced from
+      // HANDOFF_PATH_KEYS in config.ts).
       expect(content).toContain("HANDOFF_PATH_KEYS");
 
-      // Footer ships the read-and-translate design rationale
+      // Footer ships the read-and-translate design rationale.
       expect(content).toContain("read-and-translate");
     });
   }
