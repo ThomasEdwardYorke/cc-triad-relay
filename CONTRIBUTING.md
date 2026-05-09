@@ -1,6 +1,6 @@
 # Contributing to Claude Code Harness
 
-Thank you for contributing. These guidelines protect users who install this plugin in projects that have nothing to do with the development test bed. **Please read Sections 1–6 before opening a PR.**
+Thank you for contributing. These guidelines protect users who install this plugin in projects that have nothing to do with the development test bed. **Please read Sections 1–7 before opening a PR.**
 
 ---
 
@@ -214,7 +214,7 @@ Internal tracker IDs are maintainer metadata, not plugin behavior.
 
 ## Section 5 — Test Bed Project Policy
 
-Development is validated through a **test-bed project** (`parts-management` in the current cycle). The test bed is a **proving ground, not the specification**.
+Development is validated through **test-bed projects** (`script_generate` in the predecessor cycle, `parts-management` in later cycles). A test bed is a **proving ground, not the specification**.
 
 ### 5.1 Required order (R-Flow)
 
@@ -339,6 +339,52 @@ No release if:
 
 ---
 
+## Section 7 — Maintainer Branch Strategy
+
+This repository uses a three-branch maintainer flow:
+
+```text
+feature/* -> dev -> main
+```
+
+Branch roles:
+
+- `main`: public, stable, release-ready. No direct implementation work.
+- `dev`: next-release integration branch.
+- `feature/*`: short-lived implementation branches, cut from `dev`.
+
+Normal feature PRs target `dev`. `main` receives changes only through a release PR from `dev`.
+
+Before starting work:
+
+```bash
+cd /path/to/cc-triad-relay
+git switch dev
+git pull --ff-only
+git status --short --branch
+git switch -c feature/<short-slug>
+```
+
+Before release:
+
+```bash
+git switch dev
+git pull --ff-only
+npm test --workspace=plugins/harness/core
+npm run build
+```
+
+Then open:
+
+```text
+base: main
+compare: dev
+```
+
+The operational runbook lives in [`docs/maintainer/development-branching.md`](docs/maintainer/development-branching.md).
+
+---
+
 ## PR Review Flow
 
 1. Author completes Section 3 self-check before opening a PR. Any unchecked item blocks PR creation.
@@ -358,4 +404,6 @@ No release if:
 - [`plugins/harness/core/src/__tests__/generality.test.ts`](plugins/harness/core/src/__tests__/generality.test.ts) — Static leak detector (CI blocking)
 - [`.github/pull_request_template.md`](.github/pull_request_template.md) — PR checklist
 - [`docs/maintainer/test-bed-usage.md`](docs/maintainer/test-bed-usage.md) — Test bed usage log
+- [`docs/maintainer/development-branching.md`](docs/maintainer/development-branching.md) — Maintainer branch flow
+- [`docs/maintainer/handoff/cc-triad-relay-current.md`](docs/maintainer/handoff/cc-triad-relay-current.md) — Self-hosting handoff index
 - [`CHANGELOG.md`](CHANGELOG.md) — Release notes
