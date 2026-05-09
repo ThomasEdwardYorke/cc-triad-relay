@@ -20,16 +20,19 @@ Codex / CodeRabbit レビュー全件対応済。
    merge 前に少なくとも以下を実行:
 
    ```bash
-   cd /Users/kosukekunii/dev/cc-triad-relay
+   cd /path/to/cc-triad-relay
    git switch dev
    git pull --ff-only
    npm test --workspace=plugins/harness/core
    npm run build
+   git ls-files -- harness.config.json docs/maintainer/handoff
    ```
+
+   The final command must print nothing. Live self-hosting state stays in ignored local files and must not enter a release PR.
 
 2. **annotated tag 作成** (GPG 署名があれば `-s` 付与):
    ```bash
-   cd /Users/kosukekunii/dev/cc-triad-relay
+   cd /path/to/cc-triad-relay
    git switch main && git pull --ff-only
    git tag -a v{NEW_VERSION} -m "release: v{NEW_VERSION}"
    ```

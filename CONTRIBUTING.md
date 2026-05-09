@@ -1,6 +1,6 @@
 # Contributing to Claude Code Harness
 
-Thank you for contributing. These guidelines protect users who install this plugin in projects that have nothing to do with the development test bed. **Please read Sections 1–7 before opening a PR.**
+Thank you for contributing. These guidelines protect users who install this plugin in projects that have nothing to do with the development test bed. **Please read Sections 1–8 before opening a PR.**
 
 ---
 
@@ -214,7 +214,7 @@ Internal tracker IDs are maintainer metadata, not plugin behavior.
 
 ## Section 5 — Test Bed Project Policy
 
-Development is validated through **test-bed projects** (`script_generate` in the predecessor cycle, `parts-management` in later cycles). A test bed is a **proving ground, not the specification**.
+Development is validated through **test-bed projects**. A test bed is a **proving ground, not the specification**.
 
 ### 5.1 Required order (R-Flow)
 
@@ -339,7 +339,33 @@ No release if:
 
 ---
 
-## Section 7 — Maintainer Branch Strategy
+## Section 7 — Public Surface and Local Self-Hosting Boundary
+
+This repository is public, while the harness is also used to develop itself. Keep these surfaces separate.
+
+Public, tracked surface:
+
+- `plugins/harness/**`: shipped plugin implementation, commands, agents, hooks, schemas, and committed `dist` artifacts.
+- `template/**`: files installed into consumer projects.
+- `docs/en/**`, `docs/ja/**`, `README.md`, `CHANGELOG.md`, and generic maintainer process docs.
+- `harness.config.example.json`: public example for local self-hosting config shape.
+
+Local-only self-hosting surface:
+
+- `harness.config.json`: live config for developing this repository with the harness itself. Git ignores it.
+- `.docs/handoff/**`: active handoff, backlog, roadmap, and decision notes. Git ignores it.
+- Sibling-repository snapshots, personal absolute paths, active branch notes, and untriaged test-bed material.
+
+Rules:
+
+- Do not commit live self-hosting config or handoff state.
+- Do not move private handoff notes into `docs/maintainer/**` unless they have been rewritten as generic public maintainer guidance.
+- Release PRs must keep `git ls-files -- harness.config.json docs/maintainer/handoff` empty.
+- `content-integrity.test.ts` enforces this boundary in CI.
+
+---
+
+## Section 8 — Maintainer Branch Strategy
 
 This repository uses a three-branch maintainer flow:
 
@@ -405,5 +431,5 @@ The operational runbook lives in [`docs/maintainer/development-branching.md`](do
 - [`.github/pull_request_template.md`](.github/pull_request_template.md) — PR checklist
 - [`docs/maintainer/test-bed-usage.md`](docs/maintainer/test-bed-usage.md) — Test bed usage log
 - [`docs/maintainer/development-branching.md`](docs/maintainer/development-branching.md) — Maintainer branch flow
-- [`docs/maintainer/handoff/cc-triad-relay-current.md`](docs/maintainer/handoff/cc-triad-relay-current.md) — Self-hosting handoff index
+- [`harness.config.example.json`](harness.config.example.json) — Example local self-hosting config
 - [`CHANGELOG.md`](CHANGELOG.md) — Release notes
