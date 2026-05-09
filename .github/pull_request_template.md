@@ -8,6 +8,12 @@
 
 <!-- 何を変更したか。なぜ必要か。関連 issue があれば #123 でリンク。 -->
 
+## Branch Target
+
+- [ ] 通常開発 PR: `base = dev`
+- [ ] Release PR: `base = main`, `compare = dev`
+- [ ] 例外の場合、理由を Motivation に明記した
+
 ## 動機 / Motivation
 
 <!-- この変更がなぜ必要なのか。既存挙動の問題点、追加価値を明記。 -->
