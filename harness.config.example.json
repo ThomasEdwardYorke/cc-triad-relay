@@ -1,6 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/ThomasEdwardYorke/cc-triad-relay/main/plugins/harness/schemas/harness.config.schema.json",
-  "projectName": "cc-triad-relay",
+  "projectName": "cc-triad-relay-local",
+  "repoKind": "harness-itself",
   "language": "en",
   "protectedDirectories": [],
   "protectedEnvVarNames": [
@@ -11,7 +12,9 @@
     "GITHUB_TOKEN",
     "GOOGLE_API_KEY"
   ],
-  "protectedFileSuffixes": [".env"],
+  "protectedFileSuffixes": [
+    ".env"
+  ],
   "codex": {
     "enabled": false
   },
@@ -25,10 +28,10 @@
   "work": {
     "taskTrackerMode": "handoff",
     "handoffPaths": {
-      "current": "docs/maintainer/handoff/cc-triad-relay-current.md",
-      "backlog": "docs/maintainer/handoff/cc-triad-relay-backlog.md",
-      "decisions": "docs/maintainer/handoff/cc-triad-relay-decisions.md",
-      "roadmap": "docs/maintainer/handoff/cc-triad-relay-roadmap.md"
+      "current": ".docs/handoff/cc-triad-relay-current.md",
+      "backlog": ".docs/handoff/cc-triad-relay-backlog.md",
+      "decisions": ".docs/handoff/cc-triad-relay-decisions.md",
+      "roadmap": ".docs/handoff/cc-triad-relay-roadmap.md"
     },
     "testCommand": "npm test --workspace=plugins/harness/core"
   },

@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { dirname, resolve, posix as pathPosix } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +17,23 @@ import { parse as parseYaml } from "yaml";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PLUGIN_ROOT = resolve(__dirname, "../../..");
+const REPO_ROOT = resolve(PLUGIN_ROOT, "../..");
+
+function gitOutput(args: string[]): string {
+  return execFileSync("git", ["-C", REPO_ROOT, ...args], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+function gitLines(args: string[]): string[] {
+  const out = gitOutput(args).trim();
+  return out.length === 0 ? [] : out.split(/\r?\n/).sort();
+}
+
+function readRepoFile(path: string): string {
+  return readFileSync(resolve(REPO_ROOT, path), "utf-8");
+}
 
 /**
  * Regex metacharacter escape (MDN RegExp guide 推奨形式).
@@ -5476,6 +5494,69 @@ describe("Caller Scoping Guidance (tool_uses budget) — anchor lock-in", () => 
       expect(agents["codex-sync"], `codex-sync.md missing ${label}`).toMatch(phrase);
       expect(agents["coderabbit-mimic"], `coderabbit-mimic.md missing ${label}`).toMatch(phrase);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Public repository surface guard
+// ---------------------------------------------------------------------------
+// The repository is public, while this same harness is also used to develop
+// itself. Live self-hosting state belongs in ignored local files, not in the
+// public release branch. This guard protects the repo-level public surface;
+// generality.test.ts separately protects the shipped plugin surface.
+describe("public repository surface guard", () => {
+  it("does not track live self-hosting config or handoff state", () => {
+    expect(
+      gitLines(["ls-files", "--", "harness.config.json", "docs/maintainer/handoff"]),
+    ).toEqual([]);
+  });
+
+  it("keeps local-only self-hosting paths ignored", () => {
+    expect(
+      gitLines([
+        "check-ignore",
+        "--",
+        "harness.config.json",
+        "harness.config.json.local",
+        ".docs/handoff/example.md",
+        "docs/maintainer/handoff/example.md",
+      ]),
+    ).toEqual([
+      ".docs/handoff/example.md",
+      "docs/maintainer/handoff/example.md",
+      "harness.config.json",
+      "harness.config.json.local",
+    ]);
+  });
+
+  it("tracks a generic example config instead of a live local config", () => {
+    expect(gitLines(["ls-files", "--", "harness.config.example.json"])).toEqual([
+      "harness.config.example.json",
+    ]);
+
+    const raw = readRepoFile("harness.config.example.json");
+    expect(raw).toContain(".docs/handoff/");
+    expect(raw).not.toMatch(/docs\/maintainer\/handoff/);
+    expect(raw).not.toMatch(/\/Users\/kosukekunii/);
+    expect(raw).not.toMatch(new RegExp("script" + "_generate"));
+  });
+
+  it("tracked public docs do not contain personal absolute paths", () => {
+    const trackedDocs = gitLines([
+      "ls-files",
+      "--",
+      "CONTRIBUTING.md",
+      ".github/pull_request_template.md",
+      "docs/maintainer",
+      "README.md",
+    ]).filter((path) => /\.(md|ya?ml)$/.test(path));
+
+    const offenders = trackedDocs.filter((path) => {
+      const raw = readRepoFile(path);
+      return /\/Users\/kosukekunii/.test(raw);
+    });
+
+    expect(offenders).toEqual([]);
   });
 });
 

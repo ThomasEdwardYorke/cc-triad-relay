@@ -1,6 +1,6 @@
 # Maintainer Branch Strategy
 
-This repository uses a three-branch maintainer flow to keep `main` release-ready.
+This repository uses a three-branch maintainer flow to keep `main` release-ready while active work integrates through `dev`.
 
 ```text
 main        = public, stable, release-ready
@@ -8,12 +8,23 @@ dev         = next release integration branch
 feature/*   = short-lived implementation branches
 ```
 
+## Public vs Local State
+
+Tracked files are public. Keep live self-hosting state out of tracked paths:
+
+- Use local `harness.config.json` for this repository development. It is ignored by Git.
+- Use `.docs/handoff/**` for active handoff, backlog, roadmap, and decision notes. It is ignored by Git.
+- Use `harness.config.example.json` as the public template for the local config shape.
+- Do not commit personal absolute paths, sibling-repository handoff snapshots, active branch notes, or untriaged test-bed material.
+
+The CI content-integrity guard fails if live self-hosting config or the old tracked handoff directory re-enters the repository surface.
+
 ## Normal Development
 
 Start every task from `dev`:
 
 ```bash
-cd /Users/kosukekunii/dev/cc-triad-relay
+cd /path/to/cc-triad-relay
 git switch dev
 git pull --ff-only
 git status --short --branch
@@ -44,7 +55,10 @@ git switch dev
 git pull --ff-only
 npm test --workspace=plugins/harness/core
 npm run build
+git ls-files -- harness.config.json docs/maintainer/handoff
 ```
+
+The final command must print nothing. If it prints paths, stop and remove the local-only state from Git before opening a release PR.
 
 Open a release PR with:
 

@@ -16,17 +16,8 @@ A test-bed project is used as a proving ground for new harness plugin features. 
 - **Forbidden order**: plugin-first → verify in test-bed
 - Never port project-local business logic to plugin core
 - R1 and R2 must be evaluated and recorded for every portation
+- Active self-hosting state belongs in ignored `.docs/handoff/**` and local `harness.config.json`, never in tracked maintainer docs
 
-## Current Maintainer Context
-
-The harness was originally developed while using it against `script_generate`; later cycles used other test-bed repositories. As of 2026-05-10, active self-hosting work for this repository is tracked in:
-
-- `docs/maintainer/handoff/cc-triad-relay-current.md`
-- `docs/maintainer/handoff/cc-triad-relay-backlog.md`
-- `docs/maintainer/handoff/cc-triad-relay-roadmap.md`
-- `docs/maintainer/handoff/cc-triad-relay-decisions.md`
-
-Historical `script_generate` materials are inputs for reconstruction only. They must be triaged before becoming active `cc-triad-relay` work.
 
 ---
 
