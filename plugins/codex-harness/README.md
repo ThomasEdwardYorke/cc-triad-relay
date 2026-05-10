@@ -11,7 +11,7 @@ Install it from a checkout of this repository:
 codex plugin marketplace add /path/to/project
 ```
 
-Then enable `codex-harness` from this repository marketplace.
+Then enable `codex-harness` from the project marketplace.
 
 ## Entry Skills
 
