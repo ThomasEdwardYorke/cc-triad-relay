@@ -51,8 +51,8 @@ than Claude Code commands, agents, or hooks.
 codex plugin marketplace add /path/to/project
 ```
 
-After adding the marketplace, enable `codex-harness` from the
-`cc-triad-relay` marketplace. The Codex adapter is intentionally scoped to
+After adding the marketplace, enable `codex-harness` from this repository
+marketplace. The Codex adapter is intentionally scoped to
 skills in this release slice: `harness-work`, `tdd-implement`,
 `session-handoff`, `coderabbit-review`, and `pseudo-coderabbit-loop`.
 
