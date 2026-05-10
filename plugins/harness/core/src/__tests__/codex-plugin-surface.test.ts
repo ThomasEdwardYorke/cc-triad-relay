@@ -21,6 +21,10 @@ const EXPECTED_CODEX_SKILLS = [
   "session-handoff",
   "coderabbit-review",
   "pseudo-coderabbit-loop",
+  "new-feature-branch",
+  "branch-merge",
+  "harness-release",
+  "harness-merge-train",
 ] as const;
 
 const SECOND_OPINION_CODEX_SKILLS = [
@@ -28,6 +32,16 @@ const SECOND_OPINION_CODEX_SKILLS = [
   "tdd-implement",
   "coderabbit-review",
   "pseudo-coderabbit-loop",
+  "branch-merge",
+  "harness-release",
+  "harness-merge-train",
+] as const;
+
+const BRANCH_RELEASE_CODEX_SKILLS = [
+  "new-feature-branch",
+  "branch-merge",
+  "harness-release",
+  "harness-merge-train",
 ] as const;
 
 function repoPath(path: string): string {
@@ -163,6 +177,35 @@ describe("Codex plugin platform surface", () => {
       expect(content).toMatch(
         /Do not mark .*clear.*second opinion.*PASS/is,
       );
+    }
+  });
+
+  it("publishes Codex-native branch, release, and merge-train skills with release guards", () => {
+    for (const skillName of BRANCH_RELEASE_CODEX_SKILLS) {
+      const skillPath = `plugins/codex-harness/skills/${skillName}/SKILL.md`;
+      const content = readRepoFile(skillPath);
+
+      expect(content).toMatch(/^---\r?\n/);
+      expect(content).toMatch(
+        new RegExp(`^name: ${escapeRegExp(skillName)}$`, "m"),
+      );
+      expect(content).toContain("Branch safety gate");
+      expect(content).toContain("Release-to-main gate");
+      expect(content).toContain("Local-only boundary gate");
+      expect(content).toContain("release PR");
+      expect(content).toContain("Do not push directly to `main`");
+      expect(content).toContain(
+        "git ls-files -- harness.config.json docs/maintainer/handoff .docs/handoff",
+      );
+      expect(content).not.toContain("allowed-tools");
+      expect(content).not.toContain("disable-model-invocation");
+      expect(content).not.toContain("argument-hint");
+      expect(content).not.toContain("description-ja");
+    }
+
+    const readme = readRepoFile("plugins/codex-harness/README.md");
+    for (const skillName of BRANCH_RELEASE_CODEX_SKILLS) {
+      expect(readme).toContain(`\`${skillName}\``);
     }
   });
 
