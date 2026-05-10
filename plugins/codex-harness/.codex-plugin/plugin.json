@@ -1,0 +1,37 @@
+{
+  "name": "codex-harness",
+  "version": "0.4.0-rc.2",
+  "description": "Codex-native skill adapter for cc-triad-relay Harness workflows.",
+  "author": {
+    "name": "cc-triad-relay contributors"
+  },
+  "homepage": "https://github.com/ThomasEdwardYorke/cc-triad-relay",
+  "repository": "https://github.com/ThomasEdwardYorke/cc-triad-relay",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "harness",
+    "tdd",
+    "code-review",
+    "handoff"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Harness",
+    "shortDescription": "TDD, handoff, and review gates for Codex sessions",
+    "longDescription": "Run cc-triad-relay Harness workflows as Codex-native skills with repository checks, TDD gates, handoff hygiene, local review, and public/local boundary enforcement.",
+    "developerName": "cc-triad-relay contributors",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/ThomasEdwardYorke/cc-triad-relay",
+    "defaultPrompt": [
+      "Implement the top handoff task with TDD",
+      "Run the local pseudo CodeRabbit loop",
+      "Prepare a session handoff update"
+    ],
+    "brandColor": "#2563EB"
+  }
+}
