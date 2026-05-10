@@ -26,6 +26,8 @@ Use the marketplace name configured by the project.
 - `branch-merge`: merge one reviewed feature PR into the integration branch.
 - `harness-release`: prepare and verify release PRs from integration to release branch.
 - `harness-merge-train`: merge multiple ready PRs in order with fail-fast gates.
+- `parallel-worktree`: coordinate isolated Codex worktrees with bounded concurrency.
+- `codex-team`: request delegated Codex implementation, review, or adversarial checks.
 
 ## Second Opinion Contract
 
@@ -52,6 +54,18 @@ local-only boundary:
 ```bash
 git ls-files -- harness.config.json docs/maintainer/handoff .docs/handoff
 ```
+
+## Parallel Orchestration Contract
+
+Codex parallel orchestration uses isolated worktrees and explicit ownership
+contracts instead of sharing one writable checkout. Each delegated task declares
+`owned_files` and `forbidden_files`, and the coordinator bounds active workers
+with `MAX_CODEX_PARALLEL`. Work is integrated in deterministic merge order, with
+checks and Codex second opinion rerun after each accepted task branch.
+
+Parallel work may prepare a feature branch or PR against the integration
+branch. It must not push directly to `main`; release exposure still happens
+only through a release PR.
 
 ## Boundary
 
