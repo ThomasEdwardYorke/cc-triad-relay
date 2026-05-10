@@ -127,7 +127,7 @@ describe("Codex plugin platform surface", () => {
       const skillPath = `plugins/codex-harness/skills/${skillName}/SKILL.md`;
       const content = readRepoFile(skillPath);
 
-      expect(content).toMatch(/^---\n/);
+      expect(content).toMatch(/^---\r?\n/);
       expect(content).toMatch(
         new RegExp(`^name: ${escapeRegExp(skillName)}$`, "m"),
       );
