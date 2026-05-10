@@ -286,8 +286,10 @@ Add an entry to `docs/maintainer/test-bed-usage.md`:
 
 | File | Purpose |
 |---|---|
-| `plugins/harness/.claude-plugin/plugin.json` | Plugin manifest — metadata + plugin-owned component definitions |
-| `/.claude-plugin/marketplace.json` | Marketplace catalog — marketplace owner + installable plugin entries |
+| `.claude-plugin/marketplace.json` | Claude Code marketplace catalog: public marketplace owner + installable plugin entry |
+| `plugins/harness/.claude-plugin/plugin.json` | Plugin manifest: metadata + plugin-owned component definitions |
+| `.agents/plugins/marketplace.json` | Codex marketplace catalog: repo-local marketplace + installable Codex adapter entry |
+| `plugins/codex-harness/.codex-plugin/plugin.json` | Codex plugin manifest: metadata + skill entrypoint discovery |
 
 ### 6.2 Schema rules
 
@@ -297,9 +299,12 @@ Add an entry to `docs/maintainer/test-bed-usage.md`:
 
 ### 6.3 Marketplace rules
 
-- `marketplace.json` must define `name`, `owner`, and `plugins`.
-- Each plugin entry must define `name` and `source`.
-- Keep `strict: true` unless intentionally curating plugin components differently from the plugin repo.
+- Claude Code marketplace files must define `name`, `owner`, and `plugins`.
+- Claude Code plugin entries must define `name` and `source`.
+- Keep Claude Code `strict: true` unless intentionally curating plugin components differently from the plugin repo.
+- Codex marketplace files live at `.agents/plugins/marketplace.json`.
+- Codex plugin entries must define `name`, `source`, `policy`, and `category`.
+- Codex `source.path` must stay repo-relative, for example `./plugins/codex-harness`.
 
 ### 6.4 Versioning (semver)
 
@@ -345,7 +350,10 @@ This repository is public, while the harness is also used to develop itself. Kee
 
 Public, tracked surface:
 
+- `.claude-plugin/**`: Claude Code marketplace catalog for this public plugin.
+- `.agents/plugins/**`: Codex marketplace catalog for repo-local Codex adapter install.
 - `plugins/harness/**`: shipped plugin implementation, commands, agents, hooks, schemas, and committed `dist` artifacts.
+- `plugins/codex-harness/**`: Codex-native adapter implementation, manifest, and skills.
 - `template/**`: files installed into consumer projects.
 - `docs/en/**`, `docs/ja/**`, `README.md`, `CHANGELOG.md`, and generic maintainer process docs.
 - `harness.config.example.json`: public example for local self-hosting config shape.
