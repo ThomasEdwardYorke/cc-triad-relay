@@ -22,6 +22,10 @@ Use the marketplace name configured by the project.
 - `session-handoff`: inspect or update handoff files without leaking local state into the public repo.
 - `coderabbit-review`: inspect PR review feedback and keep fixes scoped to actionable findings.
 - `pseudo-coderabbit-loop`: run a local CodeRabbit-style pre-review before pushing.
+- `new-feature-branch`: create a clean feature branch from the integration branch.
+- `branch-merge`: merge one reviewed feature PR into the integration branch.
+- `harness-release`: prepare and verify release PRs from integration to release branch.
+- `harness-merge-train`: merge multiple ready PRs in order with fail-fast gates.
 
 ## Second Opinion Contract
 
@@ -34,6 +38,20 @@ Implementation and review skills use this portable gate:
 The reviewer receives the diff, PR context, and test results, then returns
 `PASS | NEEDS_FIX | BLOCKED` with actionable findings. A branch, local review,
 or PR is not clear unless the second opinion returns `PASS`.
+
+## Branch And Release Contract
+
+Codex branch and release skills keep normal feature work on the project's
+integration branch. Release-branch exposure must go through a release PR, and
+the skills explicitly block direct pushes to `main`.
+
+Before a feature merge, merge train, or release PR is reported clear, the skill
+must verify CI, CodeRabbit, Codex second opinion where applicable, and the
+local-only boundary:
+
+```bash
+git ls-files -- harness.config.json docs/maintainer/handoff .docs/handoff
+```
 
 ## Boundary
 
