@@ -48,7 +48,7 @@ This repository also ships a Codex-native adapter in
 than Claude Code commands, agents, or hooks.
 
 ```bash
-codex plugin marketplace add /path/to/cc-triad-relay
+codex plugin marketplace add /path/to/project
 ```
 
 After adding the marketplace, enable `codex-harness` from the

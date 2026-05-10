@@ -8,10 +8,10 @@ CodeRabbit-aware PR follow-up.
 Install it from a checkout of this repository:
 
 ```bash
-codex plugin marketplace add /path/to/cc-triad-relay
+codex plugin marketplace add /path/to/project
 ```
 
-Then enable `codex-harness` from the `cc-triad-relay` marketplace.
+Then enable `codex-harness` from this repository marketplace.
 
 ## Entry Skills
 

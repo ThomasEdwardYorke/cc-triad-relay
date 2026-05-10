@@ -39,13 +39,13 @@ Use this skill for a single implementation task that should be carried from test
 Start narrow and broaden only as risk increases:
 
 ```bash
-npm test --workspace=plugins/harness/core -- <focused-test>
+npm test -- <focused-test>
 npm run typecheck
 npm run build
 npm test
 ```
 
-Use the repository's actual package scripts when they differ from this example.
+Use the repository's actual package scripts when they differ from this generic example.
 
 ## Completion Contract
 

@@ -190,7 +190,7 @@ describe("Codex plugin platform surface", () => {
 
     const readme = readRepoFile("README.md");
     expect(readme).toContain(
-      "codex plugin marketplace add /path/to/cc-triad-relay",
+      "codex plugin marketplace add /path/to/project",
     );
 
     expect(
