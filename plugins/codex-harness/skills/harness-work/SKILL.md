@@ -30,7 +30,16 @@ Use this skill when the user asks Codex to implement, fix, refactor, or continue
 6. CI and CodeRabbit gate
    - Before push, run `pseudo-coderabbit-loop` when the diff is meaningful.
    - After push, use `coderabbit-review` for actionable PR feedback.
-7. Local-only boundary gate
+7. Codex second-opinion gate
+   - Required before declaring implementation or review work clear.
+   - Provide the independent reviewer with the current diff, PR context, and test results.
+   - Require the reviewer to return `PASS | NEEDS_FIX | BLOCKED` plus actionable findings.
+   - Capability ladder:
+     1. Codex sub-agent, when the current Codex runtime exposes delegated review.
+     2. `codex` CLI, when a repo-local or PATH-available CLI is authenticated.
+     3. If neither path is available, fail-closed with `BLOCKED`.
+   - Do not mark the branch clear until the second opinion returns `PASS`.
+8. Local-only boundary gate
    - Never commit live `harness.config.json`.
    - Never commit `.docs/handoff/` session state.
    - Keep Codex adapter files under `plugins/codex-harness/` and repo marketplace files under `.agents/plugins/`.
@@ -41,8 +50,9 @@ Use this skill when the user asks Codex to implement, fix, refactor, or continue
 2. Build a short checklist covering RED, GREEN, verification, local review, and handoff updates.
 3. Route one implementation task to `tdd-implement`.
 4. Use `pseudo-coderabbit-loop` before push when the branch is intended for PR.
-5. Use `session-handoff` at the end when the user asked for durable next-session context.
+5. Run the Codex second-opinion gate against the same diff before calling the branch clear.
+6. Use `session-handoff` at the end when the user asked for durable next-session context.
 
 ## Completion Contract
 
-End with the branch, files changed, tests run, remaining risks, and whether the local-only boundary stayed clean.
+End with the branch, files changed, tests run, second-opinion status, remaining risks, and whether the local-only boundary stayed clean.
