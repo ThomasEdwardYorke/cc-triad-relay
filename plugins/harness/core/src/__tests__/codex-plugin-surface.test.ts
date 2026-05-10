@@ -25,6 +25,8 @@ const EXPECTED_CODEX_SKILLS = [
   "branch-merge",
   "harness-release",
   "harness-merge-train",
+  "parallel-worktree",
+  "codex-team",
 ] as const;
 
 const SECOND_OPINION_CODEX_SKILLS = [
@@ -35,6 +37,8 @@ const SECOND_OPINION_CODEX_SKILLS = [
   "branch-merge",
   "harness-release",
   "harness-merge-train",
+  "parallel-worktree",
+  "codex-team",
 ] as const;
 
 const BRANCH_RELEASE_CODEX_SKILLS = [
@@ -42,6 +46,11 @@ const BRANCH_RELEASE_CODEX_SKILLS = [
   "branch-merge",
   "harness-release",
   "harness-merge-train",
+] as const;
+
+const PARALLEL_CODEX_SKILLS = [
+  "parallel-worktree",
+  "codex-team",
 ] as const;
 
 function repoPath(path: string): string {
@@ -207,6 +216,40 @@ describe("Codex plugin platform surface", () => {
     for (const skillName of BRANCH_RELEASE_CODEX_SKILLS) {
       expect(readme).toContain(`\`${skillName}\``);
     }
+  });
+
+  it("publishes Codex-native parallel orchestration skills with isolation and concurrency guards", () => {
+    for (const skillName of PARALLEL_CODEX_SKILLS) {
+      const skillPath = `plugins/codex-harness/skills/${skillName}/SKILL.md`;
+      const content = readRepoFile(skillPath);
+
+      expect(content).toMatch(/^---\r?\n/);
+      expect(content).toMatch(
+        new RegExp(`^name: ${escapeRegExp(skillName)}$`, "m"),
+      );
+      expect(content).toContain("Worktree isolation gate");
+      expect(content).toContain("Ownership boundary gate");
+      expect(content).toContain("Concurrency gate");
+      expect(content).toContain("Merge ordering gate");
+      expect(content).toContain("Codex second-opinion gate");
+      expect(content).toContain("Local-only boundary gate");
+      expect(content).toContain("MAX_CODEX_PARALLEL");
+      expect(content).toContain("owned_files");
+      expect(content).toContain("forbidden_files");
+      expect(content).toContain("Do not share writable worktrees");
+      expect(content).toContain("Do not push directly to `main`");
+      expect(content).not.toContain("allowed-tools");
+      expect(content).not.toContain("disable-model-invocation");
+      expect(content).not.toContain("argument-hint");
+      expect(content).not.toContain("description-ja");
+      expect(content).not.toContain("claude-oneshot");
+    }
+
+    const readme = readRepoFile("plugins/codex-harness/README.md");
+    for (const skillName of PARALLEL_CODEX_SKILLS) {
+      expect(readme).toContain(`\`${skillName}\``);
+    }
+    expect(readme).toContain("Parallel Orchestration Contract");
   });
 
   it("keeps the Codex second-opinion mechanism portable", () => {
