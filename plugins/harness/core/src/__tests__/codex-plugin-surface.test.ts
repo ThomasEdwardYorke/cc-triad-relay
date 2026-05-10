@@ -23,6 +23,13 @@ const EXPECTED_CODEX_SKILLS = [
   "pseudo-coderabbit-loop",
 ] as const;
 
+const SECOND_OPINION_CODEX_SKILLS = [
+  "harness-work",
+  "tdd-implement",
+  "coderabbit-review",
+  "pseudo-coderabbit-loop",
+] as const;
+
 function repoPath(path: string): string {
   return resolve(REPO_ROOT, path);
 }
@@ -139,6 +146,36 @@ describe("Codex plugin platform surface", () => {
       expect(content).toContain("GREEN");
       expect(content).toMatch(/local review/i);
     }
+  });
+
+  it("requires a fail-closed Codex second-opinion gate on review and implementation skills", () => {
+    for (const skillName of SECOND_OPINION_CODEX_SKILLS) {
+      const skillPath = `plugins/codex-harness/skills/${skillName}/SKILL.md`;
+      const content = readRepoFile(skillPath);
+
+      expect(content).toContain("Codex second-opinion gate");
+      expect(content).toContain("Capability ladder");
+      expect(content).toContain("Codex sub-agent");
+      expect(content).toMatch(/`codex` CLI|codex CLI/);
+      expect(content).toMatch(/fail-closed/i);
+      expect(content).toContain("PASS | NEEDS_FIX | BLOCKED");
+      expect(content).toContain("diff, PR context, and test results");
+      expect(content).toMatch(
+        /Do not mark .*clear.*second opinion.*PASS/is,
+      );
+    }
+  });
+
+  it("keeps the Codex second-opinion mechanism portable", () => {
+    const codexFiles = listFiles(CODEX_PLUGIN_ROOT);
+    const codexSurface = codexFiles
+      .map((path) => readFileSync(path, "utf-8"))
+      .join("\n");
+
+    expect(codexSurface).not.toContain("ask-codex");
+    expect(codexSurface).not.toContain(".agents/skills");
+    expect(codexSurface).not.toContain(".claude/plugins/cache");
+    expect(codexSurface).not.toContain("codex-companion.mjs");
   });
 
   it("keeps Claude Code and Codex adapter metadata separated", () => {

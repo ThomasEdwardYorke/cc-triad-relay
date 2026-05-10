@@ -27,10 +27,19 @@ Use this skill for a single implementation task that should be carried from test
 6. Local review gate
    - Inspect `git diff` for logic bugs, missing edge cases, accidental platform coupling, and stale docs.
    - Fix actionable local review findings and rerun affected checks.
-7. CI and CodeRabbit gate
+7. Codex second-opinion gate
+   - Required before reporting the implementation as clear.
+   - Provide the independent reviewer with the current diff, PR context, and test results.
+   - Require the reviewer to return `PASS | NEEDS_FIX | BLOCKED` plus actionable findings.
+   - Capability ladder:
+     1. Codex sub-agent, when the current Codex runtime exposes delegated review.
+     2. `codex` CLI, when a repo-local or PATH-available CLI is authenticated.
+     3. If neither path is available, fail-closed with `BLOCKED`.
+   - Do not mark the implementation clear until the second opinion returns `PASS`.
+8. CI and CodeRabbit gate
    - Run the repo's typecheck, build, smoke, or full test commands as appropriate.
    - Use `pseudo-coderabbit-loop` before push for non-trivial diffs.
-8. Local-only boundary gate
+9. Local-only boundary gate
    - Keep live handoff state and self-hosting config out of tracked files.
    - Keep Codex metadata out of the Claude Code adapter.
 
@@ -49,4 +58,4 @@ Use the repository's actual package scripts when they differ from this generic e
 
 ## Completion Contract
 
-Report what failed in RED, what passed in GREEN, the final verification commands, and any follow-up that remains outside the current task.
+Report what failed in RED, what passed in GREEN, the second-opinion status, the final verification commands, and any follow-up that remains outside the current task.

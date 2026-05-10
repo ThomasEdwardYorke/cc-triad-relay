@@ -27,10 +27,18 @@ Both adapters preserve the same operating intent:
 - verify repository, branch, and dirty status before editing
 - read handoff or backlog context when present
 - use RED, GREEN, refactor, and local review for implementation work
+- require a Codex second-opinion gate before marking implementation or review
+  work clear
 - run targeted tests before broad verification
 - use local pseudo-CodeRabbit review before push when useful
 - use PR, CI, and CodeRabbit feedback after push
 - keep public plugin files generic and portable
+
+For the Codex adapter, the second-opinion gate is intentionally portable:
+try a Codex sub-agent first, fall back to an authenticated `codex` CLI, and
+fail closed with `BLOCKED` when neither path is available. The review input is
+the diff, PR context, and test results; the output must be
+`PASS | NEEDS_FIX | BLOCKED` plus actionable findings.
 
 ## Local-Only Boundary
 

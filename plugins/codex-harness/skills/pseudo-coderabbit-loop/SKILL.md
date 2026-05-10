@@ -26,11 +26,20 @@ Use this skill before pushing a meaningful branch, especially when real CodeRabb
      - review type: `potential_issue`, `refactor_suggestion`, or `nitpick`
      - severity: `critical`, `major`, `minor`, `trivial`, or `info`
      - scope: `in_diff` or `outside_diff`
-   - Iterate until `actionable_count == 0`.
-6. CI and CodeRabbit gate
+   - Fix actionable findings and repeat the local review until `actionable_count == 0`.
+6. Codex second-opinion gate
+   - Required after the primary Codex local review reaches `actionable_count == 0`.
+   - Provide the independent reviewer with the same current diff, PR context, and test results.
+   - Require the reviewer to return `PASS | NEEDS_FIX | BLOCKED` plus actionable findings.
+   - Capability ladder:
+     1. Codex sub-agent, when the current Codex runtime exposes delegated review.
+     2. `codex` CLI, when a repo-local or PATH-available CLI is authenticated.
+     3. If neither path is available, fail-closed with `BLOCKED`.
+   - Do not mark the local review clear until `actionable_count == 0` and the second opinion returns `PASS`.
+7. CI and CodeRabbit gate
    - Run the relevant local checks after fixes.
    - Push only after actionable local findings and tests are clean.
-7. Local-only boundary gate
+8. Local-only boundary gate
    - Review only tracked or intended-to-track public files.
    - Confirm local handoff and self-hosting files were not added accidentally.
 
@@ -42,4 +51,4 @@ Use this skill before pushing a meaningful branch, especially when real CodeRabb
 
 ## Completion Contract
 
-Return a compact JSON-like summary with `actionable_count`, findings fixed, checks run, and any residual nitpicks intentionally deferred.
+Return a compact JSON-like summary with `actionable_count`, second-opinion status, findings fixed, checks run, and any residual nitpicks intentionally deferred. Report clean only when `actionable_count == 0` and second-opinion status is `PASS`.
