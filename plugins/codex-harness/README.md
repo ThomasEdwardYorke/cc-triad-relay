@@ -12,6 +12,7 @@ codex plugin marketplace add /path/to/project
 ```
 
 Then enable `codex-harness` from the project marketplace.
+Use the marketplace name configured by the project.
 
 ## Entry Skills
 
