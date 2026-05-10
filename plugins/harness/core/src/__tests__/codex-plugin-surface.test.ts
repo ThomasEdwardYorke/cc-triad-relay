@@ -39,6 +39,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function listFiles(root: string): string[] {
   if (!existsSync(root)) {
     return [];
@@ -124,7 +128,9 @@ describe("Codex plugin platform surface", () => {
       const content = readRepoFile(skillPath);
 
       expect(content).toMatch(/^---\n/);
-      expect(content).toMatch(new RegExp(`^name: ${skillName}$`, "m"));
+      expect(content).toMatch(
+        new RegExp(`^name: ${escapeRegExp(skillName)}$`, "m"),
+      );
       expect(content).toMatch(/^description: .+/m);
       expect(content).toContain("## Codex-Native Gates");
       expect(content).toContain("Repository and branch gate");
@@ -194,7 +200,13 @@ describe("Codex plugin platform surface", () => {
     );
 
     expect(
-      gitLines(["ls-files", "--", "harness.config.json", "docs/maintainer/handoff"]),
+      gitLines([
+        "ls-files",
+        "--",
+        "harness.config.json",
+        ".docs/handoff",
+        "docs/maintainer/handoff",
+      ]),
     ).toEqual([]);
   });
 });
