@@ -204,7 +204,7 @@ describe("Codex plugin platform surface", () => {
         "ls-files",
         "--",
         "harness.config.json",
-        ".docs/handoff",
+        ".docs/handoff/**",
         "docs/maintainer/handoff",
       ]),
     ).toEqual([]);
