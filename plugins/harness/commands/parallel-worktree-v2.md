@@ -158,6 +158,10 @@ Fields specific to v2:
 `--max-parallel=N` caps concurrent tmux windows (default = number of
 sub-tasks). When N is below the sub-task count, the coordinator dispatches
 the remaining sub-tasks as earlier windows finish (semaphore-style).
+Slug values must match `^[A-Za-z_][A-Za-z0-9_-]*$`; dots are intentionally
+rejected because tmux target syntax treats `.` as the window/pane separator,
+and leading digits are rejected because tmux tries numeric window indexes
+before exact window names.
 
 ### Subcommands
 

@@ -28,11 +28,23 @@ DRY_RUN=0
 
 validate_identifier() {
   # alphanumeric + underscore + hyphen + dot only.
-  # Used for: slug, CLAUDE_MODEL alias.
+  # Used for: CLAUDE_MODEL alias.
   local name="$1"
   local val="$2"
   if [[ ! "$val" =~ ^[a-zA-Z0-9._-]+$ ]]; then
     echo "Error: $name '$val' contains invalid characters (allowed: a-z A-Z 0-9 . _ -)" >&2
+    exit 2
+  fi
+}
+
+validate_slug() {
+  # tmux target syntax uses "." to separate window and pane, so slug/window
+  # names must not contain dots if we target panes as "${session}:${slug}".
+  # It also tries numeric indexes before exact window names, so avoid leading
+  # digits.
+  local val="$1"
+  if [[ ! "$val" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]; then
+    echo "Error: slug '$val' contains invalid characters (allowed: leading a-z A-Z _, then a-z A-Z 0-9 _ -; dot and leading digits are reserved by tmux target syntax)" >&2
     exit 2
   fi
 }
@@ -598,7 +610,7 @@ cmd_start() {
   local slug wt branch
   local spawned_slugs=()
   for slug in "$@"; do
-    validate_identifier "slug" "$slug"
+    validate_slug "$slug"
     wt="${parent}/${prefix}${slug}"
     branch="feature/${feat}-${slug}"
     emit "git worktree add '$wt' -b '$branch' '$feat'"
@@ -654,7 +666,7 @@ cmd_verify() {
   if [[ $# -gt 0 ]]; then
     local s
     for s in "$@"; do
-      validate_identifier "slug" "$s"
+      validate_slug "$s"
       slugs+=("$s")
     done
   else
@@ -731,7 +743,7 @@ cmd_attach() {
     exit 2
   fi
   local slug="$1"
-  validate_identifier "slug" "$slug"
+  validate_slug "$slug"
   local session="${2:-$(resolve_session_name)}"
   # `tmux attach` blocks until the user detaches, so chaining
   # `tmux attach ... \; select-window ...` would only run select-window
