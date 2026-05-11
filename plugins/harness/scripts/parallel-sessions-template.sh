@@ -220,16 +220,20 @@ resolve_required_skills() {
       printf '%s' "${__DEFAULT_REQUIRED_SKILLS[*]}"
       return 0
     fi
-    local tok
     local tokens=()
-    for tok in $CLAUDE_REQUIRED_SKILLS; do
+    # Use `read -a` instead of `for tok in $CLAUDE_REQUIRED_SKILLS`: the latter
+    # performs filename expansion, so a value like `*` can become repository
+    # paths before the token regex sees it.
+    local IFS=' '
+    read -r -a tokens <<< "$CLAUDE_REQUIRED_SKILLS"
+    local tok
+    for tok in "${tokens[@]}"; do
       if [[ ! "$tok" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
         echo "Warning: CLAUDE_REQUIRED_SKILLS token '$tok' rejected (allowed chars: A-Z a-z 0-9 . _ : / -); using defaults" >&2
         local IFS=' '
         printf '%s' "${__DEFAULT_REQUIRED_SKILLS[*]}"
         return 0
       fi
-      tokens+=("$tok")
     done
     if [[ ${#tokens[@]} -eq 0 ]]; then
       echo "Warning: CLAUDE_REQUIRED_SKILLS contains no skill tokens; using defaults" >&2
@@ -279,25 +283,25 @@ check_skill_registry_in_output() {
 }
 
 build_blocked_escalation_message() {
-  # Build the 8-section BLOCKED final-report prompt that is injected when the
-  # overlay-load race is detected. The whole prompt must fit on one logical
-  # line because `tmux send-keys` injects it as a single REPL submission;
-  # fields are delimited by `;`.
+  # Build the 8-field BLOCKED final-report prompt that is injected when the
+  # overlay-load race is detected. Keep the injected prompt itself one logical
+  # line for `tmux send-keys`, but require the worker's final report to use the
+  # canonical newline-separated field schema parsed by the coordinator.
   # Args: $1 = slug (worker identifier)
   #       $2 = missing_skills (whitespace-separated single string)
   local slug="$1"
   local missing="$2"
   printf 'OVERLAY_LOAD_TIMEOUT detected by launcher (overlay-load race) for slug=%s. ' "$slug"
   printf 'Required harness skills not loaded: [%s]. ' "$missing"
-  printf 'STOP all work. Output the 8-field final report exactly as: '
-  printf 'STATUS: BLOCKED; '
-  printf 'CHANGED_FILES: (none); '
-  printf 'COMMIT: (none); '
-  printf 'PUSHED_BRANCH: (none); '
-  printf 'VALIDATION: SKIPPED; '
-  printf 'BLOCKERS: harness overlay load timeout (overlay-load race) - skills missing [%s]; ' "$missing"
-  printf 'NEXT_ACTION: (escalate to coordinator for parallel-agent takeover); '
-  printf 'FORBIDDEN_ACTIONS_USED: no.\n'
+  printf 'STOP all work. Output the final report as exactly 8 newline-separated fields, one field per line, using this schema: '
+  printf '[1] STATUS: BLOCKED '
+  printf '[2] CHANGED_FILES: (none) '
+  printf '[3] COMMIT: (none) '
+  printf '[4] PUSHED_BRANCH: (none) '
+  printf '[5] VALIDATION: SKIPPED '
+  printf '[6] BLOCKERS: harness overlay load timeout (overlay-load race) - skills missing [%s] ' "$missing"
+  printf '[7] NEXT_ACTION: (escalate to coordinator for parallel-agent takeover) '
+  printf '[8] FORBIDDEN_ACTIONS_USED: no\n'
 }
 
 probe_skill_registry() {
@@ -329,15 +333,15 @@ probe_skill_registry() {
     timeout=12
   fi
 
-  # Adversarial review fix (stale-content false-positive): clear scrollback +
-  # send Escape to flush any pending input *before* the probe, then capture
-  # only the visible pane (no -S history) so the substring match only sees
-  # output produced by THIS /help invocation. Without this, any old pane
-  # content that happened to contain the 6 skill identifiers (e.g. a previous
-  # /help, a doc snippet, the user manually typing /harness:... earlier) would
-  # let verify pass while the current REPL is still unloaded.
+  # Adversarial review fix (stale-content false-positive): clear visible pane
+  # + scrollback and send Escape to flush any pending input *before* the probe,
+  # then capture only the visible pane (no -S history) so the substring match
+  # only sees output produced by THIS /help invocation. Without clearing the
+  # visible screen, stale text can survive `tmux clear-history` and satisfy the
+  # skill check even when the fresh /help output still lacks the skills.
   tmux send-keys -t "${session}:${slug}" Escape 2>/dev/null || true
   tmux send-keys -t "${session}:${slug}" Escape 2>/dev/null || true
+  tmux send-keys -t "${session}:${slug}" C-l 2>/dev/null || true
   tmux clear-history -t "${session}:${slug}" 2>/dev/null || true
 
   # Send `/help` to trigger the built-in skill-list rendering; the trailing

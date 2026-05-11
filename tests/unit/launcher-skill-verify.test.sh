@@ -73,6 +73,22 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local name="$1"
+  local needle="$2"
+  local haystack="$3"
+  if [[ "$haystack" != *"$needle"* ]]; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  PASS: $name"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAIL_DETAILS+=("$name: needle='$needle' unexpectedly found in haystack")
+    echo "  FAIL: $name (unexpected needle found)"
+    echo "    needle:   '$needle'"
+    echo "    haystack: '$haystack'"
+  fi
+}
+
 assert_rc() {
   local name="$1"
   local expected_rc="$2"
@@ -181,6 +197,13 @@ check_skill_registry_in_output "" "$out" >/dev/null 2>&1 && rc=0 || rc=$?
 assert_rc "2e fallback default skills are still enforced" "1" "$rc"
 unset CLAUDE_REQUIRED_SKILLS out rc
 
+# 2f: glob metacharacter must be rejected before shell filename expansion
+export CLAUDE_REQUIRED_SKILLS='*'
+out=$(resolve_required_skills 2>/dev/null)
+assert_contains "2f glob token rejected, falls back to defaults" "harness:tdd-implement" "$out"
+assert_not_contains "2f glob token does not expand repository filenames" "CHANGELOG.md" "$out"
+unset CLAUDE_REQUIRED_SKILLS out
+
 echo
 echo "=== Test 3: build_blocked_escalation_message ==="
 
@@ -195,6 +218,9 @@ assert_contains "3a contains BLOCKERS (overlay-load race)" "overlay-load race" "
 assert_contains "3a contains missing skills listed" "harness:tdd-implement" "$msg"
 assert_contains "3a contains NEXT_ACTION" "NEXT_ACTION" "$msg"
 assert_contains "3a contains FORBIDDEN_ACTIONS_USED: no" "FORBIDDEN_ACTIONS_USED: no" "$msg"
+assert_contains "3a instructs newline-separated fields" "newline-separated" "$msg"
+assert_not_contains "3a does not request semicolon-separated final report" "semicolon-separated" "$msg"
+assert_not_contains "3a final field has no trailing period in copied value" "FORBIDDEN_ACTIONS_USED: no." "$msg"
 assert_contains "3a contains slug 'alpha'" "alpha" "$msg"
 unset msg
 
@@ -244,6 +270,35 @@ out=$(
 ) && rc=0 || rc=$?
 assert_rc "6a capture-pane failure → rc=2" "2" "$rc"
 assert_contains "6a capture failure message" "tmux capture-pane failed" "$out"
+unset out rc
+
+# 6b: stale visible pane content must not satisfy the fresh /help probe.
+out=$(
+  screen_cleared=0
+  tmux() {
+    case "$1" in
+      send-keys)
+        if [[ " $* " == *" C-l "* ]]; then
+          screen_cleared=1
+        fi
+        return 0
+        ;;
+      clear-history) return 0 ;;
+      capture-pane)
+        if [[ "$screen_cleared" -eq 1 ]]; then
+          printf 'fresh help output without loaded skill\n'
+        else
+          printf 'stale pane still says harness:tdd-implement\n'
+        fi
+        return 0
+        ;;
+      *) return 0 ;;
+    esac
+  }
+  probe_skill_registry "session" "alpha" "harness:tdd-implement" 1
+) && rc=0 || rc=$?
+assert_rc "6b stale visible pane is cleared before scan → rc=1" "1" "$rc"
+assert_contains "6b reports missing skill from fresh output" "harness:tdd-implement" "$out"
 unset out rc
 
 echo
