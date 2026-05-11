@@ -237,7 +237,7 @@ resolve_required_skills() {
     # performs filename expansion, so a value like `*` can become repository
     # paths before the token regex sees it.
     local IFS=' '
-    read -r -a tokens <<< "$CLAUDE_REQUIRED_SKILLS"
+    read -r -a tokens <<< "$CLAUDE_REQUIRED_SKILLS" || true
     local tok
     for tok in "${tokens[@]}"; do
       if [[ ! "$tok" =~ ^[A-Za-z0-9._:/-]+$ ]]; then

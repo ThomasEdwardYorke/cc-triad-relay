@@ -204,6 +204,18 @@ assert_contains "2f glob token rejected, falls back to defaults" "harness:tdd-im
 assert_not_contains "2f glob token does not expand repository filenames" "CHANGELOG.md" "$out"
 unset CLAUDE_REQUIRED_SKILLS out
 
+# 2g: bash versions may return non-zero when `read -a` sees separators but no
+# token. With `set -e` active, that must still fall through to the empty-token
+# fallback instead of terminating the launcher/test process.
+out=$(
+  read() { return 1; }
+  export CLAUDE_REQUIRED_SKILLS='   '
+  set -e
+  resolve_required_skills 2>/dev/null
+)
+assert_contains "2g read failure falls back under set -e" "harness:tdd-implement" "$out"
+unset out
+
 echo
 echo "=== Test 3: build_blocked_escalation_message ==="
 
