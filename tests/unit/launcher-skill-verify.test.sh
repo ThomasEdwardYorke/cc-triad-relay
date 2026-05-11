@@ -251,7 +251,7 @@ unset CLAUDE_OVERLAY_LOAD_VERIFY rc
 out=$(
   {
     probe_skill_registry() {
-      sleep 1
+      sleep 2
       return 0
     }
     escalate_blocked_to_slug() {

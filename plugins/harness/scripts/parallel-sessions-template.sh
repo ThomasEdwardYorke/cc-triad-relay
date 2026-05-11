@@ -460,12 +460,19 @@ wait_for_all_workers_ready() {
     probe_timeout=12
   fi
   # Adversarial review fix (enforce MAX_WAIT_SECONDS without false-skipping
-  # later workers): max_wait must cover the baseline plus one full probe
-  # timeout per slug. If the operator set max_wait too low, raise it so every
-  # worker receives at least one probe before any MAX_WAIT branch can fire.
-  local required_max=$((min_wait + probe_timeout * ${#slugs[@]}))
+  # later workers): probe_skill_registry polls in 2s chunks, so a timeout of 1
+  # still spends up to 2 real seconds. max_wait must cover the baseline plus
+  # one real probe ceiling per slug. If the operator set max_wait too low, raise
+  # it so every worker receives at least one probe before any MAX_WAIT branch
+  # can fire.
+  local probe_poll_interval=2
+  local probe_budget=0
+  if [[ "$probe_timeout" -gt 0 ]]; then
+    probe_budget=$(( ((probe_timeout + probe_poll_interval - 1) / probe_poll_interval) * probe_poll_interval ))
+  fi
+  local required_max=$((min_wait + probe_budget * ${#slugs[@]}))
   if [[ "$max_wait" -lt "$required_max" ]]; then
-    echo "Warning: CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=$max_wait < (MIN_WAIT $min_wait + VERIFY_TIMEOUT $probe_timeout * WORKERS ${#slugs[@]}); raising to $required_max" >&2
+    echo "Warning: CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=$max_wait < (MIN_WAIT $min_wait + PROBE_BUDGET $probe_budget * WORKERS ${#slugs[@]}); raising to $required_max" >&2
     max_wait=$required_max
   fi
 
