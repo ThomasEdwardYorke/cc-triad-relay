@@ -233,12 +233,31 @@ resolve_required_skills() {
       return 0
     fi
     local tokens=()
-    # Use `read -a` instead of `for tok in $CLAUDE_REQUIRED_SKILLS`: the latter
-    # performs filename expansion, so a value like `*` can become repository
-    # paths before the token regex sees it.
+    local token_count=0
+    # Split on spaces while temporarily disabling filename expansion. A plain
+    # `for tok in $CLAUDE_REQUIRED_SKILLS` would otherwise expand `*` into
+    # repository paths before the token regex sees it, while `read -a` exits
+    # non-zero for whitespace-only input on older Bash under `set -e`.
     local IFS=' '
-    read -r -a tokens <<< "$CLAUDE_REQUIRED_SKILLS" || true
+    local had_noglob=0
+    case "$-" in
+      *f*) had_noglob=1 ;;
+    esac
+    set -f
     local tok
+    for tok in $CLAUDE_REQUIRED_SKILLS; do
+      tokens+=("$tok")
+      token_count=$((token_count + 1))
+    done
+    if [[ "$had_noglob" -eq 0 ]]; then
+      set +f
+    fi
+    if [[ "$token_count" -eq 0 ]]; then
+      echo "Warning: CLAUDE_REQUIRED_SKILLS contains no skill tokens; using defaults" >&2
+      local IFS=' '
+      printf '%s' "${__DEFAULT_REQUIRED_SKILLS[*]}"
+      return 0
+    fi
     for tok in "${tokens[@]}"; do
       if [[ ! "$tok" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
         echo "Warning: CLAUDE_REQUIRED_SKILLS token '$tok' rejected (allowed chars: A-Z a-z 0-9 . _ : / -); using defaults" >&2
@@ -247,12 +266,6 @@ resolve_required_skills() {
         return 0
       fi
     done
-    if [[ ${#tokens[@]} -eq 0 ]]; then
-      echo "Warning: CLAUDE_REQUIRED_SKILLS contains no skill tokens; using defaults" >&2
-      local IFS=' '
-      printf '%s' "${__DEFAULT_REQUIRED_SKILLS[*]}"
-      return 0
-    fi
     local IFS=' '
     printf '%s' "${tokens[*]}"
   else
@@ -273,6 +286,8 @@ check_skill_registry_in_output() {
   local missing=()
   local skill
   local flat
+  local spaced
+  local token_stream
   if [[ -z "$required" ]]; then
     return 0
   fi
@@ -282,8 +297,20 @@ check_skill_registry_in_output() {
   # space — a space breaks the literal match too) so wrapped identifiers still
   # match `grep -qF`.
   flat=$(printf '%s' "$output" | tr -d '\n')
+  spaced=$(printf '%s' "$output" | tr '\n' ' ')
+  # Match exact command/skill tokens instead of substrings so
+  # `harness:tdd-implementation` does not satisfy `harness:tdd-implement`.
+  # `/help` commonly renders slash commands with a leading "/" while required
+  # skills are configured without it, so accept either exact token form.
+  token_stream=$(
+    {
+      printf '%s\n' "$spaced"
+      printf '%s\n' "$flat"
+    } | tr -cs 'A-Za-z0-9._:/-' '\n'
+  )
   for skill in $required; do
-    if ! printf '%s' "$flat" | grep -qF -- "$skill"; then
+    if ! printf '%s\n' "$token_stream" | grep -qxF -- "$skill" &&
+       ! printf '%s\n' "$token_stream" | grep -qxF -- "/$skill"; then
       missing+=("$skill")
     fi
   done
@@ -573,7 +600,18 @@ resolve_tmux_env_args() {
   local keys=("CLAUDE_ONESHOT_LOG_DIR")
   local extra_keys=()
   if [[ -n "${TMUX_PASS_ENV:-}" ]]; then
-    read -r -a extra_keys <<< "${TMUX_PASS_ENV}"
+    local had_noglob=0
+    case "$-" in
+      *f*) had_noglob=1 ;;
+    esac
+    set -f
+    local extra_key
+    for extra_key in $TMUX_PASS_ENV; do
+      extra_keys+=("$extra_key")
+    done
+    if [[ "$had_noglob" -eq 0 ]]; then
+      set +f
+    fi
   fi
   local key
   for key in "${extra_keys[@]+"${extra_keys[@]}"}"; do

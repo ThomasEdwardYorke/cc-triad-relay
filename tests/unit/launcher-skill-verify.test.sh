@@ -153,10 +153,8 @@ unset rc out wrapped
 out=$(check_skill_registry_in_output \
   "harness:tdd-implementation typo only" \
   "harness:tdd-implement" 2>&1) && rc=0 || rc=$?
-# 注: 現行 grep -F substring 一致では implementation も match する.
-# このテストは false-positive を明示的に記録し、将来 word-boundary 化する際の
-# regression guard とする (現状は意図的に loose 一致).
-assert_rc "1f substring match accepts longer word (documented behavior)" "0" "$rc"
+assert_rc "1f longer token does not satisfy required skill" "1" "$rc"
+assert_contains "1f missing skill listed despite longer token" "harness:tdd-implement" "$out"
 unset rc out
 
 echo
@@ -204,16 +202,14 @@ assert_contains "2f glob token rejected, falls back to defaults" "harness:tdd-im
 assert_not_contains "2f glob token does not expand repository filenames" "CHANGELOG.md" "$out"
 unset CLAUDE_REQUIRED_SKILLS out
 
-# 2g: bash versions may return non-zero when `read -a` sees separators but no
-# token. With `set -e` active, that must still fall through to the empty-token
-# fallback instead of terminating the launcher/test process.
+# 2g: whitespace-only input must fall through to the empty-token fallback even
+# with `set -e` active.
 out=$(
-  read() { return 1; }
   export CLAUDE_REQUIRED_SKILLS='   '
   set -e
   resolve_required_skills 2>/dev/null
 )
-assert_contains "2g read failure falls back under set -e" "harness:tdd-implement" "$out"
+assert_contains "2g whitespace-only falls back under set -e" "harness:tdd-implement" "$out"
 unset out
 
 echo
@@ -313,16 +309,14 @@ unset out rc
 out=$(
   {
     probe_skill_registry() {
-      case "$2" in
-        a|b)
-          sleep 2
-          printf 'missing-skill\n'
-          return 1
-          ;;
-        c)
-          return 0
-          ;;
-      esac
+      if [[ "$2" == "a" || "$2" == "b" ]]; then
+        sleep 2
+        printf 'missing-skill\n'
+        return 1
+      fi
+      if [[ "$2" == "c" ]]; then
+        return 0
+      fi
     }
     escalate_blocked_to_slug() {
       sleep 1
@@ -357,11 +351,13 @@ echo "=== Test 6: probe_skill_registry tmux capture failure ==="
 # 6a: capture-pane failure must be surfaced as rc=2, not as missing skills.
 out=$(
   tmux() {
-    case "$1" in
-      send-keys|clear-history) return 0 ;;
-      capture-pane) return 99 ;;
-      *) return 0 ;;
-    esac
+    if [[ "$1" == "send-keys" || "$1" == "clear-history" ]]; then
+      return 0
+    fi
+    if [[ "$1" == "capture-pane" ]]; then
+      return 99
+    fi
+    return 0
   }
   probe_skill_registry "session" "alpha" "harness:tdd-implement" 1
 ) && rc=0 || rc=$?
@@ -373,21 +369,20 @@ unset out rc
 out=$(
   capture_count=0
   tmux() {
-    case "$1" in
-      send-keys) return 0 ;;
-      clear-history) return 0 ;;
-      capture-pane)
-        capture_count=$((capture_count + 1))
-        if [[ "$capture_count" -eq 1 ]]; then
-          printf 'stale prior pane says harness:tdd-implement\n'
-        else
-          printf 'stale prior pane says harness:tdd-implement\n'
-          printf 'fresh help output without loaded skill\n'
-        fi
-        return 0
-        ;;
-      *) return 0 ;;
-    esac
+    if [[ "$1" == "send-keys" || "$1" == "clear-history" ]]; then
+      return 0
+    fi
+    if [[ "$1" == "capture-pane" ]]; then
+      capture_count=$((capture_count + 1))
+      if [[ "$capture_count" -eq 1 ]]; then
+        printf 'stale prior pane says harness:tdd-implement\n'
+      else
+        printf 'stale prior pane says harness:tdd-implement\n'
+        printf 'fresh help output without loaded skill\n'
+      fi
+      return 0
+    fi
+    return 0
   }
   probe_skill_registry "session" "alpha" "harness:tdd-implement" 1
 ) && rc=0 || rc=$?
@@ -402,21 +397,20 @@ out=$(
   printf '0' > "$count_file"
   sleep() { :; }
   tmux() {
-    case "$1" in
-      send-keys) return 0 ;;
-      clear-history) return 0 ;;
-      capture-pane)
-        local capture_count
-        capture_count="$(cat "$count_file")"
-        capture_count=$((capture_count + 1))
-        printf '%s' "$capture_count" > "$count_file"
-        if [[ "$capture_count" -gt 1 ]]; then
-          printf 'harness:tdd-implement harness:codex-sync harness:pseudo-coderabbit-loop harness:coderabbit-review harness:codex-team harness:session-handoff\n'
-        fi
-        return 0
-        ;;
-      *) return 0 ;;
-    esac
+    if [[ "$1" == "send-keys" || "$1" == "clear-history" ]]; then
+      return 0
+    fi
+    if [[ "$1" == "capture-pane" ]]; then
+      local capture_count
+      capture_count="$(cat "$count_file")"
+      capture_count=$((capture_count + 1))
+      printf '%s' "$capture_count" > "$count_file"
+      if [[ "$capture_count" -gt 1 ]]; then
+        printf 'harness:tdd-implement harness:codex-sync harness:pseudo-coderabbit-loop harness:coderabbit-review harness:codex-team harness:session-handoff\n'
+      fi
+      return 0
+    fi
+    return 0
   }
   probe_rc=0
   CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS=0 probe_skill_registry "session" "alpha" || probe_rc=$?
