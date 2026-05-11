@@ -7,6 +7,7 @@
 | `worker`     | Implement → self-review → verify → commit | Read, Write, Edit, Bash |
 | `reviewer`   | Read-only multi-angle review (code, plan, scope) | Read, Grep, Glob |
 | `scaffolder` | Docs, state sync, project analysis | Read, Write, Edit, Bash |
+| `context-audit-agent` | Read-only context-budget audit (size / dead-link / committed entry point) | Read, Glob, Grep |
 
 ## Helpers
 
@@ -21,6 +22,7 @@
 - You want to **change code**: `worker`
 - You want a **second opinion**: `reviewer`
 - You want to **update docs / config / state**: `scaffolder`
+- You want a **read-only context budget audit**: `context-audit-agent`
 - You want a **security-only pass**: `security-auditor`
 - You want **Codex to do the work synchronously**: `codex-sync`
 - You want a **CodeRabbit-style pre-review locally** (rate-limit hedge): `coderabbit-mimic` (typically via `/pseudo-coderabbit-loop`)
