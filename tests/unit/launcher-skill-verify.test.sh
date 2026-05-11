@@ -270,6 +270,31 @@ assert_not_contains "4b no worker skipped before probe" "SKIPPED" "$out"
 assert_not_contains "4b no false BLOCKED escalation" "escalated:" "$out"
 unset out rc
 
+# 4c: timeout=0 is an operator mistake; normalize it instead of letting
+# MAX_WAIT skip every worker before one registry probe.
+out=$(
+  {
+    probe_skill_registry() {
+      printf 'probed:%s\n' "$2"
+      return 0
+    }
+    escalate_blocked_to_slug() {
+      printf 'escalated:%s\n' "$2"
+    }
+    CLAUDE_OVERLAY_LOAD_VERIFY=1 \
+    CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS=0 \
+    CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=0 \
+    CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS=0 \
+      wait_for_all_workers_ready "session" "a" "b" "c"
+  } 2>&1
+) && rc=0 || rc=$?
+assert_rc "4c zero timeout is normalized → rc=0" "0" "$rc"
+assert_contains "4c first worker was probed" "probing skill registry for 'a'" "$out"
+assert_contains "4c final worker was probed" "probing skill registry for 'c'" "$out"
+assert_not_contains "4c no worker skipped before probe" "SKIPPED" "$out"
+assert_not_contains "4c no false BLOCKED escalation" "escalated:" "$out"
+unset out rc
+
 echo
 echo "=== Test 5: cmd_verify validates session arg ==="
 

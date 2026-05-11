@@ -148,7 +148,7 @@ Env vars:
   CLAUDE_OVERLAY_LOAD_VERIFY              (default 1; set 0 to skip wait+verify, e.g. mock-claude tests)
   CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS    (default 5; baseline sleep after spawn before any probe)
   CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS    (default 20; total wait budget, auto-raised to cover every worker probe)
-  CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS     (default 12; max wait for /help probe output to populate)
+  CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS     (default 12; max wait for /help probe output to populate, minimum 2)
   CLAUDE_SKILL_VERIFY_ESCALATE            (default 1; set 0 to skip BLOCKED prompt injection on failure)
   CLAUDE_REQUIRED_SKILLS                  (default 6 harness skills; whitespace-separated list)
 
@@ -459,13 +459,17 @@ wait_for_all_workers_ready() {
     echo "Warning: CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS must be integer; defaulting to 12" >&2
     probe_timeout=12
   fi
+  local probe_poll_interval=2
+  if [[ "$probe_timeout" -lt "$probe_poll_interval" ]]; then
+    echo "Warning: CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS=$probe_timeout < poll interval ${probe_poll_interval}; raising to ${probe_poll_interval}" >&2
+    probe_timeout=$probe_poll_interval
+  fi
   # Adversarial review fix (enforce MAX_WAIT_SECONDS without false-skipping
   # later workers): probe_skill_registry polls in 2s chunks, so a timeout of 1
   # still spends up to 2 real seconds. max_wait must cover the baseline plus
   # one real probe ceiling per slug. If the operator set max_wait too low, raise
   # it so every worker receives at least one probe before any MAX_WAIT branch
   # can fire.
-  local probe_poll_interval=2
   local probe_budget=0
   if [[ "$probe_timeout" -gt 0 ]]; then
     probe_budget=$(( ((probe_timeout + probe_poll_interval - 1) / probe_poll_interval) * probe_poll_interval ))

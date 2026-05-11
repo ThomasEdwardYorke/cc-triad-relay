@@ -278,7 +278,7 @@ with `harness skill registry not loaded` 1 turn later.
 | stage | name | mechanism | env override |
 |---|---|---|---|
 | 1 | baseline sleep | wait for overlay registration | `CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS` (default 5) |
-| 2 | skill registry probe | `tmux send-keys /help` + `capture-pane` scan for 6 required skills | `CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS` (default 12) |
+| 2 | skill registry probe | `tmux send-keys /help` + `capture-pane` scan for 6 required skills | `CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS` (default 12, minimum 2) |
 | 3 | escalate BLOCKED | inject 8-field BLOCKED final report prompt on probe failure | `CLAUDE_SKILL_VERIFY_ESCALATE` (default 1) |
 | 4 | operator repush | `/parallel-worktree-v2 verify` subcommand re-runs Stages 2-3 on a live session | n/a |
 
