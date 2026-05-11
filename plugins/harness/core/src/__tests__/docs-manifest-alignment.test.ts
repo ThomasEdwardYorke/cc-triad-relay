@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -38,7 +38,7 @@ function listSkillNames(root: string): string[] {
 }
 
 function manifestBasenames(paths: string[]): string[] {
-  return paths.map((path) => path.replace(/^\.\/[^/]+\//, "").replace(/\.md$/, ""));
+  return paths.map((path) => basename(path, ".md"));
 }
 
 function extractSection(content: string, heading: string): string {
@@ -49,6 +49,41 @@ function extractSection(content: string, heading: string): string {
 
   const next = content.indexOf("\n### ", start + heading.length);
   return next === -1 ? content.slice(start) : content.slice(start, next);
+}
+
+function extractRange(content: string, startMarker: string, endMarker: string): string {
+  const start = content.indexOf(startMarker);
+  if (start === -1) {
+    throw new Error(`Start marker not found: ${startMarker}`);
+  }
+
+  const end = content.indexOf(endMarker, start + startMarker.length);
+  if (end === -1) {
+    throw new Error(`End marker not found: ${endMarker}`);
+  }
+
+  return content.slice(start, end);
+}
+
+function extractBacktickNames(content: string): string[] {
+  return [...content.matchAll(/`([^`]+)`/g)].map((match) => match[1]).sort();
+}
+
+function extractBacktickNamesFromSentence(content: string, marker: string): string[] {
+  const start = content.indexOf(marker);
+  if (start === -1) {
+    throw new Error(`Marker not found: ${marker}`);
+  }
+
+  const end = content.indexOf(".", start);
+  const sentence = end === -1 ? content.slice(start) : content.slice(start, end);
+  return extractBacktickNames(sentence);
+}
+
+function extractTableBacktickNames(content: string, prefix = ""): string[] {
+  return [...content.matchAll(/^\|\s*`([^`]+)`\s*\|/gm)]
+    .map((match) => match[1].replace(prefix, ""))
+    .sort();
 }
 
 describe("public docs stay aligned with plugin manifests", () => {
@@ -68,11 +103,17 @@ describe("public docs stay aligned with plugin manifests", () => {
 
   it("docs/en/commands.md declares command counts from plugin.json", () => {
     const commandsDoc = readRepoFile("docs/en/commands.md");
+    const commandListSection = extractRange(
+      commandsDoc,
+      "## Verb skills",
+      "## `/harness-work` auto-mode detection",
+    );
 
     expect(commandsDoc).toContain(
       `The harness ships ${commandNames.length} commands: ${verbCount} verb skills`,
     );
     expect(commandsDoc).toContain(`plus ${workflowCount} workflow skills`);
+    expect(extractTableBacktickNames(commandListSection, "/")).toEqual(commandNames);
 
     for (const commandName of commandNames) {
       expect(commandsDoc, `missing /${commandName}`).toContain(
@@ -98,6 +139,11 @@ describe("public docs stay aligned with plugin manifests", () => {
     const readme = readRepoFile("README.md");
     const codexSection = extractSection(readme, "### Codex local adapter");
 
+    expect(extractBacktickNamesFromSentence(
+      codexSection,
+      "Current Codex skills are",
+    )).toEqual(codexSkillNames);
+
     for (const skillName of codexSkillNames) {
       expect(codexSection, `missing Codex skill ${skillName}`).toContain(
         `\`${skillName}\``,
@@ -108,6 +154,9 @@ describe("public docs stay aligned with plugin manifests", () => {
   it("agent docs and architecture mention manifest counts and agents", () => {
     const agentsDoc = readRepoFile("docs/en/agents.md");
     const architectureDoc = readRepoFile("docs/en/architecture.md");
+    const japaneseArchitectureDoc = readRepoFile("docs/ja/architecture.md");
+
+    expect(extractTableBacktickNames(agentsDoc)).toEqual(agentNames);
 
     for (const agentName of agentNames) {
       expect(agentsDoc, `docs/en/agents.md missing ${agentName}`).toContain(
@@ -123,6 +172,42 @@ describe("public docs stay aligned with plugin manifests", () => {
     );
     expect(architectureDoc).toContain(
       `**Agents** — ${agentNames.length} specialised agents`,
+    );
+    expect(japaneseArchitectureDoc).toContain(
+      `**スキル** — ${commandNames.length} コマンド: ${verbCount} 動詞コマンド`,
+    );
+    expect(japaneseArchitectureDoc).toContain(
+      `と ${workflowCount} workflow コマンド`,
+    );
+    expect(japaneseArchitectureDoc).toContain(
+      `**エージェント** — ${agentNames.length} エージェント`,
+    );
+  });
+
+  it(".coderabbit.yaml review guidance declares manifest-derived counts", () => {
+    const coderabbitYaml = readRepoFile(".coderabbit.yaml");
+    const hookEvents = Object.keys(hooksJson.hooks).sort();
+
+    expect(coderabbitYaml).toContain(
+      `# agents frontmatter (plugin-scoped subagent ${agentNames.length} 件)`,
+    );
+    expect(coderabbitYaml).toContain(
+      `# commands (${verbCount} verb skills + ${workflowCount} workflow skills = ${commandNames.length} commands)`,
+    );
+    expect(coderabbitYaml).toContain(
+      `# hooks.json (${hookEventCount} lifecycle events)`,
+    );
+    expect(coderabbitYaml).toContain(`現在登録済 ${hookEventCount} events:`);
+
+    for (const hookEvent of hookEvents) {
+      expect(coderabbitYaml, `.coderabbit.yaml missing ${hookEvent}`).toContain(
+        `\`${hookEvent}\``,
+      );
+    }
+
+    expect(coderabbitYaml).toContain(`e.g. "${commandNames.length} commands"`);
+    expect(coderabbitYaml).toContain(
+      `e.g. "${hookEventCount} lifecycle hook events"`,
     );
   });
 });
