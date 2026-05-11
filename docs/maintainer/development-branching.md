@@ -92,12 +92,40 @@ Recommended repository settings:
 
 ## Cleanup
 
-After a feature PR is merged into `dev`, delete the feature branch locally and remotely:
+After a feature PR is merged into `dev`, delete the local feature branch:
 
 ```bash
 git branch -d feature/<short-slug>
+```
+
+Remote branch deletion is a separate cleanup step. Run it during release
+cleanup, or earlier only when the branch is explicitly safe to remove:
+
+```bash
 git push origin --delete feature/<short-slug>
 git fetch origin --prune
 ```
 
-Only delete remote branches after checking that no open PR uses them.
+Only delete a remote branch after checking that all of these remote-deletion gates pass:
+
+- no open PR uses the branch;
+- no closed-but-unmerged PR still points at the current branch head;
+- the branch head is contained in `origin/dev`, or the branch was explicitly superseded;
+- the branch head is contained in `origin/main` before release cleanup;
+- no release dependency, rollback note, or maintainer audit asks to retain it.
+
+## Remote Branch Cleanup Audit
+
+### 2026-05-12 - Historical model branches
+
+Audit command set: `git fetch origin --prune`, `git ls-remote --heads`,
+`gh pr list --state all`, `git branch -r --contains`, and
+`git log --left-right --cherry-pick`.
+
+| Branch | Head | PR evidence | Merge-containment evidence | Decision |
+| --- | --- | --- | --- | --- |
+| `feature/model-b-evolution` | `51df84a` | PR #17 is closed without merge at this head; older PR #1 and PR #2 were merged at earlier heads. | Branch head is not contained in `origin/dev` or `origin/main`; one unique commit remains versus `origin/dev`. | retain; not deleted. |
+| `feature/model-registry` | `f5d43a1` | No open PR was found in the checked PR list. | Branch head is not contained in `origin/dev` or `origin/main`; 9 unique commits remain versus `origin/dev`. | retain; not deleted. |
+
+No remote branches were deleted in this audit because both targets still fail
+the no-unmerged-work gate.
