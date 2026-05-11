@@ -290,7 +290,8 @@ Defaults:
 - `CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=20` — total launch wait budget for
   Stage 1+2. If it is lower than
   `MIN_WAIT + ceil(VERIFY_TIMEOUT / 2s_poll_interval) * 2s * worker_count`,
-  the launcher raises it so every worker receives at least one registry probe
+  plus the 1s escalation delay per worker when escalation is enabled, the
+  launcher raises it so every worker receives at least one registry probe
   before any MAX_WAIT skip.
 - `CLAUDE_REQUIRED_SKILLS` — whitespace-separated list of skill identifiers
   the probe demands. Default is the 6 harness Phase-1-to-7 skills:

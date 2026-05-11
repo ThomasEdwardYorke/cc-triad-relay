@@ -295,6 +295,41 @@ assert_not_contains "4c no worker skipped before probe" "SKIPPED" "$out"
 assert_not_contains "4c no false BLOCKED escalation" "escalated:" "$out"
 unset out rc
 
+# 4d: failed early probes spend escalation time too. The launcher must still
+# probe later workers instead of letting escalation delay consume the pre-probe
+# MAX_WAIT guarantee.
+out=$(
+  {
+    probe_skill_registry() {
+      case "$2" in
+        a|b)
+          sleep 2
+          printf 'missing-skill\n'
+          return 1
+          ;;
+        c)
+          return 0
+          ;;
+      esac
+    }
+    escalate_blocked_to_slug() {
+      sleep 1
+      printf 'escalated:%s\n' "$2"
+    }
+    CLAUDE_OVERLAY_LOAD_VERIFY=1 \
+    CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS=0 \
+    CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=2 \
+    CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS=1 \
+      wait_for_all_workers_ready "session" "a" "b" "c"
+  } 2>&1
+) && rc=0 || rc=$?
+assert_rc "4d failed early probes still return failure → rc=1" "1" "$rc"
+assert_contains "4d final worker was still probed" "probing skill registry for 'c'" "$out"
+assert_contains "4d final worker can succeed" "'c' OK" "$out"
+assert_not_contains "4d final worker was not skipped" "'c' SKIPPED" "$out"
+assert_not_contains "4d no false escalation for final worker" "escalated:c" "$out"
+unset out rc
+
 echo
 echo "=== Test 5: cmd_verify validates session arg ==="
 
@@ -346,6 +381,41 @@ out=$(
 ) && rc=0 || rc=$?
 assert_rc "6b stale visible pane is excluded before scan → rc=1" "1" "$rc"
 assert_contains "6b reports missing skill from fresh output" "harness:tdd-implement" "$out"
+unset out rc
+
+# 6c: direct probe / cmd_verify path also normalizes timeout=0 to the poll
+# interval, otherwise the loop does not capture any fresh /help output.
+out=$(
+  count_file="$(mktemp)"
+  printf '0' > "$count_file"
+  sleep() { :; }
+  tmux() {
+    case "$1" in
+      send-keys) return 0 ;;
+      clear-history) return 0 ;;
+      capture-pane)
+        local capture_count
+        capture_count="$(cat "$count_file")"
+        capture_count=$((capture_count + 1))
+        printf '%s' "$capture_count" > "$count_file"
+        if [[ "$capture_count" -gt 1 ]]; then
+          printf 'harness:tdd-implement harness:codex-sync harness:pseudo-coderabbit-loop harness:coderabbit-review harness:codex-team harness:session-handoff\n'
+        fi
+        return 0
+        ;;
+      *) return 0 ;;
+    esac
+  }
+  probe_rc=0
+  CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS=0 probe_skill_registry "session" "alpha" || probe_rc=$?
+  printf 'probe_rc=%s\n' "$probe_rc"
+  printf 'capture_count=%s\n' "$(cat "$count_file")"
+  rm -f "$count_file"
+  exit "$probe_rc"
+) && rc=0 || rc=$?
+assert_rc "6c direct probe zero timeout is normalized → rc=0" "0" "$rc"
+assert_contains "6c direct probe returned zero" "probe_rc=0" "$out"
+assert_contains "6c direct probe captured fresh output" "capture_count=2" "$out"
 unset out rc
 
 echo

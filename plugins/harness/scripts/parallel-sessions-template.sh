@@ -344,6 +344,11 @@ probe_skill_registry() {
     echo "Warning: CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS='$timeout' is not an integer; defaulting to 12" >&2
     timeout=12
   fi
+  local poll_interval=2
+  if [[ "$timeout" -lt "$poll_interval" ]]; then
+    echo "Warning: CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS='$timeout' < poll interval ${poll_interval}; raising to ${poll_interval}" >&2
+    timeout=$poll_interval
+  fi
 
   local before_output
   if ! before_output=$(tmux capture-pane -t "${session}:${slug}" -p 2>/dev/null); then
@@ -474,9 +479,13 @@ wait_for_all_workers_ready() {
   if [[ "$probe_timeout" -gt 0 ]]; then
     probe_budget=$(( ((probe_timeout + probe_poll_interval - 1) / probe_poll_interval) * probe_poll_interval ))
   fi
-  local required_max=$((min_wait + probe_budget * ${#slugs[@]}))
+  local escalation_budget=0
+  if [[ "${CLAUDE_SKILL_VERIFY_ESCALATE:-1}" == "1" ]]; then
+    escalation_budget=1
+  fi
+  local required_max=$((min_wait + (probe_budget + escalation_budget) * ${#slugs[@]}))
   if [[ "$max_wait" -lt "$required_max" ]]; then
-    echo "Warning: CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=$max_wait < (MIN_WAIT $min_wait + PROBE_BUDGET $probe_budget * WORKERS ${#slugs[@]}); raising to $required_max" >&2
+    echo "Warning: CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=$max_wait < (MIN_WAIT $min_wait + (PROBE_BUDGET $probe_budget + ESCALATION_BUDGET $escalation_budget) * WORKERS ${#slugs[@]}); raising to $required_max" >&2
     max_wait=$required_max
   fi
 
