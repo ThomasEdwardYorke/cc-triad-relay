@@ -195,6 +195,11 @@ async function main() {
     CLAUDE_BIN: mockClaude,
     CLAUDE_ONESHOT_LOG_DIR: logDir,
     CLAUDE_PERMISSION_MODE: "acceptEdits",
+    // mock-claude.sh は events 出力後即 exit するため REPL prompt を持たず、
+    // `/help` プローブにも応答できない. cmd_start 内の skill-registry verify
+    // を opt-out して mock fixture と互換を維持する.
+    // 実 claude 経路では default ON で動作する (CLAUDE_OVERLAY_LOAD_VERIFY 未設定).
+    CLAUDE_OVERLAY_LOAD_VERIFY: "0",
   };
   delete env.TMUX;
   delete env.TMUX_PANE;

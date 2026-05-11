@@ -158,6 +158,10 @@ Fields specific to v2:
 `--max-parallel=N` caps concurrent tmux windows (default = number of
 sub-tasks). When N is below the sub-task count, the coordinator dispatches
 the remaining sub-tasks as earlier windows finish (semaphore-style).
+Slug values must match `^[A-Za-z_][A-Za-z0-9_-]*$`; dots are intentionally
+rejected because tmux target syntax treats `.` as the window/pane separator,
+and leading digits are rejected because tmux tries numeric window indexes
+before exact window names.
 
 ### Subcommands
 
@@ -165,6 +169,27 @@ the remaining sub-tasks as earlier windows finish (semaphore-style).
 /parallel-worktree-v2 status            # phase / latest commit / status per window
 /parallel-worktree-v2 attach <slug>     # tmux attach to the window for <slug>
 /parallel-worktree-v2 stop [--rollback] # stop all sessions; --rollback also removes worktrees
+/parallel-worktree-v2 verify [<slug>...] # re-run skill-registry probe + escalate
+```
+
+The `verify` subcommand re-runs the harness skill-registry probe against a
+running tmux session and re-injects the 8-field BLOCKED escalation prompt
+into any worker whose registry is incomplete. This is the operator-driven
+**repush path** for the overlay-load race (see Phase 0 + Phase 1
+Skill registry verify section below).
+
+Example invocations:
+
+```bash
+# probe every non-coordinator window in the session
+./plugins/harness/scripts/parallel-sessions-template.sh verify harness-parallel
+
+# probe a specific subset of slugs
+./plugins/harness/scripts/parallel-sessions-template.sh verify harness-parallel frontend backend
+
+# probe + escalate, but skip the BLOCKED-prompt injection
+CLAUDE_SKILL_VERIFY_ESCALATE=0 \
+  ./plugins/harness/scripts/parallel-sessions-template.sh verify harness-parallel
 ```
 
 ---
@@ -237,6 +262,50 @@ binaries.
 Default layout is **one window per worktree** (`tmux select-window` to
 switch). When the operator wants to view all worktrees side-by-side, set
 `tmux_pane_layout: "tiled"` to split a single window into N tiled panes.
+
+### Skill-registry verify (overlay-load race guard, 4-stage)
+
+After spawning each worker `claude` process, the launcher waits for the
+user-level overlay (`~/.claude/`) skill catalog to register inside the new
+REPL and then probes each worker before returning control to the
+coordinator. This closes the **overlay-load race** (observed empirically as
+4-worker simultaneous BLOCK across consecutive parallel batches in consumer
+deployments) where the coordinator's `/tdd-implement` prompt arrived in the
+worker REPL *before* the overlay loaded, causing the typeahead to
+mis-classify the slash command as plain text and every worker to BLOCK
+with `harness skill registry not loaded` 1 turn later.
+
+| stage | name | mechanism | env override |
+|---|---|---|---|
+| 1 | baseline sleep | wait for overlay registration | `CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS` (default 5) |
+| 2 | skill registry probe | `tmux send-keys /help` + `capture-pane` scan for 6 required skills | `CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS` (default 12, minimum 2) |
+| 3 | escalate BLOCKED | inject 8-field BLOCKED final report prompt on probe failure | `CLAUDE_SKILL_VERIFY_ESCALATE` (default 1) |
+| 4 | operator repush | `/parallel-worktree-v2 verify` subcommand re-runs Stages 2-3 on a live session | n/a |
+
+Defaults:
+
+- `CLAUDE_OVERLAY_LOAD_VERIFY=1` — set `0` to skip Stages 1-3 entirely (used
+  by mock-claude e2e fixture and any non-interactive test path where the
+  per-window binary cannot service `/help`).
+- `CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=20` — total launch wait budget for
+  Stage 1+2. If it is lower than
+  `MIN_WAIT + ceil(VERIFY_TIMEOUT / 2s_poll_interval) * 2s * worker_count`,
+  plus the 1s escalation delay per worker when escalation is enabled, the
+  launcher raises it so every worker receives at least one registry probe
+  before any MAX_WAIT skip.
+- `CLAUDE_REQUIRED_SKILLS` — whitespace-separated list of skill identifiers
+  the probe demands. Default is the 6 harness Phase-1-to-7 skills:
+  `harness:tdd-implement harness:codex-sync harness:pseudo-coderabbit-loop`
+  `harness:coderabbit-review harness:codex-team harness:session-handoff`.
+
+The injected prompt itself is delivered as one `tmux send-keys` submission, but
+it instructs the worker to return the canonical 8-field final report as
+newline-separated fields (`STATUS: BLOCKED`, `CHANGED_FILES: (none)`,
+`COMMIT: (none)`, ... `FORBIDDEN_ACTIONS_USED: no`). The coordinator side of
+`/parallel-worktree-v2` parses the failed-slug list from launcher stderr and
+routes those slugs into the **coordinator-takeover regime** by spawning a
+parallel `general-purpose` Agent fan-out instead of waiting for the BLOCKED
+worker final.
 
 ---
 

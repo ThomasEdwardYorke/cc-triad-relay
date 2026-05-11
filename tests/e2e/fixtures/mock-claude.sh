@@ -82,21 +82,11 @@ fi
 # SLUG flows directly into LOG_FILE (${LOG_DIR}/claude-log-${SLUG}.jsonl) so
 # any value that contains a path separator or `..` could escape LOG_DIR and
 # overwrite arbitrary files. Mirror parallel-sessions-template.sh
-# `validate_identifier` (which accepts dots so callers can use slugs like
-# `api.v2`) but additionally reject `..` (parent-directory escape) and a
-# leading `.` (hidden-file alias) — the launcher tolerates those patterns
-# in its own validator but they would still escape the LOG_DIR boundary if
-# interpolated into LOG_FILE.
-if [[ ! "$SLUG" =~ ^[A-Za-z0-9._-]+$ ]]; then
-  echo "mock-claude: invalid -n <slug>='$SLUG' (must match [A-Za-z0-9._-]+)" >&2
-  exit 2
-fi
-if [[ "$SLUG" == *..* ]]; then
-  echo "mock-claude: invalid -n <slug>='$SLUG' (must not contain '..')" >&2
-  exit 2
-fi
-if [[ "$SLUG" == .* ]]; then
-  echo "mock-claude: invalid -n <slug>='$SLUG' (must not start with '.')" >&2
+# `validate_slug`: dots are rejected because tmux target syntax treats them
+# as pane separators, and leading digits are rejected because tmux tries
+# numeric window indexes before exact names.
+if [[ ! "$SLUG" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]; then
+  echo "mock-claude: invalid -n <slug>='$SLUG' (must match [A-Za-z_][A-Za-z0-9_-]*)" >&2
   exit 2
 fi
 

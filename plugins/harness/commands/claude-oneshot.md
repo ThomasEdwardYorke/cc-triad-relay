@@ -65,7 +65,8 @@ The skill resolves into a single `claude -p` invocation, redirected to the per-s
 ```bash
 LOG_DIR="${CLAUDE_ONESHOT_LOG_DIR:-/tmp}"
 mkdir -p "$LOG_DIR"
-SAFE_SLUG="$(printf '%s' "$SLUG" | tr -cs 'A-Za-z0-9._-' '-')"
+SAFE_SLUG="$(printf '%s' "$SLUG" | tr -cs 'A-Za-z0-9_-' '-')"
+SAFE_SLUG="$(printf '%s' "$SAFE_SLUG" | sed -E 's/^[0-9-]+/slug-/')"
 LOG_FILE="$LOG_DIR/claude-log-${SAFE_SLUG}.jsonl"
 claude -p "<instruction>" \
   --output-format <stream-json|json|text> \
@@ -89,4 +90,4 @@ The wrapper is intentionally thin: it does not enforce TDD, Phase 5.5/6/7 qualit
 - Compatible with Claude Code 2.1.49+ (`claude -p`, `--output-format stream-json`, `--permission-mode`).
 - For non-trivial work, the launched session itself should call `/tdd-implement`, `/pseudo-coderabbit-loop`, `/coderabbit-review`, and `/codex-team` to satisfy the harness AND-judgment quality gate. The wrapper does not know which of those are required.
 - The log file is overwrite-mode: re-running with the same `--slug` replaces the previous log unless `CLAUDE_ONESHOT_LOG_DIR` is paired with external rotation (logrotate / per-run timestamped sub-dirs).
-- **Slug must be a filesystem-safe identifier**. The wrapper concatenates `<slug>` directly into the log file path (`<LOG_DIR>/claude-log-<slug>.jsonl`). The launched skill MUST validate `<slug>` to match the pattern `^[a-zA-Z0-9._-]+$` *before* invoking this wrapper — otherwise a malicious or malformed slug containing `..`, `/`, or shell metacharacters can redirect log writes to unintended paths or break out of the surrounding shell context. Reference: the equivalent `validate_identifier` regex in `scripts/parallel-sessions-template.sh` rejects the same pattern set; callers SHOULD reuse that contract.
+- **Slug must be a filesystem- and tmux-target-safe identifier**. The wrapper concatenates `<slug>` directly into the log file path (`<LOG_DIR>/claude-log-<slug>.jsonl`), and the tmux launcher targets windows as `<session>:<slug>`. The launched skill MUST validate `<slug>` to match the pattern `^[a-zA-Z_][a-zA-Z0-9_-]*$` *before* invoking this wrapper — otherwise a malicious or malformed slug containing `.`, `..`, `/`, a leading digit, or shell metacharacters can redirect log writes, break tmux target parsing, or break out of the surrounding shell context. Reference: the equivalent `validate_slug` regex in `scripts/parallel-sessions-template.sh`; callers SHOULD reuse that contract.
