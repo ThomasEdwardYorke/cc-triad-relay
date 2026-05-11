@@ -197,7 +197,7 @@ async function main() {
     CLAUDE_PERMISSION_MODE: "acceptEdits",
     // mock-claude.sh は events 出力後即 exit するため REPL prompt を持たず、
     // `/help` プローブにも応答できない. cmd_start 内の skill-registry verify
-    // (D-204 case A guard) を opt-out して mock fixture と互換を維持する.
+    // を opt-out して mock fixture と互換を維持する.
     // 実 claude 経路では default ON で動作する (CLAUDE_OVERLAY_LOAD_VERIFY 未設定).
     CLAUDE_OVERLAY_LOAD_VERIFY: "0",
   };
