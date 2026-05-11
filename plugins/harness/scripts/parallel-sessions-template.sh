@@ -635,8 +635,16 @@ cmd_verify() {
   for slug in "${slugs[@]}"; do
     echo "[verify] probing '$slug'..." >&2
     local missing
-    if missing=$(probe_skill_registry "$session" "$slug" 2>/dev/null); then
+    local probe_rc=0
+    missing=$(probe_skill_registry "$session" "$slug" 2>/dev/null) || probe_rc=$?
+    if [[ $probe_rc -eq 0 ]]; then
       echo "[verify] '$slug' OK"
+    elif [[ $probe_rc -eq 2 ]]; then
+      # Mirror wait_for_all_workers_ready: tmux capture/send failed → window
+      # is gone, escalation injection would silently no-op. Mark failed but do
+      # NOT attempt escalate.
+      echo "[verify] '$slug' UNREACHABLE - tmux capture/send failed (session/window gone?); skipping escalation" >&2
+      failed+=("$slug")
     else
       echo "[verify] '$slug' FAILED - missing: ${missing//$'\n'/ }" >&2
       failed+=("$slug")
