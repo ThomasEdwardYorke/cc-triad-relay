@@ -110,7 +110,7 @@ Subcommands:
            After spawn, waits for overlay (~/.claude/) skill load + probes the
            harness skill registry per slug, then sends a structured BLOCKED
            8-field escalation prompt to any window whose skill registry is
-           incomplete (D-204 case A guard). Disable per-session with
+           incomplete (overlay-load race guard). Disable per-session with
            CLAUDE_OVERLAY_LOAD_VERIFY=0.
   stop     Kill the tmux session (no worktree cleanup).
   status   Print tmux windows + per-worktree git log -1.
@@ -167,12 +167,14 @@ emit() {
   fi
 }
 
-# --- Skill-registry verify helpers (D-204 case A guard) -------------------
+# --- Skill-registry verify helpers (overlay-load race guard) --------------
 # 背景: parallel-worktree-v2 launcher が `claude -n <slug>` を spawn 直後に
 # coordinator が `/tdd-implement` を tmux send-keys しても、user-level overlay
 # (~/.claude/) の skill catalog が REPL runtime に load される前なら typeahead
-# が空判定し、slash command が plain prompt として送信される。これが累計 20
-# 件 critical mass + 3 連続再現性 (R17 batch 6/7/8) の D-204 case A の真因。
+# が空判定し、slash command が plain prompt として送信される。これが
+# overlay-load race (early-prompt misclassification) の真因で、observed in
+# multiple consumer deployments と consecutive parallel batches 4-worker 同時
+# BLOCK の empirical pattern として再現する.
 #
 # 対策 4 段階:
 #   Stage 1: baseline sleep (CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS) で overlay
@@ -217,11 +219,11 @@ check_skill_registry_in_output() {
   if [[ -z "$required" ]]; then
     return 0
   fi
-  # Codex Phase 4 review (Major #1): tmux capture-pane wraps long lines at the
-  # terminal width, which can split a skill identifier like
-  # `harness:tdd-implement` across a newline (e.g. `harness:\ntdd-implement`).
-  # Strip newlines entirely (NOT replace with space — a space breaks the
-  # literal match too) so wrapped identifiers still match `grep -qF`.
+  # tmux capture-pane wraps long lines at the terminal width, which can split
+  # a skill identifier like `harness:tdd-implement` across a newline (e.g.
+  # `harness:\ntdd-implement`). Strip newlines entirely (NOT replace with
+  # space — a space breaks the literal match too) so wrapped identifiers still
+  # match `grep -qF`.
   flat=$(printf '%s' "$output" | tr -d '\n')
   for skill in $required; do
     if ! printf '%s' "$flat" | grep -qF -- "$skill"; then
@@ -236,14 +238,14 @@ check_skill_registry_in_output() {
 }
 
 build_blocked_escalation_message() {
-  # D-204 case A 検出時の 8-section BLOCKED final report 文面を組み立てる.
+  # overlay-load race 検出時の 8-section BLOCKED final report 文面を組み立てる.
   # tmux send-keys で 1 prompt として injection するため改行禁止. delimiter
   # は `;` に統一.
   # Args: $1 = slug (worker 識別子)
   #       $2 = missing_skills (whitespace-separated single string)
   local slug="$1"
   local missing="$2"
-  printf 'OVERLAY_LOAD_TIMEOUT detected by launcher (D-204 case A) for slug=%s. ' "$slug"
+  printf 'OVERLAY_LOAD_TIMEOUT detected by launcher (overlay-load race) for slug=%s. ' "$slug"
   printf 'Required harness skills not loaded: [%s]. ' "$missing"
   printf 'STOP all work. Output the 8-field final report exactly as: '
   printf 'STATUS: BLOCKED; '
@@ -251,7 +253,7 @@ build_blocked_escalation_message() {
   printf 'COMMIT: (none); '
   printf 'PUSHED_BRANCH: (none); '
   printf 'VALIDATION: SKIPPED; '
-  printf 'BLOCKERS: harness overlay load timeout (D-204 case A) - skills missing [%s]; ' "$missing"
+  printf 'BLOCKERS: harness overlay load timeout (overlay-load race) - skills missing [%s]; ' "$missing"
   printf 'NEXT_ACTION: (escalate to coordinator for parallel-agent takeover); '
   printf 'FORBIDDEN_ACTIONS_USED: no.\n'
 }
@@ -306,11 +308,11 @@ escalate_blocked_to_slug() {
   sleep 1
   local msg
   msg=$(build_blocked_escalation_message "$slug" "$missing")
-  # Codex Phase 4 review (Major #3): use `--` to terminate option parsing so
-  # tmux never reinterprets a leading dash or future option-like prefix in
-  # `$msg` as a flag. The 8-section escalation message contains literal `;`
-  # delimiters which are safe inside the quoted arg, but `--` is the
-  # belt-and-suspenders guard across tmux versions.
+  # Use `--` to terminate option parsing so tmux never reinterprets a leading
+  # dash or future option-like prefix in `$msg` as a flag. The 8-section
+  # escalation message contains literal `;` delimiters which are safe inside
+  # the quoted arg, but `--` is the belt-and-suspenders guard across tmux
+  # versions.
   tmux send-keys -t "${session}:${slug}" -- "$msg" Enter 2>/dev/null || true
 }
 
@@ -472,7 +474,7 @@ cmd_start() {
   done
   emit "tmux select-window -t '$session':0"
 
-  # Skill-registry verify (D-204 case A guard). dry-run / opt-out では skip.
+  # Skill-registry verify (overlay-load race guard). dry-run / opt-out では skip.
   # Failure 時も非 fatal で進める (escalate prompt が tmux に注入済、operator が
   # `verify` subcommand で repush 可能). exit 0 を維持して既存の orchestrator
   # チェーンを壊さない設計.

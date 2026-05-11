@@ -171,7 +171,7 @@ the remaining sub-tasks as earlier windows finish (semaphore-style).
 The `verify` subcommand re-runs the harness skill-registry probe against a
 running tmux session and re-injects the 8-section BLOCKED escalation prompt
 into any worker whose registry is incomplete. This is the operator-driven
-**repush path** for the D-204 case A overlay-load race (see Phase 0 + Phase 1
+**repush path** for the overlay-load race (see Phase 0 + Phase 1
 Skill registry verify section below).
 
 Example invocations:
@@ -259,16 +259,17 @@ Default layout is **one window per worktree** (`tmux select-window` to
 switch). When the operator wants to view all worktrees side-by-side, set
 `tmux_pane_layout: "tiled"` to split a single window into N tiled panes.
 
-### Skill-registry verify (D-204 case A guard, 4-stage)
+### Skill-registry verify (overlay-load race guard, 4-stage)
 
 After spawning each worker `claude` process, the launcher waits for the
 user-level overlay (`~/.claude/`) skill catalog to register inside the new
 REPL and then probes each worker before returning control to the
-coordinator. This closes the **D-204 case A** race (累計 20 件 critical mass
-+ R17 batch 6/7/8 で 3 連続再現性) where the coordinator's `/tdd-implement`
-prompt arrived in the worker REPL *before* the overlay loaded, causing the
-typeahead to mis-classify the slash command as plain text and every worker
-to BLOCK with `harness skill registry not loaded` 1 turn later.
+coordinator. This closes the **overlay-load race** (observed empirically as
+4-worker simultaneous BLOCK across consecutive parallel batches in consumer
+deployments) where the coordinator's `/tdd-implement` prompt arrived in the
+worker REPL *before* the overlay loaded, causing the typeahead to
+mis-classify the slash command as plain text and every worker to BLOCK
+with `harness skill registry not loaded` 1 turn later.
 
 | stage | name | mechanism | env override |
 |---|---|---|---|
@@ -294,7 +295,7 @@ exactly matches the dispatcher's Step 5 8-field schema verifier (`STATUS:
 BLOCKED` + `CHANGED_FILES: (none)` + `COMMIT: (none)` + ... +
 `FORBIDDEN_ACTIONS_USED: no`). The coordinator side of `/parallel-worktree-v2`
 parses the failed-slug list from launcher stderr and routes those slugs
-into the **coordinator-takeover regime** (D-211) by spawning a parallel
+into the **coordinator-takeover regime** by spawning a parallel
 `general-purpose` Agent fan-out instead of waiting for the BLOCKED worker
 final.
 
