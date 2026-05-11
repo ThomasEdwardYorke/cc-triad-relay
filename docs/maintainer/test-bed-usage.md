@@ -56,6 +56,36 @@ Each item ported from test-bed to plugin:
 
 **Skill concurrent-invocation audit (2026-04-28)** — Test-bed validation: confirmed against the Anthropic official spec (`https://code.claude.com/docs/en/skills`, `https://code.claude.com/docs/en/sdk`) that no `--parallel=N` / `concurrency` skill frontmatter or documented multi-Skill concurrent-invoke mechanism exists. Reusable invariant extracted: the `/parallel-worktree` N-parallel Agent-tool fan-out pattern (Markdown coordinator + `harness:worker` agents launched via `run_in_background=true`, tracked through `TaskCreate`/`TaskUpdate`/`TaskList`) is harness-internal orchestration that is *spec-compliant at the Agent-tool level* but *not surfaced through any official Skill-level concurrency declaration*. R1/R2 judgment: **local-only** for the documentation file itself (`docs/maintainer/skill-parallelism.md` is a maintainer-zone artifact and stays in the harness repo); the upstream proposal draft is captured for future submission to `https://github.com/anthropics/claude-code/issues`. No new `generality.test.ts` assertion is added because the change ships only documentation + tests (no consumer-facing API).
 
+### 2026-05-12 — Historical Plans snapshot reconstruction
+
+- **Test-bed repo**: predecessor `script_generate` checkout
+- **Snapshot sources reviewed**:
+  - `.docs/claude-code-harness-main/Plans.md`
+  - `.docs/claude-code-harness-main 2/Plans.md`
+  - repo-root `Plans.md`
+- **Hypothesis**: The predecessor Plans files may contain still-useful harness invariants, but they must be triaged before any item enters the active cc-triad-relay backlog.
+- **Observed benefit**: The review separated completed or project-local historical work from the current maintainer queue, preventing obsolete v3/v25/v26 tasks from being reintroduced as active work.
+- **Reusable invariant extracted**:
+  - Keep the TypeScript core, declarative guardrails, and tested plugin surface as the maintained baseline.
+  - Keep branch safety as a repository invariant: normal work targets `dev` through short-lived feature branches; release PRs are the only route to `main`.
+  - Keep CodeRabbit and Codex review gates explicit in implementation, merge, and release flows.
+  - Keep Model B work measurable through dogfood evidence and release-readiness checks rather than by replaying old predecessor tasks.
+- **Rejected historical items**:
+  - v3 full rewrite task lists are historical; their durable parts already landed as the current TypeScript harness and tests.
+  - Phase 25 solo-mode PM framework tasks are predecessor-planning history, not active cc-triad-relay backlog.
+  - Phase 26 state-centered Project OS tasks are predecessor-planning history, not active cc-triad-relay backlog.
+  - script_generate prompt-generation backlog is business-specific and stays in that project.
+- **Retained actionable maintainer work**:
+  - Verify branch protection and release PR gates before exposing `dev` to `main`.
+  - Complete remote branch cleanup only after checking open PRs, branch heads, and unmerged work.
+  - Run Model B dogfood and metrics work as the next roadmap stage after repository hygiene is complete.
+- **Backlog handling**: Active task state remains in ignored `.docs/handoff/`; this tracked note records only sanitized triage evidence and durable maintainer decisions.
+- **Project-local assumptions rejected**: predecessor branch names, script-generation prompt files, model/provider tuning decisions, and domain-specific validation commands.
+- **Config knobs introduced in plugin**: none.
+- **generality.test.ts assertions added**: none; `historical-handoff-reconstruction.test.ts` guards the maintainer-note contract and roadmap status note.
+- **Decision**: `generalize-next`
+- **Follow-up issue**: `none`
+
 ---
 
 ## Rejected Cases

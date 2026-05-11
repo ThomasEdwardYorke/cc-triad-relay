@@ -7,6 +7,23 @@
 **発端プロジェクト (test-bed)**: `parts-management` (maintainer-side reference only)
 **関連 doc (test-bed side)**: `docs/harness-model-b-plan.md` (external, test-bed repo)
 
+## Status as of 2026-05-12
+
+This roadmap is historical plus forward-looking maintainer context. Do not start
+new work from `feature/model-b-evolution`; normal work starts from `dev` on a
+short-lived `feature/*` branch and merges back to `dev` before any release PR to
+`main`.
+
+Current state:
+
+- Phase 0 and Phase 1 are complete in the shipped harness.
+- Phase 2 infrastructure has landed as `/parallel-worktree-v2`, the tmux
+  template, session manager, and `/claude-oneshot`.
+- The active follow-up is Phase 3 dogfood and metrics, after repository hygiene
+  tasks such as remote branch cleanup are settled.
+- Historical predecessor Plans snapshots were triaged on 2026-05-12; see
+  `docs/maintainer/test-bed-usage.md` for the retained and rejected items.
+
 本 doc は cc-triad-relay plugin を Model A (coordinator + subagent) から
 Model B (各 worktree で独立 claude プロセス + 同一ハーネス) へ進化させる
 技術ロードマップ。**plugin 単体**の観点で必要な改修を記述。
