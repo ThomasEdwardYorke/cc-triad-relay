@@ -196,7 +196,21 @@ __DEFAULT_REQUIRED_SKILLS=(
 
 resolve_required_skills() {
   # Env override が設定済なら最優先. 未設定なら default 6 skill を返す.
+  # Adversarial review fix (token validation): reject control chars / shell
+  # metacharacters / whitespace within a single token so a poisoned env value
+  # cannot break the missing-skill output (which is whitespace-joined into the
+  # escalation prompt) or sneak past `grep -F`. Allow alphanumerics, `:`, `_`,
+  # `.`, `/`, `-` so namespaced identifiers like `harness:tdd-implement` work.
   if [[ -n "${CLAUDE_REQUIRED_SKILLS:-}" ]]; then
+    local tok
+    for tok in $CLAUDE_REQUIRED_SKILLS; do
+      if [[ ! "$tok" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
+        echo "Warning: CLAUDE_REQUIRED_SKILLS token '$tok' rejected (allowed chars: A-Z a-z 0-9 . _ : / -); using defaults" >&2
+        local IFS=' '
+        printf '%s' "${__DEFAULT_REQUIRED_SKILLS[*]}"
+        return 0
+      fi
+    done
     printf '%s' "$CLAUDE_REQUIRED_SKILLS"
   else
     # join with single space
@@ -262,6 +276,7 @@ probe_skill_registry() {
   # /help プローブを送信して pane content を回収し、必須 skill が出揃うまで
   # poll. stdout に欠落 skill (改行区切り) を出力、すべて揃っていれば空出力 +
   # rc=0、最終 timeout で欠落残るなら rc=1.
+  # tmux failure (session/window missing 等) は rc=2 で上位に区別を伝える.
   # Args: $1 = session name
   #       $2 = slug
   #       $3 = required skills (optional, default = resolve_required_skills)
@@ -270,12 +285,23 @@ probe_skill_registry() {
   local required="${3:-$(resolve_required_skills)}"
   local timeout="${CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS:-12}"
 
+  # Adversarial review fix (stale-content false-positive): clear scrollback +
+  # send Escape to flush any pending input *before* the probe, then capture
+  # only the visible pane (no -S history) so the substring match only sees
+  # output produced by THIS /help invocation. Without this, any old pane
+  # content that happened to contain the 6 skill identifiers (e.g. a previous
+  # /help, a doc snippet, the user manually typing /harness:... earlier) would
+  # let verify pass while the current REPL is still unloaded.
+  tmux send-keys -t "${session}:${slug}" Escape 2>/dev/null || true
+  tmux send-keys -t "${session}:${slug}" Escape 2>/dev/null || true
+  tmux clear-history -t "${session}:${slug}" 2>/dev/null || true
+
   # send `/help` to trigger built-in skill list rendering. 末尾 Enter で確定.
-  tmux send-keys -t "${session}:${slug}" "/help" Enter 2>/dev/null || {
+  if ! tmux send-keys -t "${session}:${slug}" -- "/help" Enter 2>/dev/null; then
     # tmux failure (session/window missing) を上位に伝える.
     printf 'tmux send-keys failed\n'
     return 2
-  }
+  fi
 
   local elapsed=0
   local missing_output=""
@@ -283,8 +309,19 @@ probe_skill_registry() {
     sleep 2
     elapsed=$((elapsed + 2))
     local output
-    # -S -300 で過去 300 行まで遡って capture (skill list が長い場合への保険)
-    output=$(tmux capture-pane -t "${session}:${slug}" -p -S -300 2>/dev/null || echo "")
+    local capture_rc=0
+    # Adversarial review fix (capture failure detection): distinguish a real
+    # empty pane from a tmux failure. Without this, a killed window would be
+    # treated as "no skills loaded" which is technically true but the proper
+    # signal is "session gone" (rc=2) so the caller doesn't pointlessly inject
+    # an escalation prompt to a dead pane.
+    if ! output=$(tmux capture-pane -t "${session}:${slug}" -p 2>/dev/null); then
+      capture_rc=$?
+    fi
+    if [[ $capture_rc -ne 0 ]]; then
+      printf 'tmux capture-pane failed\n'
+      return 2
+    fi
     if missing_output=$(check_skill_registry_in_output "$output" "$required"); then
       # rc=0: all present. Clear /help screen with Escape so subsequent
       # prompts (e.g. /tdd-implement) don't conflict with help overlay.
@@ -336,12 +373,27 @@ wait_for_all_workers_ready() {
 
   local min_wait="${CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS:-5}"
   local max_wait="${CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS:-20}"
+  local probe_timeout="${CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS:-12}"
 
-  # Numeric guard (validate_env_value だけでは整数 invariant を保証しない)
+  # Numeric guard (validate_env_value だけでは整数 invariant を保証しない).
+  # Adversarial review fix: TIMEOUT_SECONDS にも同じ validation を適用.
   if ! [[ "$min_wait" =~ ^[0-9]+$ ]] || ! [[ "$max_wait" =~ ^[0-9]+$ ]]; then
     echo "Warning: CLAUDE_OVERLAY_LOAD_(MIN|MAX)_WAIT_SECONDS must be integers; defaulting to 5/20" >&2
     min_wait=5
     max_wait=20
+  fi
+  if ! [[ "$probe_timeout" =~ ^[0-9]+$ ]]; then
+    echo "Warning: CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS must be integer; defaulting to 12" >&2
+    probe_timeout=12
+  fi
+  # Adversarial review fix (enforce MAX_WAIT_SECONDS as a real ceiling):
+  # max_wait must be >= min_wait + probe_timeout. If the operator set max_wait
+  # too low, raise it silently so the probe loop is not truncated below its
+  # own minimum useful duration.
+  local required_max=$((min_wait + probe_timeout))
+  if [[ "$max_wait" -lt "$required_max" ]]; then
+    echo "Warning: CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=$max_wait < (MIN_WAIT $min_wait + VERIFY_TIMEOUT $probe_timeout); raising to $required_max" >&2
+    max_wait=$required_max
   fi
 
   echo "[verify] waiting ${min_wait}s baseline for overlay (~/.claude/) load..." >&2
@@ -349,11 +401,29 @@ wait_for_all_workers_ready() {
 
   __VERIFY_FAILED_SLUGS=()
   local slug
+  local started_at="$SECONDS"
   for slug in "${slugs[@]}"; do
+    # Enforce MAX_WAIT total ceiling per cmd_start invocation.
+    local elapsed=$((SECONDS - started_at + min_wait))
+    if [[ "$elapsed" -ge "$max_wait" ]]; then
+      echo "[verify] '$slug' SKIPPED - MAX_WAIT $max_wait exceeded (elapsed ${elapsed}s); marking as failed" >&2
+      __VERIFY_FAILED_SLUGS+=("$slug")
+      if [[ "${CLAUDE_SKILL_VERIFY_ESCALATE:-1}" == "1" ]]; then
+        escalate_blocked_to_slug "$session" "$slug" "(verify skipped: max-wait ceiling reached)"
+      fi
+      continue
+    fi
     echo "[verify] probing skill registry for '$slug'..." >&2
     local missing
-    if missing=$(probe_skill_registry "$session" "$slug" 2>/dev/null); then
+    local probe_rc=0
+    missing=$(probe_skill_registry "$session" "$slug" 2>/dev/null) || probe_rc=$?
+    if [[ $probe_rc -eq 0 ]]; then
       echo "[verify] '$slug' OK (all required skills present)" >&2
+    elif [[ $probe_rc -eq 2 ]]; then
+      # tmux failure: pane / session gone. Do NOT attempt to escalate (would
+      # silently fail and mis-report). Mark failed and let caller decide.
+      echo "[verify] '$slug' UNREACHABLE - tmux capture/send failed (session/window gone?); skipping escalation" >&2
+      __VERIFY_FAILED_SLUGS+=("$slug")
     else
       echo "[verify] '$slug' FAILED - missing skills: ${missing//$'\n'/ }" >&2
       __VERIFY_FAILED_SLUGS+=("$slug")
@@ -475,16 +545,24 @@ cmd_start() {
   emit "tmux select-window -t '$session':0"
 
   # Skill-registry verify (overlay-load race guard). dry-run / opt-out では skip.
-  # Failure 時も非 fatal で進める (escalate prompt が tmux に注入済、operator が
-  # `verify` subcommand で repush 可能). exit 0 を維持して既存の orchestrator
-  # チェーンを壊さない設計.
+  # Adversarial review fix (CRITICAL #2): verify failure を **non-zero exit**
+  # で coordinator に伝える. 旧実装は warning だけ出して exit 0 を保ち、
+  # CLAUDE_SKILL_VERIFY_ESCALATE=0 設定 / escalation send 失敗時に launcher が
+  # 「成功」を返すため coordinator がそのまま /tdd-implement を送り、guard が
+  # 守ろうとしている race そのものに突入していた.
   if [[ $DRY_RUN -eq 0 ]]; then
-    if wait_for_all_workers_ready "$session" "${spawned_slugs[@]}"; then
-      :
-    else
-      echo "Warning: skill-registry verify failed for slugs: ${__VERIFY_FAILED_SLUGS[*]}" >&2
-      echo "         BLOCKED escalation prompts have been injected (Stage 3)." >&2
-      echo "         Run \`$0 verify '$session'\` for an operator repush probe." >&2
+    if ! wait_for_all_workers_ready "$session" "${spawned_slugs[@]}"; then
+      echo "Error: skill-registry verify failed for slugs: ${__VERIFY_FAILED_SLUGS[*]}" >&2
+      if [[ "${CLAUDE_SKILL_VERIFY_ESCALATE:-1}" == "1" ]]; then
+        echo "       BLOCKED escalation prompts have been injected (Stage 3)." >&2
+      else
+        echo "       (Stage 3 escalation skipped because CLAUDE_SKILL_VERIFY_ESCALATE != 1)" >&2
+      fi
+      echo "       Coordinator MUST check this exit code (3) before sending the initial /tdd-implement prompt." >&2
+      echo "       Run \`$0 verify '$session'\` for an operator repush probe." >&2
+      echo
+      echo "Started session '$session' with $# windows: $* (verify FAILED, exit=3)"
+      exit 3
     fi
   fi
 

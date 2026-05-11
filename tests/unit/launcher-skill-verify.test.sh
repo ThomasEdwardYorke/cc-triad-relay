@@ -160,6 +160,19 @@ out=$(resolve_required_skills)
 assert_eq "2b env override" "custom:a custom:b" "$out"
 unset CLAUDE_REQUIRED_SKILLS out
 
+# 2c: adversarial - invalid token (shell metachar) → fall back to defaults + warn
+# Codex Phase 7 review (security) regression guard.
+export CLAUDE_REQUIRED_SKILLS='custom:safe; rm -rf /'
+out=$(resolve_required_skills 2>/dev/null)
+assert_contains "2c invalid token rejected, falls back to defaults (tdd-implement)" "harness:tdd-implement" "$out"
+unset CLAUDE_REQUIRED_SKILLS out
+
+# 2d: adversarial - whitespace inside token → reject + fall back
+export CLAUDE_REQUIRED_SKILLS=$'custom:line1\ncustom:line2'
+out=$(resolve_required_skills 2>/dev/null)
+assert_contains "2d newline-in-token rejected, falls back to defaults" "harness:tdd-implement" "$out"
+unset CLAUDE_REQUIRED_SKILLS out
+
 echo
 echo "=== Test 3: build_blocked_escalation_message ==="
 
