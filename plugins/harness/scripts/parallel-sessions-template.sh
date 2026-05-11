@@ -102,28 +102,43 @@ Usage:
   parallel-sessions-template.sh [--dry-run] stop  [<session_name>]
   parallel-sessions-template.sh [--dry-run] status [<session_name>]
   parallel-sessions-template.sh [--dry-run] attach <slug> [<session_name>]
+  parallel-sessions-template.sh [--dry-run] verify <session_name> [<slug1> [slug2 ...]]
   parallel-sessions-template.sh --help
 
 Subcommands:
   start    Create N git worktrees + N tmux windows + N independent claude sessions.
+           After spawn, waits for overlay (~/.claude/) skill load + probes the
+           harness skill registry per slug, then sends a structured BLOCKED
+           8-field escalation prompt to any window whose skill registry is
+           incomplete (D-204 case A guard). Disable per-session with
+           CLAUDE_OVERLAY_LOAD_VERIFY=0.
   stop     Kill the tmux session (no worktree cleanup).
   status   Print tmux windows + per-worktree git log -1.
   attach   Attach to the tmux session and select a slug's window.
+  verify   Re-run the skill-registry probe on a live session (operator-driven
+           repush path). Useful after `attach` reveals an early-prompt race
+           that `start` did not catch.
 
 Flags:
   --dry-run  Print the planned commands without executing tmux / git / claude.
   --help     Show this help.
 
 Env vars:
-  TMUX_SESSION_NAME       (default: harness-parallel)
-  WORKTREE_PARENT_DIR     (default: parent of cwd, i.e. ..)
-  WORKTREE_PREFIX         (default: <project>-wt-, derived from cwd basename)
-  CLAUDE_BIN              (default: claude)
-  CLAUDE_MODEL            (optional, passed as claude --model <alias>)
-  CLAUDE_PERMISSION_MODE  (default: acceptEdits)
-  CLAUDE_ONESHOT_LOG_DIR  (optional, forwarded to tmux session via `-e`)
-  TMUX_PASS_ENV           (optional, whitespace-separated extra env var
-                           names to forward via `-e`)
+  TMUX_SESSION_NAME                       (default: harness-parallel)
+  WORKTREE_PARENT_DIR                     (default: parent of cwd, i.e. ..)
+  WORKTREE_PREFIX                         (default: <project>-wt-, derived from cwd basename)
+  CLAUDE_BIN                              (default: claude)
+  CLAUDE_MODEL                            (optional, passed as claude --model <alias>)
+  CLAUDE_PERMISSION_MODE                  (default: acceptEdits)
+  CLAUDE_ONESHOT_LOG_DIR                  (optional, forwarded to tmux session via `-e`)
+  TMUX_PASS_ENV                           (optional, whitespace-separated extra env var
+                                           names to forward via `-e`)
+  CLAUDE_OVERLAY_LOAD_VERIFY              (default 1; set 0 to skip wait+verify, e.g. mock-claude tests)
+  CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS    (default 5; baseline sleep after spawn before any probe)
+  CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS    (default 20; max total wait incl. baseline + ready poll)
+  CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS     (default 12; max wait for /help probe output to populate)
+  CLAUDE_SKILL_VERIFY_ESCALATE            (default 1; set 0 to skip BLOCKED prompt injection on failure)
+  CLAUDE_REQUIRED_SKILLS                  (default 6 harness skills; whitespace-separated list)
 
 Examples:
   # forward CLAUDE_ONESHOT_LOG_DIR + a custom MY_TOKEN to each tmux window
@@ -150,6 +165,207 @@ emit() {
   else
     bash -c "$*"
   fi
+}
+
+# --- Skill-registry verify helpers (D-204 case A guard) -------------------
+# 背景: parallel-worktree-v2 launcher が `claude -n <slug>` を spawn 直後に
+# coordinator が `/tdd-implement` を tmux send-keys しても、user-level overlay
+# (~/.claude/) の skill catalog が REPL runtime に load される前なら typeahead
+# が空判定し、slash command が plain prompt として送信される。これが累計 20
+# 件 critical mass + 3 連続再現性 (R17 batch 6/7/8) の D-204 case A の真因。
+#
+# 対策 4 段階:
+#   Stage 1: baseline sleep (CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS) で overlay
+#            load 完了待ち
+#   Stage 2: /help プローブ + capture-pane で 6 必須 skill の存在を検証
+#   Stage 3: 検証失敗時に 8-section BLOCKED final report 指示を tmux send-keys
+#            で injection (coordinator は escalate hint 受領後に takeover 経路へ)
+#   Stage 4: cmd_verify subcommand で operator が手動 repush 可能
+
+# 6 必須 skill の default. 上書きは CLAUDE_REQUIRED_SKILLS で実施.
+__DEFAULT_REQUIRED_SKILLS=(
+  "harness:tdd-implement"
+  "harness:codex-sync"
+  "harness:pseudo-coderabbit-loop"
+  "harness:coderabbit-review"
+  "harness:codex-team"
+  "harness:session-handoff"
+)
+
+resolve_required_skills() {
+  # Env override が設定済なら最優先. 未設定なら default 6 skill を返す.
+  if [[ -n "${CLAUDE_REQUIRED_SKILLS:-}" ]]; then
+    printf '%s' "$CLAUDE_REQUIRED_SKILLS"
+  else
+    # join with single space
+    local IFS=' '
+    printf '%s' "${__DEFAULT_REQUIRED_SKILLS[*]}"
+  fi
+}
+
+check_skill_registry_in_output() {
+  # Pure function: 与えられた pane content 文字列に対し required skill list を
+  # 走査し、欠落 skill 名を stdout に 1 行ずつ出力. 欠落ゼロなら rc=0、
+  # 一件以上欠落なら rc=1.
+  # Args: $1 = output (multiline string)
+  #       $2 = required skills (whitespace-separated single string)
+  local output="$1"
+  local required="$2"
+  local missing=()
+  local skill
+  local flat
+  if [[ -z "$required" ]]; then
+    return 0
+  fi
+  # Codex Phase 4 review (Major #1): tmux capture-pane wraps long lines at the
+  # terminal width, which can split a skill identifier like
+  # `harness:tdd-implement` across a newline (e.g. `harness:\ntdd-implement`).
+  # Strip newlines entirely (NOT replace with space — a space breaks the
+  # literal match too) so wrapped identifiers still match `grep -qF`.
+  flat=$(printf '%s' "$output" | tr -d '\n')
+  for skill in $required; do
+    if ! printf '%s' "$flat" | grep -qF -- "$skill"; then
+      missing+=("$skill")
+    fi
+  done
+  if [[ ${#missing[@]} -eq 0 ]]; then
+    return 0
+  fi
+  printf '%s\n' "${missing[@]}"
+  return 1
+}
+
+build_blocked_escalation_message() {
+  # D-204 case A 検出時の 8-section BLOCKED final report 文面を組み立てる.
+  # tmux send-keys で 1 prompt として injection するため改行禁止. delimiter
+  # は `;` に統一.
+  # Args: $1 = slug (worker 識別子)
+  #       $2 = missing_skills (whitespace-separated single string)
+  local slug="$1"
+  local missing="$2"
+  printf 'OVERLAY_LOAD_TIMEOUT detected by launcher (D-204 case A) for slug=%s. ' "$slug"
+  printf 'Required harness skills not loaded: [%s]. ' "$missing"
+  printf 'STOP all work. Output the 8-field final report exactly as: '
+  printf 'STATUS: BLOCKED; '
+  printf 'CHANGED_FILES: (none); '
+  printf 'COMMIT: (none); '
+  printf 'PUSHED_BRANCH: (none); '
+  printf 'VALIDATION: SKIPPED; '
+  printf 'BLOCKERS: harness overlay load timeout (D-204 case A) - skills missing [%s]; ' "$missing"
+  printf 'NEXT_ACTION: (escalate to coordinator for parallel-agent takeover); '
+  printf 'FORBIDDEN_ACTIONS_USED: no.\n'
+}
+
+probe_skill_registry() {
+  # /help プローブを送信して pane content を回収し、必須 skill が出揃うまで
+  # poll. stdout に欠落 skill (改行区切り) を出力、すべて揃っていれば空出力 +
+  # rc=0、最終 timeout で欠落残るなら rc=1.
+  # Args: $1 = session name
+  #       $2 = slug
+  #       $3 = required skills (optional, default = resolve_required_skills)
+  local session="$1"
+  local slug="$2"
+  local required="${3:-$(resolve_required_skills)}"
+  local timeout="${CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS:-12}"
+
+  # send `/help` to trigger built-in skill list rendering. 末尾 Enter で確定.
+  tmux send-keys -t "${session}:${slug}" "/help" Enter 2>/dev/null || {
+    # tmux failure (session/window missing) を上位に伝える.
+    printf 'tmux send-keys failed\n'
+    return 2
+  }
+
+  local elapsed=0
+  local missing_output=""
+  while [[ $elapsed -lt $timeout ]]; do
+    sleep 2
+    elapsed=$((elapsed + 2))
+    local output
+    # -S -300 で過去 300 行まで遡って capture (skill list が長い場合への保険)
+    output=$(tmux capture-pane -t "${session}:${slug}" -p -S -300 2>/dev/null || echo "")
+    if missing_output=$(check_skill_registry_in_output "$output" "$required"); then
+      # rc=0: all present. Clear /help screen with Escape so subsequent
+      # prompts (e.g. /tdd-implement) don't conflict with help overlay.
+      tmux send-keys -t "${session}:${slug}" Escape 2>/dev/null || true
+      return 0
+    fi
+  done
+  # timeout に達した. 直近の missing list を出力して rc=1.
+  printf '%s\n' "$missing_output"
+  return 1
+}
+
+escalate_blocked_to_slug() {
+  # 検証失敗時に BLOCKED 8-section 指示を tmux send-keys で injection.
+  # 事前に Escape を送って typeahead / help overlay を閉じてから本文を送る.
+  # Args: $1 = session, $2 = slug, $3 = missing skills (whitespace-joined)
+  local session="$1"
+  local slug="$2"
+  local missing="$3"
+  tmux send-keys -t "${session}:${slug}" Escape 2>/dev/null || true
+  sleep 1
+  local msg
+  msg=$(build_blocked_escalation_message "$slug" "$missing")
+  # Codex Phase 4 review (Major #3): use `--` to terminate option parsing so
+  # tmux never reinterprets a leading dash or future option-like prefix in
+  # `$msg` as a flag. The 8-section escalation message contains literal `;`
+  # delimiters which are safe inside the quoted arg, but `--` is the
+  # belt-and-suspenders guard across tmux versions.
+  tmux send-keys -t "${session}:${slug}" -- "$msg" Enter 2>/dev/null || true
+}
+
+wait_for_all_workers_ready() {
+  # spawn 直後の全 slug を順に Stage 1 (baseline sleep) + Stage 2 (probe) で
+  # 検証. 検証失敗 slug は Stage 3 escalate を実行し $__VERIFY_FAILED_SLUGS
+  # に登録する (coordinator が cmd_start 後に参照可能).
+  # opt-out: CLAUDE_OVERLAY_LOAD_VERIFY=0 → 即 return 0 (sleep ゼロ).
+  # Args: $1 = session, $2... = slugs
+  local session="$1"
+  shift
+  local slugs=("$@")
+
+  # Opt-out (test / mock-claude / operator override)
+  if [[ "${CLAUDE_OVERLAY_LOAD_VERIFY:-1}" != "1" ]]; then
+    return 0
+  fi
+  if [[ ${#slugs[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  local min_wait="${CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS:-5}"
+  local max_wait="${CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS:-20}"
+
+  # Numeric guard (validate_env_value だけでは整数 invariant を保証しない)
+  if ! [[ "$min_wait" =~ ^[0-9]+$ ]] || ! [[ "$max_wait" =~ ^[0-9]+$ ]]; then
+    echo "Warning: CLAUDE_OVERLAY_LOAD_(MIN|MAX)_WAIT_SECONDS must be integers; defaulting to 5/20" >&2
+    min_wait=5
+    max_wait=20
+  fi
+
+  echo "[verify] waiting ${min_wait}s baseline for overlay (~/.claude/) load..." >&2
+  sleep "$min_wait"
+
+  __VERIFY_FAILED_SLUGS=()
+  local slug
+  for slug in "${slugs[@]}"; do
+    echo "[verify] probing skill registry for '$slug'..." >&2
+    local missing
+    if missing=$(probe_skill_registry "$session" "$slug" 2>/dev/null); then
+      echo "[verify] '$slug' OK (all required skills present)" >&2
+    else
+      echo "[verify] '$slug' FAILED - missing skills: ${missing//$'\n'/ }" >&2
+      __VERIFY_FAILED_SLUGS+=("$slug")
+      if [[ "${CLAUDE_SKILL_VERIFY_ESCALATE:-1}" == "1" ]]; then
+        escalate_blocked_to_slug "$session" "$slug" "${missing//$'\n'/ }"
+        echo "[verify] '$slug' escalation injected (BLOCKED 8-section)" >&2
+      fi
+    fi
+  done
+
+  if [[ ${#__VERIFY_FAILED_SLUGS[@]} -gt 0 ]]; then
+    return 1
+  fi
+  return 0
 }
 
 resolve_session_name() {
@@ -245,16 +461,103 @@ cmd_start() {
   tmux_env_args="$(resolve_tmux_env_args)"
   emit "tmux new-session -d${tmux_env_args} -s '$session' -n coordinator"
   local slug wt branch
+  local spawned_slugs=()
   for slug in "$@"; do
     validate_identifier "slug" "$slug"
     wt="${parent}/${prefix}${slug}"
     branch="feature/${feat}-${slug}"
     emit "git worktree add '$wt' -b '$branch' '$feat'"
     emit "tmux new-window -t '$session' -n '$slug' \"cd '$wt' && $claude -n '$slug' $model_flag --permission-mode $perm\""
+    spawned_slugs+=("$slug")
   done
   emit "tmux select-window -t '$session':0"
+
+  # Skill-registry verify (D-204 case A guard). dry-run / opt-out では skip.
+  # Failure 時も非 fatal で進める (escalate prompt が tmux に注入済、operator が
+  # `verify` subcommand で repush 可能). exit 0 を維持して既存の orchestrator
+  # チェーンを壊さない設計.
+  if [[ $DRY_RUN -eq 0 ]]; then
+    if wait_for_all_workers_ready "$session" "${spawned_slugs[@]}"; then
+      :
+    else
+      echo "Warning: skill-registry verify failed for slugs: ${__VERIFY_FAILED_SLUGS[*]}" >&2
+      echo "         BLOCKED escalation prompts have been injected (Stage 3)." >&2
+      echo "         Run \`$0 verify '$session'\` for an operator repush probe." >&2
+    fi
+  fi
+
   echo
   echo "Started session '$session' with $# windows: $*"
+}
+
+cmd_verify() {
+  # Operator-driven repush probe (Stage 4). 既存 session 内の全 worker (or
+  # 指定 slugs) に対して skill registry を再 probe し、失敗時は escalate を
+  # injection する.
+  # exit code: 0 = all OK, 2 = usage error, 3 = verify failed for >=1 slug.
+  local session="${1:-}"
+  if [[ -z "$session" ]]; then
+    echo "Error: verify requires a session name as the first arg" >&2
+    usage >&2
+    exit 2
+  fi
+  shift
+
+  # Slugs 引数: 省略時は session 内の全 window 名から coordinator を除外して採用
+  local slugs=()
+  if [[ $# -gt 0 ]]; then
+    local s
+    for s in "$@"; do
+      validate_identifier "slug" "$s"
+      slugs+=("$s")
+    done
+  else
+    if [[ $DRY_RUN -eq 1 ]]; then
+      echo "[dry-run] would discover slugs via: tmux list-windows -t '$session' -F '#W'"
+      return 0
+    fi
+    local windows_out
+    windows_out=$(tmux list-windows -t "$session" -F '#W' 2>&1) || {
+      echo "Error: tmux session '$session' not found or not accessible: $windows_out" >&2
+      exit 2
+    }
+    while IFS= read -r line; do
+      [[ -z "$line" || "$line" == "coordinator" ]] && continue
+      slugs+=("$line")
+    done <<< "$windows_out"
+    if [[ ${#slugs[@]} -eq 0 ]]; then
+      echo "Error: no candidate slug windows found in session '$session' (only coordinator?)" >&2
+      exit 2
+    fi
+  fi
+
+  if [[ $DRY_RUN -eq 1 ]]; then
+    echo "[dry-run] would probe skill registry for slugs in '$session': ${slugs[*]}"
+    return 0
+  fi
+
+  local failed=()
+  local slug
+  for slug in "${slugs[@]}"; do
+    echo "[verify] probing '$slug'..." >&2
+    local missing
+    if missing=$(probe_skill_registry "$session" "$slug" 2>/dev/null); then
+      echo "[verify] '$slug' OK"
+    else
+      echo "[verify] '$slug' FAILED - missing: ${missing//$'\n'/ }" >&2
+      failed+=("$slug")
+      if [[ "${CLAUDE_SKILL_VERIFY_ESCALATE:-1}" == "1" ]]; then
+        escalate_blocked_to_slug "$session" "$slug" "${missing//$'\n'/ }"
+        echo "[verify] '$slug' escalation injected" >&2
+      fi
+    fi
+  done
+
+  if [[ ${#failed[@]} -gt 0 ]]; then
+    echo "verify: ${#failed[@]} slug(s) failed: ${failed[*]}" >&2
+    exit 3
+  fi
+  echo "verify: all ${#slugs[@]} slug(s) OK"
 }
 
 cmd_stop() {
@@ -313,6 +616,7 @@ main() {
     stop) cmd_stop "$@" ;;
     status) cmd_status "$@" ;;
     attach) cmd_attach "$@" ;;
+    verify) cmd_verify "$@" ;;
     "")
       usage
       ;;
@@ -324,4 +628,10 @@ main() {
   esac
 }
 
-main "$@"
+# --- Sourced-mode guard ---------------------------------------------------
+# Source されたとき (例: 単体テストが helper 関数を呼ぶ場合) は main を起動
+# しない. `BASH_SOURCE[0]` が `$0` と一致するのは launcher を直接 bash で
+# 実行した場合のみ. test 側は本ファイルを source し、関数を直接 invoke する.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
