@@ -59,6 +59,9 @@ Each item ported from test-bed to plugin:
 ### 2026-05-12 — Historical Plans snapshot reconstruction
 
 - **Test-bed repo**: predecessor `script_generate` checkout
+- **R1/R2 judgment**: R1 — reusable invariant retained (maintainable baseline,
+  branch safety, explicit review gates, and actionable maintainer cleanup are
+  reusable; project-local predecessor work remains rejected).
 - **Snapshot sources reviewed**:
   - `.docs/claude-code-harness-main/Plans.md`
   - `.docs/claude-code-harness-main 2/Plans.md`

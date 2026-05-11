@@ -17,11 +17,26 @@ function extractSection(content: string, heading: string): string {
     throw new Error(`Heading not found: ${heading}`);
   }
 
-  const next = content.indexOf("\n### ", start + heading.length);
-  return next === -1 ? content.slice(start) : content.slice(start, next);
+  const searchOffset = start + heading.length;
+  const nextHeading = ["\n## ", "\n### "]
+    .map((marker) => content.indexOf(marker, searchOffset))
+    .filter((index) => index > start)
+    .sort((a, b) => a - b)[0];
+  return nextHeading === undefined
+    ? content.slice(start)
+    : content.slice(start, nextHeading);
 }
 
 describe("historical harness snapshot reconstruction", () => {
+  it("extracts a target section before the next h2 or h3 heading", () => {
+    expect(
+      extractSection("### Target\nkeep\n\n## Next\nskip", "### Target"),
+    ).not.toContain("skip");
+    expect(
+      extractSection("### Target\nkeep\n\n### Next\nskip", "### Target"),
+    ).not.toContain("skip");
+  });
+
   it("records the predecessor Plans snapshot triage in maintainer docs", () => {
     const usage = readRepoFile("docs/maintainer/test-bed-usage.md");
     const section = extractSection(
@@ -32,6 +47,8 @@ describe("historical harness snapshot reconstruction", () => {
     expect(section).toContain("`.docs/claude-code-harness-main/Plans.md`");
     expect(section).toContain("`.docs/claude-code-harness-main 2/Plans.md`");
     expect(section).toContain("repo-root `Plans.md`");
+    expect(section).toContain("R1/R2 judgment");
+    expect(section).toContain("reusable invariant retained");
     expect(section).toContain("Rejected historical items");
     expect(section).toContain("v3 full rewrite");
     expect(section).toContain("Phase 25");
