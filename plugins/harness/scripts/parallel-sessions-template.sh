@@ -168,23 +168,27 @@ emit() {
 }
 
 # --- Skill-registry verify helpers (overlay-load race guard) --------------
-# 背景: parallel-worktree-v2 launcher が `claude -n <slug>` を spawn 直後に
-# coordinator が `/tdd-implement` を tmux send-keys しても、user-level overlay
-# (~/.claude/) の skill catalog が REPL runtime に load される前なら typeahead
-# が空判定し、slash command が plain prompt として送信される。これが
-# overlay-load race (early-prompt misclassification) の真因で、observed in
-# multiple consumer deployments と consecutive parallel batches 4-worker 同時
-# BLOCK の empirical pattern として再現する.
+# Background: when the parallel-worktree-v2 launcher spawns `claude -n <slug>`
+# and the coordinator immediately drives `/tdd-implement` into the worker via
+# `tmux send-keys`, the user-level overlay (`~/.claude/`) skill catalog may
+# not yet have registered inside the new REPL. The typeahead then sees an
+# empty catalog and the slash command is delivered as a plain prompt. This is
+# the overlay-load race (early-prompt misclassification); it has been observed
+# empirically across consumer deployments as a recurring 4-worker simultaneous
+# BLOCK pattern in consecutive parallel batches.
 #
-# 対策 4 段階:
-#   Stage 1: baseline sleep (CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS) で overlay
-#            load 完了待ち
-#   Stage 2: /help プローブ + capture-pane で 6 必須 skill の存在を検証
-#   Stage 3: 検証失敗時に 8-section BLOCKED final report 指示を tmux send-keys
-#            で injection (coordinator は escalate hint 受領後に takeover 経路へ)
-#   Stage 4: cmd_verify subcommand で operator が手動 repush 可能
+# Four-stage mitigation:
+#   Stage 1: baseline sleep (CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS) so the
+#            overlay finishes loading before any probe.
+#   Stage 2: send `/help` and scan `capture-pane` for the six required skill
+#            identifiers.
+#   Stage 3: on probe failure, inject the 8-section BLOCKED final-report
+#            prompt via `tmux send-keys` so the coordinator can switch to a
+#            takeover path.
+#   Stage 4: the `cmd_verify` subcommand lets an operator re-run the probe on
+#            a live session.
 
-# 6 必須 skill の default. 上書きは CLAUDE_REQUIRED_SKILLS で実施.
+# Default list of six required skills; override with CLAUDE_REQUIRED_SKILLS.
 __DEFAULT_REQUIRED_SKILLS=(
   "harness:tdd-implement"
   "harness:codex-sync"
@@ -195,7 +199,7 @@ __DEFAULT_REQUIRED_SKILLS=(
 )
 
 resolve_required_skills() {
-  # Env override が設定済なら最優先. 未設定なら default 6 skill を返す.
+  # Honor CLAUDE_REQUIRED_SKILLS if set; otherwise return the default six.
   # Adversarial review fix (token validation): reject control chars / shell
   # metacharacters / whitespace within a single token so a poisoned env value
   # cannot break the missing-skill output (which is whitespace-joined into the
@@ -234,9 +238,9 @@ resolve_required_skills() {
 }
 
 check_skill_registry_in_output() {
-  # Pure function: 与えられた pane content 文字列に対し required skill list を
-  # 走査し、欠落 skill 名を stdout に 1 行ずつ出力. 欠落ゼロなら rc=0、
-  # 一件以上欠落なら rc=1.
+  # Pure function: scan the pane-content string for each required skill and
+  # emit any missing identifier on stdout, one per line. Returns rc=0 when
+  # all required skills are present, rc=1 when at least one is missing.
   # Args: $1 = output (multiline string)
   #       $2 = required skills (whitespace-separated single string)
   local output="$1"
@@ -266,10 +270,11 @@ check_skill_registry_in_output() {
 }
 
 build_blocked_escalation_message() {
-  # overlay-load race 検出時の 8-section BLOCKED final report 文面を組み立てる.
-  # tmux send-keys で 1 prompt として injection するため改行禁止. delimiter
-  # は `;` に統一.
-  # Args: $1 = slug (worker 識別子)
+  # Build the 8-section BLOCKED final-report prompt that is injected when the
+  # overlay-load race is detected. The whole prompt must fit on one logical
+  # line because `tmux send-keys` injects it as a single REPL submission;
+  # fields are delimited by `;`.
+  # Args: $1 = slug (worker identifier)
   #       $2 = missing_skills (whitespace-separated single string)
   local slug="$1"
   local missing="$2"
@@ -287,17 +292,33 @@ build_blocked_escalation_message() {
 }
 
 probe_skill_registry() {
-  # /help プローブを送信して pane content を回収し、必須 skill が出揃うまで
-  # poll. stdout に欠落 skill (改行区切り) を出力、すべて揃っていれば空出力 +
-  # rc=0、最終 timeout で欠落残るなら rc=1.
-  # tmux failure (session/window missing 等) は rc=2 で上位に区別を伝える.
+  # Send a /help probe, capture pane content, and poll until every required
+  # skill identifier appears in the visible pane. Emits the missing-skill list
+  # (newline-separated) on stdout when verification fails; empty stdout + rc=0
+  # on full success; rc=1 on poll timeout with missing skills; rc=2 when tmux
+  # itself fails (session/window gone) so the caller can distinguish that
+  # failure mode from "skills not yet loaded".
   # Args: $1 = session name
   #       $2 = slug
-  #       $3 = required skills (optional, default = resolve_required_skills)
+  #       $3 = required skills list, whitespace-separated (optional, default
+  #            = resolve_required_skills)
+  #       $4 = probe timeout in seconds (optional, default reads
+  #            CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS; integer-validated)
   local session="$1"
   local slug="$2"
   local required="${3:-$(resolve_required_skills)}"
-  local timeout="${CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS:-12}"
+  local timeout="${4:-${CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS:-12}}"
+
+  # CR review fix: when the caller does not pass an explicit (already-
+  # validated) timeout we re-read the env var and must integer-validate it
+  # here too. Without this, `cmd_verify` (which calls probe_skill_registry
+  # directly) and any future direct caller could inject "abc" via the env and
+  # break the poll loop. wait_for_all_workers_ready passes its sanitized
+  # local probe_timeout as $4 so this branch is a no-op in that path.
+  if ! [[ "$timeout" =~ ^[0-9]+$ ]]; then
+    echo "Warning: CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS='$timeout' is not an integer; defaulting to 12" >&2
+    timeout=12
+  fi
 
   # Adversarial review fix (stale-content false-positive): clear scrollback +
   # send Escape to flush any pending input *before* the probe, then capture
@@ -310,9 +331,10 @@ probe_skill_registry() {
   tmux send-keys -t "${session}:${slug}" Escape 2>/dev/null || true
   tmux clear-history -t "${session}:${slug}" 2>/dev/null || true
 
-  # send `/help` to trigger built-in skill list rendering. 末尾 Enter で確定.
+  # Send `/help` to trigger the built-in skill-list rendering; the trailing
+  # Enter submits it.
   if ! tmux send-keys -t "${session}:${slug}" -- "/help" Enter 2>/dev/null; then
-    # tmux failure (session/window missing) を上位に伝える.
+    # tmux send-keys failed (session/window gone) — surface to caller.
     printf 'tmux send-keys failed\n'
     return 2
   fi
@@ -343,14 +365,15 @@ probe_skill_registry() {
       return 0
     fi
   done
-  # timeout に達した. 直近の missing list を出力して rc=1.
+  # Poll timeout reached: emit the last-known missing-skill list and rc=1.
   printf '%s\n' "$missing_output"
   return 1
 }
 
 escalate_blocked_to_slug() {
-  # 検証失敗時に BLOCKED 8-section 指示を tmux send-keys で injection.
-  # 事前に Escape を送って typeahead / help overlay を閉じてから本文を送る.
+  # On verification failure, inject the BLOCKED 8-section directive via
+  # tmux send-keys. Send Escape first to dismiss any open typeahead / help
+  # overlay so the message is delivered to a clean prompt.
   # Args: $1 = session, $2 = slug, $3 = missing skills (whitespace-joined)
   local session="$1"
   local slug="$2"
@@ -368,10 +391,12 @@ escalate_blocked_to_slug() {
 }
 
 wait_for_all_workers_ready() {
-  # spawn 直後の全 slug を順に Stage 1 (baseline sleep) + Stage 2 (probe) で
-  # 検証. 検証失敗 slug は Stage 3 escalate を実行し $__VERIFY_FAILED_SLUGS
-  # に登録する (coordinator が cmd_start 後に参照可能).
-  # opt-out: CLAUDE_OVERLAY_LOAD_VERIFY=0 → 即 return 0 (sleep ゼロ).
+  # Run Stage 1 (baseline sleep) followed by Stage 2 (per-slug probe) across
+  # all just-spawned slugs. Failed slugs go through Stage 3 escalation and
+  # are recorded in $__VERIFY_FAILED_SLUGS (consumable by the caller after
+  # cmd_start returns).
+  # Opt-out path: CLAUDE_OVERLAY_LOAD_VERIFY=0 → return 0 immediately with no
+  # sleeps and no tmux interaction.
   # Args: $1 = session, $2... = slugs
   local session="$1"
   shift
@@ -389,8 +414,9 @@ wait_for_all_workers_ready() {
   local max_wait="${CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS:-20}"
   local probe_timeout="${CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS:-12}"
 
-  # Numeric guard (validate_env_value だけでは整数 invariant を保証しない).
-  # Adversarial review fix: TIMEOUT_SECONDS にも同じ validation を適用.
+  # Numeric guard: validate_env_value alone does not enforce an integer
+  # invariant. Adversarial review follow-up: apply the same integer check to
+  # CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS.
   if ! [[ "$min_wait" =~ ^[0-9]+$ ]] || ! [[ "$max_wait" =~ ^[0-9]+$ ]]; then
     echo "Warning: CLAUDE_OVERLAY_LOAD_(MIN|MAX)_WAIT_SECONDS must be integers; defaulting to 5/20" >&2
     min_wait=5
@@ -430,7 +456,9 @@ wait_for_all_workers_ready() {
     echo "[verify] probing skill registry for '$slug'..." >&2
     local missing
     local probe_rc=0
-    missing=$(probe_skill_registry "$session" "$slug" 2>/dev/null) || probe_rc=$?
+    # Pass the validated probe_timeout (and required-skills resolver result)
+    # into probe_skill_registry so it does not re-read the unvalidated env var.
+    missing=$(probe_skill_registry "$session" "$slug" "$(resolve_required_skills)" "$probe_timeout" 2>/dev/null) || probe_rc=$?
     if [[ $probe_rc -eq 0 ]]; then
       echo "[verify] '$slug' OK (all required skills present)" >&2
     elif [[ $probe_rc -eq 2 ]]; then
@@ -558,12 +586,14 @@ cmd_start() {
   done
   emit "tmux select-window -t '$session':0"
 
-  # Skill-registry verify (overlay-load race guard). dry-run / opt-out では skip.
-  # Adversarial review fix (CRITICAL #2): verify failure を **non-zero exit**
-  # で coordinator に伝える. 旧実装は warning だけ出して exit 0 を保ち、
-  # CLAUDE_SKILL_VERIFY_ESCALATE=0 設定 / escalation send 失敗時に launcher が
-  # 「成功」を返すため coordinator がそのまま /tdd-implement を送り、guard が
-  # 守ろうとしている race そのものに突入していた.
+  # Skill-registry verify (overlay-load race guard). Skipped on dry-run or
+  # when CLAUDE_OVERLAY_LOAD_VERIFY=0.
+  # Adversarial review fix (CRITICAL): surface a verify failure as a non-zero
+  # exit code so the coordinator hears about it. The previous implementation
+  # only printed a warning and returned 0, which meant CLAUDE_SKILL_VERIFY_
+  # ESCALATE=0 or an escalation send-keys failure produced a launcher exit 0
+  # while the registry was still unloaded — the coordinator would then send
+  # /tdd-implement straight into the very race this guard is meant to prevent.
   if [[ $DRY_RUN -eq 0 ]]; then
     if ! wait_for_all_workers_ready "$session" "${spawned_slugs[@]}"; then
       echo "Error: skill-registry verify failed for slugs: ${__VERIFY_FAILED_SLUGS[*]}" >&2
@@ -585,9 +615,9 @@ cmd_start() {
 }
 
 cmd_verify() {
-  # Operator-driven repush probe (Stage 4). 既存 session 内の全 worker (or
-  # 指定 slugs) に対して skill registry を再 probe し、失敗時は escalate を
-  # injection する.
+  # Operator-driven repush probe (Stage 4). Re-runs the skill-registry probe
+  # against every worker in an existing session (or only the listed slugs)
+  # and injects an escalation prompt on any failed slug.
   # exit code: 0 = all OK, 2 = usage error, 3 = verify failed for >=1 slug.
   local session="${1:-}"
   if [[ -z "$session" ]]; then
@@ -597,7 +627,8 @@ cmd_verify() {
   fi
   shift
 
-  # Slugs 引数: 省略時は session 内の全 window 名から coordinator を除外して採用
+  # Slugs argument: when omitted, discover every window name in the session
+  # and exclude the coordinator window.
   local slugs=()
   if [[ $# -gt 0 ]]; then
     local s
@@ -731,9 +762,10 @@ main() {
 }
 
 # --- Sourced-mode guard ---------------------------------------------------
-# Source されたとき (例: 単体テストが helper 関数を呼ぶ場合) は main を起動
-# しない. `BASH_SOURCE[0]` が `$0` と一致するのは launcher を直接 bash で
-# 実行した場合のみ. test 側は本ファイルを source し、関数を直接 invoke する.
+# When this file is sourced (for example by a unit-test harness that calls
+# helper functions directly) main() must not run. `BASH_SOURCE[0] == $0` is
+# only true when the launcher is executed via `bash <path>`; test runners
+# source the file and invoke the helpers without triggering main.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   main "$@"
 fi
