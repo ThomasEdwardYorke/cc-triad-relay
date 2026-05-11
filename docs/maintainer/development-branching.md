@@ -92,15 +92,21 @@ Recommended repository settings:
 
 ## Cleanup
 
-After a feature PR is merged into `dev`, delete the feature branch locally and remotely:
+After a feature PR is merged into `dev`, delete the local feature branch:
 
 ```bash
 git branch -d feature/<short-slug>
+```
+
+Remote branch deletion is a separate cleanup step. Run it during release
+cleanup, or earlier only when the branch is explicitly safe to remove:
+
+```bash
 git push origin --delete feature/<short-slug>
 git fetch origin --prune
 ```
 
-Only delete remote branches after checking that all of these gates pass:
+Only delete a remote branch after checking that all of these remote-deletion gates pass:
 
 - no open PR uses the branch;
 - no closed-but-unmerged PR still points at the current branch head;

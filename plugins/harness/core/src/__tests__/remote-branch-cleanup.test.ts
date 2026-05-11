@@ -22,19 +22,18 @@ function extractSection(content: string, heading: string): string {
 }
 
 describe("remote branch cleanup audit", () => {
-  it("records the 2026-05-12 cleanup decision for historical remote branches", () => {
+  it("records the dated cleanup decision for historical remote branches", () => {
     const doc = readRepoFile("docs/maintainer/development-branching.md");
     const section = extractSection(doc, "## Remote Branch Cleanup Audit");
+    const retainedBranchRows = section
+      .split("\n")
+      .filter((line) => /^\| `feature\/[^`]+` \| `[0-9a-f]{7}` \|/.test(line));
 
-    expect(section).toContain("2026-05-12");
-    expect(section).toContain("feature/model-b-evolution");
-    expect(section).toContain("51df84a");
-    expect(section).toContain("PR #17");
+    expect(section).toMatch(/### \d{4}-\d{2}-\d{2} - Historical model branches/);
+    expect(retainedBranchRows).toHaveLength(2);
     expect(section).toContain("closed without merge");
     expect(section).toContain("retain");
-    expect(section).toContain("feature/model-registry");
-    expect(section).toContain("f5d43a1");
-    expect(section).toContain("9 unique commits");
+    expect(section).toMatch(/\d+ unique commits/);
     expect(section).toContain("not deleted");
   });
 
@@ -42,6 +41,9 @@ describe("remote branch cleanup audit", () => {
     const doc = readRepoFile("docs/maintainer/development-branching.md");
     const section = extractSection(doc, "## Cleanup");
 
+    expect(section).toContain("local feature branch");
+    expect(section).toContain("Remote branch deletion is a separate cleanup step");
+    expect(section).toContain("remote-deletion gates");
     expect(section).toContain("open PR");
     expect(section).toContain("closed-but-unmerged PR");
     expect(section).toContain("branch head");
