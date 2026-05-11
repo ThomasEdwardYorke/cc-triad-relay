@@ -52,9 +52,10 @@ codex plugin marketplace add /path/to/project
 ```
 
 After adding the marketplace, enable `codex-harness` from the project
-marketplace. The Codex adapter is intentionally scoped to
-skills in this release slice: `harness-work`, `tdd-implement`,
-`session-handoff`, `coderabbit-review`, and `pseudo-coderabbit-loop`.
+marketplace. Current Codex skills are `harness-work`, `tdd-implement`,
+`session-handoff`, `coderabbit-review`, `pseudo-coderabbit-loop`,
+`new-feature-branch`, `branch-merge`, `harness-release`,
+`harness-merge-train`, `parallel-worktree`, and `codex-team`.
 
 ### Optional companion: `openai-codex`
 
@@ -70,7 +71,7 @@ therefore optional**:
 
 | Plugin installed | What works | What errors on invocation |
 |------------------|------------|---------------------------|
-| `harness` only (default) | All 13 guardrails, 19 commands (5 verb + 14 workflow), 5 native agents (`worker` / `reviewer` / `scaffolder` / `security-auditor` / `context-audit-agent`), all 12 lifecycle hooks | `codex-sync` fails fast with `ERROR: Codex plugin not found` and `coderabbit-mimic` fails with `ERROR: codex-companion.mjs not found.` — both hard errors that stop the agent before any work starts. Other agents and commands are unaffected. |
+| `harness` only (default) | All 13 guardrails, 19 commands (5 verb + 14 workflow), 5 native agents (`worker` / `reviewer` / `scaffolder` / `security-auditor` / `context-audit-agent`), all 16 lifecycle hooks | `codex-sync` fails fast with `ERROR: Codex plugin not found` and `coderabbit-mimic` fails with `ERROR: codex-companion.mjs not found.` — both hard errors that stop the agent before any work starts. Other agents and commands are unaffected. |
 | `harness` + `codex` | Everything above **plus** Codex-powered synchronous second-opinion review (`codex-sync`) and local pseudo-CodeRabbit loop (`coderabbit-mimic`) | — |
 
 `install-project.sh --with-codex` flips the opt-in; otherwise run
