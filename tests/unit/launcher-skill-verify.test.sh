@@ -173,6 +173,14 @@ out=$(resolve_required_skills 2>/dev/null)
 assert_contains "2d newline-in-token rejected, falls back to defaults" "harness:tdd-implement" "$out"
 unset CLAUDE_REQUIRED_SKILLS out
 
+# 2e: whitespace-only override → reject + fall back, not an empty verify set
+export CLAUDE_REQUIRED_SKILLS='   '
+out=$(resolve_required_skills 2>/dev/null)
+assert_contains "2e whitespace-only override rejected, falls back to defaults" "harness:tdd-implement" "$out"
+check_skill_registry_in_output "" "$out" >/dev/null 2>&1 && rc=0 || rc=$?
+assert_rc "2e fallback default skills are still enforced" "1" "$rc"
+unset CLAUDE_REQUIRED_SKILLS out rc
+
 echo
 echo "=== Test 3: build_blocked_escalation_message ==="
 
@@ -219,6 +227,24 @@ rc=0
 (cmd_verify "" 2>/dev/null) || rc=$?
 assert_rc "5a empty session arg → rc=2" "2" "$rc"
 unset rc
+
+echo
+echo "=== Test 6: probe_skill_registry tmux capture failure ==="
+
+# 6a: capture-pane failure must be surfaced as rc=2, not as missing skills.
+out=$(
+  tmux() {
+    case "$1" in
+      send-keys|clear-history) return 0 ;;
+      capture-pane) return 99 ;;
+      *) return 0 ;;
+    esac
+  }
+  probe_skill_registry "session" "alpha" "harness:tdd-implement" 1
+) && rc=0 || rc=$?
+assert_rc "6a capture-pane failure → rc=2" "2" "$rc"
+assert_contains "6a capture failure message" "tmux capture-pane failed" "$out"
+unset out rc
 
 echo
 echo "============================================================"

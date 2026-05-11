@@ -221,6 +221,7 @@ resolve_required_skills() {
       return 0
     fi
     local tok
+    local tokens=()
     for tok in $CLAUDE_REQUIRED_SKILLS; do
       if [[ ! "$tok" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
         echo "Warning: CLAUDE_REQUIRED_SKILLS token '$tok' rejected (allowed chars: A-Z a-z 0-9 . _ : / -); using defaults" >&2
@@ -228,8 +229,16 @@ resolve_required_skills() {
         printf '%s' "${__DEFAULT_REQUIRED_SKILLS[*]}"
         return 0
       fi
+      tokens+=("$tok")
     done
-    printf '%s' "$CLAUDE_REQUIRED_SKILLS"
+    if [[ ${#tokens[@]} -eq 0 ]]; then
+      echo "Warning: CLAUDE_REQUIRED_SKILLS contains no skill tokens; using defaults" >&2
+      local IFS=' '
+      printf '%s' "${__DEFAULT_REQUIRED_SKILLS[*]}"
+      return 0
+    fi
+    local IFS=' '
+    printf '%s' "${tokens[*]}"
   else
     # join with single space
     local IFS=' '
@@ -351,7 +360,9 @@ probe_skill_registry() {
     # treated as "no skills loaded" which is technically true but the proper
     # signal is "session gone" (rc=2) so the caller doesn't pointlessly inject
     # an escalation prompt to a dead pane.
-    if ! output=$(tmux capture-pane -t "${session}:${slug}" -p 2>/dev/null); then
+    if output=$(tmux capture-pane -t "${session}:${slug}" -p 2>/dev/null); then
+      capture_rc=0
+    else
       capture_rc=$?
     fi
     if [[ $capture_rc -ne 0 ]]; then
