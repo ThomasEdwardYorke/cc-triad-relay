@@ -202,6 +202,20 @@ resolve_required_skills() {
   # escalation prompt) or sneak past `grep -F`. Allow alphanumerics, `:`, `_`,
   # `.`, `/`, `-` so namespaced identifiers like `harness:tdd-implement` work.
   if [[ -n "${CLAUDE_REQUIRED_SKILLS:-}" ]]; then
+    # 2-stage validation:
+    # (a) Raw value: reject control chars (newline / tab / CR / etc.) which
+    #     bash word-splitting would silently consume as separators, so a
+    #     per-token regex below cannot see them. Plain space is the only
+    #     allowed separator. shell metacharacters (`;` `&` `|` `$` etc.) are
+    #     caught by the per-token regex in stage (b).
+    # (b) Per-token: enforce [A-Za-z0-9._:/-]+ so each identifier survives
+    #     unmodified through grep -F + escalation prompt interpolation.
+    if [[ "$CLAUDE_REQUIRED_SKILLS" =~ [[:cntrl:]] ]]; then
+      echo "Warning: CLAUDE_REQUIRED_SKILLS contains control characters (newline / tab / CR); using defaults" >&2
+      local IFS=' '
+      printf '%s' "${__DEFAULT_REQUIRED_SKILLS[*]}"
+      return 0
+    fi
     local tok
     for tok in $CLAUDE_REQUIRED_SKILLS; do
       if [[ ! "$tok" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
