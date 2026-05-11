@@ -591,6 +591,12 @@ cmd_start() {
   local feat="$1"
   validate_branch_name "$feat"
   shift
+  local requested_slugs=("$@")
+  local slug
+  for slug in "${requested_slugs[@]}"; do
+    validate_slug "$slug"
+  done
+
   local session parent prefix claude perm
   session="$(resolve_session_name)"
   parent="$(resolve_worktree_parent_dir)"
@@ -607,10 +613,9 @@ cmd_start() {
   local tmux_env_args
   tmux_env_args="$(resolve_tmux_env_args)"
   emit "tmux new-session -d${tmux_env_args} -s '$session' -n coordinator"
-  local slug wt branch
+  local wt branch
   local spawned_slugs=()
-  for slug in "$@"; do
-    validate_slug "$slug"
+  for slug in "${requested_slugs[@]}"; do
     wt="${parent}/${prefix}${slug}"
     branch="feature/${feat}-${slug}"
     emit "git worktree add '$wt' -b '$branch' '$feat'"

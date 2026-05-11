@@ -235,6 +235,15 @@ describe("parallel-sessions-template.sh: input validation (injection prevention)
     expect(r.stderr).toMatch(/slug|invalid\s+characters|tmux/i);
   });
 
+  it("validates every slug before emitting any start plan", () => {
+    const r = runScript(["--dry-run", "start", "main", "alpha", "api.v2"]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/slug|invalid\s+characters|tmux/i);
+    expect(r.stdout).not.toMatch(/tmux new-session/);
+    expect(r.stdout).not.toMatch(/git worktree add/);
+    expect(r.stdout).not.toMatch(/tmux new-window/);
+  });
+
   it("rejects slug starting with digit because tmux target syntax tries window indexes first", () => {
     const r = runScript(["--dry-run", "start", "main", "2alpha"]);
     expect(r.status).not.toBe(0);
