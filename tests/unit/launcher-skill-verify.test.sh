@@ -8,7 +8,7 @@
 # 検証対象 (D-204 case A / 累計 20 件 critical mass 撲滅、3 連続再現性):
 #   1. check_skill_registry_in_output   — pane 内 skill 名検出 (純粋関数)
 #   2. resolve_required_skills          — env var / default の解決
-#   3. build_blocked_escalation_message — 8-section BLOCKED 文面組立
+#   3. build_blocked_escalation_message — 8-field BLOCKED 文面組立
 #   4. cmd_verify                       — exit code + escalate 動作
 #   5. wait_for_all_workers_ready (env disabled path) — opt-out 経路
 #
@@ -207,7 +207,7 @@ unset CLAUDE_REQUIRED_SKILLS out
 echo
 echo "=== Test 3: build_blocked_escalation_message ==="
 
-# 3a: 必須 8-section field 全部含む
+# 3a: 必須 8-field 全部含む
 msg=$(build_blocked_escalation_message "alpha" "harness:tdd-implement harness:codex-sync")
 assert_contains "3a contains STATUS: BLOCKED" "STATUS: BLOCKED" "$msg"
 assert_contains "3a contains CHANGED_FILES" "CHANGED_FILES" "$msg"
@@ -272,23 +272,20 @@ assert_rc "6a capture-pane failure → rc=2" "2" "$rc"
 assert_contains "6a capture failure message" "tmux capture-pane failed" "$out"
 unset out rc
 
-# 6b: stale visible pane content must not satisfy the fresh /help probe.
+# 6b: stale visible pane content from before /help must not satisfy the probe.
 out=$(
-  screen_cleared=0
+  capture_count=0
   tmux() {
     case "$1" in
-      send-keys)
-        if [[ " $* " == *" C-l "* ]]; then
-          screen_cleared=1
-        fi
-        return 0
-        ;;
+      send-keys) return 0 ;;
       clear-history) return 0 ;;
       capture-pane)
-        if [[ "$screen_cleared" -eq 1 ]]; then
-          printf 'fresh help output without loaded skill\n'
+        capture_count=$((capture_count + 1))
+        if [[ "$capture_count" -eq 1 ]]; then
+          printf 'stale prior pane says harness:tdd-implement\n'
         else
-          printf 'stale pane still says harness:tdd-implement\n'
+          printf 'stale prior pane says harness:tdd-implement\n'
+          printf 'fresh help output without loaded skill\n'
         fi
         return 0
         ;;
@@ -297,7 +294,7 @@ out=$(
   }
   probe_skill_registry "session" "alpha" "harness:tdd-implement" 1
 ) && rc=0 || rc=$?
-assert_rc "6b stale visible pane is cleared before scan → rc=1" "1" "$rc"
+assert_rc "6b stale visible pane is excluded before scan → rc=1" "1" "$rc"
 assert_contains "6b reports missing skill from fresh output" "harness:tdd-implement" "$out"
 unset out rc
 

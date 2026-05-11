@@ -169,7 +169,7 @@ the remaining sub-tasks as earlier windows finish (semaphore-style).
 ```
 
 The `verify` subcommand re-runs the harness skill-registry probe against a
-running tmux session and re-injects the 8-section BLOCKED escalation prompt
+running tmux session and re-injects the 8-field BLOCKED escalation prompt
 into any worker whose registry is incomplete. This is the operator-driven
 **repush path** for the overlay-load race (see Phase 0 + Phase 1
 Skill registry verify section below).
@@ -275,7 +275,7 @@ with `harness skill registry not loaded` 1 turn later.
 |---|---|---|---|
 | 1 | baseline sleep | wait for overlay registration | `CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS` (default 5) |
 | 2 | skill registry probe | `tmux send-keys /help` + `capture-pane` scan for 6 required skills | `CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS` (default 12) |
-| 3 | escalate BLOCKED | inject 8-section BLOCKED final report prompt on probe failure | `CLAUDE_SKILL_VERIFY_ESCALATE` (default 1) |
+| 3 | escalate BLOCKED | inject 8-field BLOCKED final report prompt on probe failure | `CLAUDE_SKILL_VERIFY_ESCALATE` (default 1) |
 | 4 | operator repush | `/parallel-worktree-v2 verify` subcommand re-runs Stages 2-3 on a live session | n/a |
 
 Defaults:
@@ -290,14 +290,14 @@ Defaults:
   `harness:tdd-implement harness:codex-sync harness:pseudo-coderabbit-loop`
   `harness:coderabbit-review harness:codex-team harness:session-handoff`.
 
-The 8-section escalation prompt is single-line, semicolon-delimited, and
-exactly matches the dispatcher's Step 5 8-field schema verifier (`STATUS:
-BLOCKED` + `CHANGED_FILES: (none)` + `COMMIT: (none)` + ... +
-`FORBIDDEN_ACTIONS_USED: no`). The coordinator side of `/parallel-worktree-v2`
-parses the failed-slug list from launcher stderr and routes those slugs
-into the **coordinator-takeover regime** by spawning a parallel
-`general-purpose` Agent fan-out instead of waiting for the BLOCKED worker
-final.
+The injected prompt itself is delivered as one `tmux send-keys` submission, but
+it instructs the worker to return the canonical 8-field final report as
+newline-separated fields (`STATUS: BLOCKED`, `CHANGED_FILES: (none)`,
+`COMMIT: (none)`, ... `FORBIDDEN_ACTIONS_USED: no`). The coordinator side of
+`/parallel-worktree-v2` parses the failed-slug list from launcher stderr and
+routes those slugs into the **coordinator-takeover regime** by spawning a
+parallel `general-purpose` Agent fan-out instead of waiting for the BLOCKED
+worker final.
 
 ---
 

@@ -182,7 +182,7 @@ emit() {
 #            overlay finishes loading before any probe.
 #   Stage 2: send `/help` and scan `capture-pane` for the six required skill
 #            identifiers.
-#   Stage 3: on probe failure, inject the 8-section BLOCKED final-report
+#   Stage 3: on probe failure, inject the 8-field BLOCKED final-report
 #            prompt via `tmux send-keys` so the coordinator can switch to a
 #            takeover path.
 #   Stage 4: the `cmd_verify` subcommand lets an operator re-run the probe on
@@ -333,12 +333,17 @@ probe_skill_registry() {
     timeout=12
   fi
 
-  # Adversarial review fix (stale-content false-positive): clear visible pane
-  # + scrollback and send Escape to flush any pending input *before* the probe,
-  # then capture only the visible pane (no -S history) so the substring match
-  # only sees output produced by THIS /help invocation. Without clearing the
-  # visible screen, stale text can survive `tmux clear-history` and satisfy the
-  # skill check even when the fresh /help output still lacks the skills.
+  local before_output
+  if ! before_output=$(tmux capture-pane -t "${session}:${slug}" -p 2>/dev/null); then
+    printf 'tmux capture-pane failed\n'
+    return 2
+  fi
+
+  # Adversarial review fix (stale-content false-positive): record the visible
+  # pane before `/help`, then scan only the output appended by this probe.
+  # `tmux clear-history` does not clear the visible screen, and `C-l` is a best-
+  # effort REPL key rather than a tmux-level guarantee, so snapshot exclusion is
+  # the real guard against old text satisfying a fresh registry check.
   tmux send-keys -t "${session}:${slug}" Escape 2>/dev/null || true
   tmux send-keys -t "${session}:${slug}" Escape 2>/dev/null || true
   tmux send-keys -t "${session}:${slug}" C-l 2>/dev/null || true
@@ -373,7 +378,11 @@ probe_skill_registry() {
       printf 'tmux capture-pane failed\n'
       return 2
     fi
-    if missing_output=$(check_skill_registry_in_output "$output" "$required"); then
+    local scan_output="$output"
+    if [[ "$output" == "$before_output"* ]]; then
+      scan_output="${output#"$before_output"}"
+    fi
+    if missing_output=$(check_skill_registry_in_output "$scan_output" "$required"); then
       # rc=0: all present. Clear /help screen with Escape so subsequent
       # prompts (e.g. /tdd-implement) don't conflict with help overlay.
       tmux send-keys -t "${session}:${slug}" Escape 2>/dev/null || true
@@ -386,7 +395,7 @@ probe_skill_registry() {
 }
 
 escalate_blocked_to_slug() {
-  # On verification failure, inject the BLOCKED 8-section directive via
+  # On verification failure, inject the BLOCKED 8-field directive via
   # tmux send-keys. Send Escape first to dismiss any open typeahead / help
   # overlay so the message is delivered to a clean prompt.
   # Args: $1 = session, $2 = slug, $3 = missing skills (whitespace-joined)
@@ -398,10 +407,7 @@ escalate_blocked_to_slug() {
   local msg
   msg=$(build_blocked_escalation_message "$slug" "$missing")
   # Use `--` to terminate option parsing so tmux never reinterprets a leading
-  # dash or future option-like prefix in `$msg` as a flag. The 8-section
-  # escalation message contains literal `;` delimiters which are safe inside
-  # the quoted arg, but `--` is the belt-and-suspenders guard across tmux
-  # versions.
+  # dash or future option-like prefix in `$msg` as a flag.
   tmux send-keys -t "${session}:${slug}" -- "$msg" Enter 2>/dev/null || true
 }
 
@@ -486,7 +492,7 @@ wait_for_all_workers_ready() {
       __VERIFY_FAILED_SLUGS+=("$slug")
       if [[ "${CLAUDE_SKILL_VERIFY_ESCALATE:-1}" == "1" ]]; then
         escalate_blocked_to_slug "$session" "$slug" "${missing//$'\n'/ }"
-        echo "[verify] '$slug' escalation injected (BLOCKED 8-section)" >&2
+        echo "[verify] '$slug' escalation injected (BLOCKED 8-field)" >&2
       fi
     fi
   done
