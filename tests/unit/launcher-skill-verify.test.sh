@@ -245,6 +245,31 @@ else
 fi
 unset CLAUDE_OVERLAY_LOAD_VERIFY rc
 
+# 4b: every slug must receive at least one probe even when earlier probes use
+# the configured timeout budget. This avoids false BLOCKED escalation for
+# healthy later workers in 3+ worker launches.
+out=$(
+  {
+    probe_skill_registry() {
+      sleep 1
+      return 0
+    }
+    escalate_blocked_to_slug() {
+      printf 'escalated:%s\n' "$2"
+    }
+    CLAUDE_OVERLAY_LOAD_VERIFY=1 \
+    CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS=0 \
+    CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=2 \
+    CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS=1 \
+      wait_for_all_workers_ready "session" "a" "b" "c"
+  } 2>&1
+) && rc=0 || rc=$?
+assert_rc "4b slow successful probes do not skip later workers → rc=0" "0" "$rc"
+assert_contains "4b final worker was probed" "probing skill registry for 'c'" "$out"
+assert_not_contains "4b no worker skipped before probe" "SKIPPED" "$out"
+assert_not_contains "4b no false BLOCKED escalation" "escalated:" "$out"
+unset out rc
+
 echo
 echo "=== Test 5: cmd_verify validates session arg ==="
 

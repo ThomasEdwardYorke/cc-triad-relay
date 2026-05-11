@@ -147,7 +147,7 @@ Env vars:
                                            names to forward via `-e`)
   CLAUDE_OVERLAY_LOAD_VERIFY              (default 1; set 0 to skip wait+verify, e.g. mock-claude tests)
   CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS    (default 5; baseline sleep after spawn before any probe)
-  CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS    (default 20; max total wait incl. baseline + ready poll)
+  CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS    (default 20; total wait budget, auto-raised to cover every worker probe)
   CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS     (default 12; max wait for /help probe output to populate)
   CLAUDE_SKILL_VERIFY_ESCALATE            (default 1; set 0 to skip BLOCKED prompt injection on failure)
   CLAUDE_REQUIRED_SKILLS                  (default 6 harness skills; whitespace-separated list)
@@ -459,13 +459,13 @@ wait_for_all_workers_ready() {
     echo "Warning: CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS must be integer; defaulting to 12" >&2
     probe_timeout=12
   fi
-  # Adversarial review fix (enforce MAX_WAIT_SECONDS as a real ceiling):
-  # max_wait must be >= min_wait + probe_timeout. If the operator set max_wait
-  # too low, raise it silently so the probe loop is not truncated below its
-  # own minimum useful duration.
-  local required_max=$((min_wait + probe_timeout))
+  # Adversarial review fix (enforce MAX_WAIT_SECONDS without false-skipping
+  # later workers): max_wait must cover the baseline plus one full probe
+  # timeout per slug. If the operator set max_wait too low, raise it so every
+  # worker receives at least one probe before any MAX_WAIT branch can fire.
+  local required_max=$((min_wait + probe_timeout * ${#slugs[@]}))
   if [[ "$max_wait" -lt "$required_max" ]]; then
-    echo "Warning: CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=$max_wait < (MIN_WAIT $min_wait + VERIFY_TIMEOUT $probe_timeout); raising to $required_max" >&2
+    echo "Warning: CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=$max_wait < (MIN_WAIT $min_wait + VERIFY_TIMEOUT $probe_timeout * WORKERS ${#slugs[@]}); raising to $required_max" >&2
     max_wait=$required_max
   fi
 

@@ -287,8 +287,10 @@ Defaults:
 - `CLAUDE_OVERLAY_LOAD_VERIFY=1` — set `0` to skip Stages 1-3 entirely (used
   by mock-claude e2e fixture and any non-interactive test path where the
   per-window binary cannot service `/help`).
-- `CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=20` — hard ceiling on the total
-  wait (baseline + probe) per worker.
+- `CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=20` — total launch wait budget for
+  Stage 1+2. If it is lower than
+  `MIN_WAIT + VERIFY_TIMEOUT * worker_count`, the launcher raises it so every
+  worker receives at least one registry probe before any MAX_WAIT skip.
 - `CLAUDE_REQUIRED_SKILLS` — whitespace-separated list of skill identifiers
   the probe demands. Default is the 6 harness Phase-1-to-7 skills:
   `harness:tdd-implement harness:codex-sync harness:pseudo-coderabbit-loop`
