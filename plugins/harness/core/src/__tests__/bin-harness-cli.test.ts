@@ -22,11 +22,9 @@ import {
   existsSync,
   readFileSync,
   writeFileSync,
-  mkdirSync,
-  chmodSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, delimiter, dirname, resolve, join } from "node:path";
+import { basename, dirname, resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -294,52 +292,44 @@ describe("bin/harness pr-metrics — PR metrics collection", () => {
   });
 
   it("fails closed with aggregated missing PR numbers when gh cannot fetch a requested PR", () => {
-    const binDir = join(tmpDir, "bin");
-    mkdirSync(binDir);
-    const fakeGhJs = join(binDir, "fake-gh.js");
+    const fakeGhHook = join(tmpDir, "fake-gh-hook.cjs");
     writeFileSync(
-      fakeGhJs,
+      fakeGhHook,
       [
-        "const args = process.argv.slice(2);",
-        "if (args[0] === 'repo' && args[1] === 'view') {",
-        "  console.log(JSON.stringify({ nameWithOwner: 'example-org/my-project' }));",
-        "  process.exit(0);",
-        "}",
-        "if (args[0] === 'pr' && args[1] === 'view') {",
-        "  const number = args[2];",
-        "  if (number === '90') {",
-        "    console.log(JSON.stringify({",
-        "      number: 90,",
-        "      title: 'feat: first PR',",
-        "      url: 'https://github.com/example-org/my-project/pull/90',",
-        "      state: 'MERGED',",
-        "      createdAt: '2026-05-10T00:00:00Z',",
-        "      mergedAt: '2026-05-10T01:00:00Z',",
-        "      reviews: []",
-        "    }));",
-        "    process.exit(0);",
+        "const childProcess = require('node:child_process');",
+        "const { syncBuiltinESMExports } = require('node:module');",
+        "const originalExecFileSync = childProcess.execFileSync;",
+        "childProcess.execFileSync = function fakeGhExecFileSync(file, args = [], options) {",
+        "  if ((file === 'which' || file === 'where') && args[0] === 'gh') {",
+        "    return '';",
         "  }",
-        "  console.error(`missing PR ${number}`);",
-        "  process.exit(1);",
+        "  if (file !== 'gh') {",
+        "    return originalExecFileSync.apply(this, arguments);",
+        "  }",
+        "  if (args[0] === 'repo' && args[1] === 'view') {",
+        "    return JSON.stringify({ nameWithOwner: 'example-org/my-project' });",
+        "  }",
+        "  if (args[0] === 'pr' && args[1] === 'view') {",
+        "    const number = args[2];",
+        "    if (number === '90') {",
+        "      return JSON.stringify({",
+        "        number: 90,",
+        "        title: 'feat: first PR',",
+        "        url: 'https://github.com/example-org/my-project/pull/90',",
+        "        state: 'MERGED',",
+        "        createdAt: '2026-05-10T00:00:00Z',",
+        "        mergedAt: '2026-05-10T01:00:00Z',",
+        "        reviews: []",
+        "      });",
+        "    }",
+        "    throw new Error(`missing PR ${number}`);",
+        "  }",
+        "  throw new Error(`unexpected gh args: ${args.join(' ')}`);",
         "}",
-        "console.error(`unexpected gh args: ${args.join(' ')}`);",
-        "process.exit(1);",
+        "syncBuiltinESMExports();",
         "",
       ].join("\n"),
     );
-    if (process.platform === "win32") {
-      writeFileSync(
-        join(binDir, "gh.cmd"),
-        `@echo off\r\n"${process.execPath}" "${fakeGhJs}" %*\r\n`,
-      );
-    } else {
-      const ghShim = join(binDir, "gh");
-      writeFileSync(
-        ghShim,
-        `#!/usr/bin/env node\nrequire(${JSON.stringify(fakeGhJs)});\n`,
-      );
-      chmodSync(ghShim, 0o755);
-    }
 
     const jsonOut = join(tmpDir, "pr-metrics.json");
     const mdOut = join(tmpDir, "pr-metrics.md");
@@ -353,7 +343,12 @@ describe("bin/harness pr-metrics — PR metrics collection", () => {
         "--output-md",
         mdOut,
       ],
-      { cwd: tmpDir, env: { PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}` } },
+      {
+        cwd: tmpDir,
+        env: {
+          NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --require=${fakeGhHook}`.trim(),
+        },
+      },
     );
     const combined = result.stdout + result.stderr;
 
