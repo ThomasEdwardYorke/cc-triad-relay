@@ -189,6 +189,10 @@ P3.1 を Model B で実施した結果を保存し、対照実験として **同
 **集計 tooling**:
 - `bin/harness phase-3-metrics --pr-range <from>..<to>` のような CLI を新設して標準化 (Phase 3 期間中に実装)
 - 中間出力: JSON (`docs/maintainer/phase-3-metrics.json`)、最終 report は markdown
+- 実装済み CLI: 公開 surface では汎用名 `bin/harness pr-metrics --pr-range <from>..<to> [--repo owner/name]` として提供する。
+  - `gh pr view` から PR open → merge/close wallclock、CodeRabbit review / change-request / approval 数を集計する。
+  - Phase 3 運用では `--output-json docs/maintainer/phase-3-metrics.json` / `--output-md docs/maintainer/phase-3-results-<YYYY-MM-DD>.md` を明示する。
+  - API token cost / Codex Phase 7 FIX_FIRST rounds / post-merge hot-fix / operator load は GitHub metadata から導出できないため、JSON/Markdown の manual metrics 欄に `TBD` として残す。
 
 **成果物**: `docs/maintainer/phase-3-results-<YYYY-MM-DD>.md` (期間: P3.1 完了から 1 週間後)
 
