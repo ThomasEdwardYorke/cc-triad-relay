@@ -47,12 +47,14 @@ Use this skill when the user asks Codex to implement, fix, refactor, or continue
 ## Workflow
 
 1. Classify the request as a single task, a small batch, or a handoff resume.
-2. Build a short checklist covering RED, GREEN, verification, local review, and handoff updates.
-3. Route one implementation task to `tdd-implement`.
-4. Use `pseudo-coderabbit-loop` before push when the branch is intended for PR.
-5. Run the Codex second-opinion gate against the same diff before calling the branch clear.
-6. Use `session-handoff` at the end when the user asked for durable next-session context.
+2. For handoff-managed work, start with `session-handoff check` and pin the top active task before editing.
+3. Build a short checklist covering RED, GREEN, verification, local review, and handoff updates.
+4. Route one implementation task to `tdd-implement`.
+5. Use `pseudo-coderabbit-loop` before push when the branch is intended for PR.
+6. Run the Codex second-opinion gate against the same diff before calling the branch clear.
+7. After implementation status, PR status, CodeRabbit status, or CI status changes, run `session-handoff update`.
+8. Before ending any implementation session that pushed a branch, opened a PR, or changed CodeRabbit/CI state, run `session-handoff archive` so the next Codex session has the exact restart point.
 
 ## Completion Contract
 
-End with the branch, files changed, tests run, second-opinion status, remaining risks, and whether the local-only boundary stayed clean.
+End with the branch, files changed, tests run, second-opinion status, PR/CodeRabbit/CI state, remaining risks, handoff update/archive status, and whether the local-only boundary stayed clean.

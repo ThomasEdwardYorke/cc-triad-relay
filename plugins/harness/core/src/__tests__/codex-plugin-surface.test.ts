@@ -171,6 +171,37 @@ describe("Codex plugin platform surface", () => {
     }
   });
 
+  it("documents Codex handoff lifecycle parity without Claude-only metadata", () => {
+    const sessionHandoff = readRepoFile(
+      "plugins/codex-harness/skills/session-handoff/SKILL.md",
+    );
+    const harnessWork = readRepoFile(
+      "plugins/codex-harness/skills/harness-work/SKILL.md",
+    );
+
+    expect(sessionHandoff).toMatch(/check\s*->\s*update\s*->\s*archive/i);
+    expect(sessionHandoff).toMatch(/next-session quick-start/i);
+    expect(sessionHandoff).toMatch(/current branch/i);
+    expect(sessionHandoff).toMatch(/current commit/i);
+    expect(sessionHandoff).toMatch(/PR\/CodeRabbit\/CI state/i);
+    expect(sessionHandoff).toMatch(/remaining tasks/i);
+    expect(sessionHandoff).toContain(
+      "git ls-files -- harness.config.json docs/maintainer/handoff .docs/handoff",
+    );
+
+    expect(harnessWork).toMatch(/session-handoff check/i);
+    expect(harnessWork).toMatch(/session-handoff update/i);
+    expect(harnessWork).toMatch(/session-handoff archive/i);
+    expect(harnessWork).toMatch(
+      /Before ending any implementation session[\s\S]*branch[\s\S]*PR[\s\S]*CodeRabbit\/CI state[\s\S]*session-handoff archive/i,
+    );
+    expect(harnessWork).not.toMatch(/long-running implementation session/i);
+
+    expect(sessionHandoff).not.toContain("allowed-tools");
+    expect(sessionHandoff).not.toContain("argument-hint");
+    expect(sessionHandoff).not.toContain("description-ja");
+  });
+
   it("requires a fail-closed Codex second-opinion gate on review and implementation skills", () => {
     for (const skillName of SECOND_OPINION_CODEX_SKILLS) {
       const skillPath = `plugins/codex-harness/skills/${skillName}/SKILL.md`;
