@@ -5,7 +5,7 @@
 # Unit tests for the skill-registry-verify helpers in
 # `plugins/harness/scripts/parallel-sessions-template.sh`.
 #
-# 検証対象 (D-204 case A / 累計 20 件 critical mass 撲滅、3 連続再現性):
+# 検証対象 (overlay-load race regression guard + reproducible multi-run scenario):
 #   1. check_skill_registry_in_output   — pane 内 skill 名検出 (純粋関数)
 #   2. resolve_required_skills          — env var / default の解決
 #   3. build_blocked_escalation_message — 8-section BLOCKED 文面組立
@@ -127,7 +127,7 @@ out=$(check_skill_registry_in_output "anything" "" 2>&1) && rc=0 || rc=$?
 assert_rc "1d empty required → rc=0" "0" "$rc"
 unset rc out
 
-# 1e: tmux line-wrap (skill split across newline) → still found (Codex Phase 4 Major #1 regression guard)
+# 1e: tmux line-wrap (skill split across newline) → still found (line-wrap regression guard)
 wrapped=$(printf 'some prefix harness:\ntdd-implement and other text\nharness:codex-sync here\n')
 out=$(check_skill_registry_in_output "$wrapped" "harness:tdd-implement harness:codex-sync") && rc=0 || rc=$?
 assert_rc "1e line-wrap split skill found → rc=0" "0" "$rc"
@@ -161,7 +161,7 @@ assert_eq "2b env override" "custom:a custom:b" "$out"
 unset CLAUDE_REQUIRED_SKILLS out
 
 # 2c: adversarial - invalid token (shell metachar) → fall back to defaults + warn
-# Codex Phase 7 review (security) regression guard.
+# (security regression guard against env-var injection).
 export CLAUDE_REQUIRED_SKILLS='custom:safe; rm -rf /'
 out=$(resolve_required_skills 2>/dev/null)
 assert_contains "2c invalid token rejected, falls back to defaults (tdd-implement)" "harness:tdd-implement" "$out"
@@ -325,7 +325,7 @@ unset out tmp_wt_8b
 echo
 echo "=== Test 9: copy_handoff_sources_to_worktree (Layer 3, dry-run) ==="
 # copy_handoff_sources_to_worktree <wt_path>: reads HANDOFF_COPY_SOURCES, validates,
-# and emits `cp -r <src> <wt_path>/` per source.
+# and emits `cp -RP <src> <wt_path>/` per source (preserves nested symlinks).
 
 # 9a: empty env → no emit (no-op)
 tmp_wt_9a=$(mktemp -d)
@@ -337,7 +337,7 @@ DRY_RUN=0
 rmdir "$tmp_wt_9a"
 unset out tmp_wt_9a
 
-# 9b: 1 abs path → emits cp -r. macOS resolves `/var` → `/private/var` via the
+# 9b: 1 abs path → emits cp -RP. macOS resolves `/var` → `/private/var` via the
 # `cd ... && pwd -P` realpath step inside resolve_handoff_copy_sources, so the
 # expected needle must use the same normalization (otherwise the test is
 # environment-sensitive and fails on macOS but passes on Linux).
