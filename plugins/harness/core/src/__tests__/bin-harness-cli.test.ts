@@ -148,6 +148,151 @@ describe("bin/harness check — project state recommendations (onboarding gap de
   });
 });
 
+describe("bin/harness pr-metrics — PR metrics collection", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "harness-pr-metrics-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("root usage advertises the PR metrics command", () => {
+    const result = runHarness(["--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("harness pr-metrics --pr-range <from>..<to>");
+  });
+
+  it("requires --pr-range before collecting metrics", () => {
+    const result = runHarness(["pr-metrics"], { cwd: tmpDir });
+    const combined = result.stdout + result.stderr;
+
+    expect(result.exitCode).toBe(2);
+    expect(combined).toContain("harness pr-metrics");
+    expect(combined).toContain("--pr-range");
+  });
+
+  it("prints pr-metrics help to stdout", () => {
+    const result = runHarness(["pr-metrics", "--help"], { cwd: tmpDir });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("usage: harness pr-metrics");
+    expect(result.stdout).toContain("--input PATH");
+  });
+
+  it("writes JSON and Markdown metrics reports from an offline PR fixture", () => {
+    const inputPath = join(tmpDir, "prs.json");
+    const jsonOut = join(tmpDir, "pr-metrics.json");
+    const mdOut = join(tmpDir, "pr-metrics-2026-05-12.md");
+    writeFileSync(
+      inputPath,
+      JSON.stringify(
+        {
+          repository: "ThomasEdwardYorke/cc-triad-relay",
+          prs: [
+            {
+              number: 90,
+              title: "feat: add first pilot endpoint",
+              url: "https://github.com/ThomasEdwardYorke/cc-triad-relay/pull/90",
+              state: "MERGED",
+              createdAt: "2026-05-10T00:00:00Z",
+              mergedAt: "2026-05-10T03:30:00Z",
+              reviews: [
+                { state: "CHANGES_REQUESTED", author: { login: "coderabbitai" } },
+                { state: "APPROVED", author: { login: "coderabbitai" } },
+                { state: "COMMENTED", author: { login: "reviewer" } },
+              ],
+            },
+            {
+              number: 91,
+              title: "fix: second pilot cleanup",
+              url: "https://github.com/ThomasEdwardYorke/cc-triad-relay/pull/91",
+              state: "MERGED",
+              createdAt: "2026-05-10T04:00:00Z",
+              mergedAt: "2026-05-10T05:00:00Z",
+              reviews: [{ state: "APPROVED", author: { login: "coderabbitai[bot]" } }],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = runHarness(
+      [
+        "pr-metrics",
+        "--pr-range",
+        "90..91",
+        "--input",
+        inputPath,
+        "--output-json",
+        jsonOut,
+        "--output-md",
+        mdOut,
+      ],
+      { cwd: tmpDir },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(jsonOut)).toBe(true);
+    expect(existsSync(mdOut)).toBe(true);
+
+    const metrics = JSON.parse(readFileSync(jsonOut, "utf-8"));
+    expect(metrics.source.pr_range).toBe("90..91");
+    expect(metrics.summary.pr_count).toBe(2);
+    expect(metrics.summary.merged_pr_count).toBe(2);
+    expect(metrics.summary.wallclock_hours_median).toBe(2.25);
+    expect(metrics.summary.wallclock_hours_max).toBe(3.5);
+    expect(metrics.summary.coderabbit_reviews_total).toBe(3);
+    expect(metrics.summary.coderabbit_change_requests_total).toBe(1);
+    expect(metrics.summary.coderabbit_approvals_total).toBe(2);
+    expect(metrics.prs[0].manual_metrics.operator_load).toBeNull();
+
+    const md = readFileSync(mdOut, "utf-8");
+    expect(md).toContain("# PR Metrics Report");
+    expect(md).toContain("PR #90");
+    expect(md).toContain("Manual metrics");
+    expect(md).toContain("TBD");
+  });
+
+  it("fails closed when the offline fixture is missing requested PR numbers", () => {
+    const inputPath = join(tmpDir, "prs-missing.json");
+    writeFileSync(
+      inputPath,
+      JSON.stringify(
+        {
+          prs: [
+            {
+              number: 90,
+              title: "feat: only one PR",
+              state: "MERGED",
+              createdAt: "2026-05-10T00:00:00Z",
+              mergedAt: "2026-05-10T01:00:00Z",
+              reviews: [],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = runHarness(
+      ["pr-metrics", "--pr-range", "90..91", "--input", inputPath],
+      { cwd: tmpDir },
+    );
+    const combined = result.stdout + result.stderr;
+
+    expect(result.exitCode).toBe(1);
+    expect(combined).toContain("missing PR data for requested range");
+    expect(combined).toContain("#91");
+  });
+});
+
 describe("bin/harness init — extended bootstrap (template-driven)", () => {
   let tmpDir: string;
 
