@@ -929,10 +929,11 @@ function printPrMetricsUsage(stream = process.stderr) {
   stream.write(
     [
       "usage: harness pr-metrics --pr-range <from>..<to> [--repo owner/name]",
-      "       [--input PATH] [--output-json PATH] [--output-md PATH]",
+      "       [--input PATH] [--manual-metrics PATH] [--output-json PATH] [--output-md PATH]",
       "",
       "Collect PR review metrics from GitHub PR metadata.",
       "Use --input for an offline fixture with { repository, prs }.",
+      "Use --manual-metrics for GitHub-invisible values keyed by PR number.",
       "",
     ].join("\n"),
   );
@@ -942,6 +943,7 @@ function parsePrMetricsArgs(rest) {
   const args = {
     prRange: undefined,
     input: undefined,
+    manualMetrics: undefined,
     outputJson: undefined,
     outputMd: undefined,
     repo: undefined,
@@ -975,6 +977,14 @@ function parsePrMetricsArgs(rest) {
     }
     if (arg.startsWith("--input=")) {
       args.input = arg.slice("--input=".length);
+      continue;
+    }
+    if (arg === "--manual-metrics") {
+      args.manualMetrics = readValue(arg);
+      continue;
+    }
+    if (arg.startsWith("--manual-metrics=")) {
+      args.manualMetrics = arg.slice("--manual-metrics=".length);
       continue;
     }
     if (arg === "--output-json") {
@@ -1034,6 +1044,88 @@ function readPrMetricsInput(inputPath) {
     throw new Error("--input must be a JSON array or an object with a prs array");
   }
   return { repository: raw.repository, prs: raw.prs };
+}
+
+const MANUAL_METRIC_KEYS = [
+  "api_token_cost",
+  "independent_review_rework_rounds",
+  "post_merge_hotfixes_7d",
+  "operator_load",
+];
+
+function emptyManualMetrics() {
+  return {
+    api_token_cost: null,
+    independent_review_rework_rounds: null,
+    post_merge_hotfixes_7d: null,
+    operator_load: null,
+  };
+}
+
+function normalizeManualMetricValue(value, sourceLabel, key) {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error(`--manual-metrics ${sourceLabel}.${key} must be finite`);
+    }
+    return value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed === "" ? null : trimmed;
+  }
+  throw new Error(`--manual-metrics ${sourceLabel}.${key} must be a number, string, or null`);
+}
+
+function normalizeManualMetricsRecord(record, sourceLabel) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    throw new Error(`--manual-metrics ${sourceLabel} must be an object`);
+  }
+  const metrics = {};
+  for (const key of MANUAL_METRIC_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
+    const value = normalizeManualMetricValue(record[key], sourceLabel, key);
+    if (value !== undefined) metrics[key] = value;
+  }
+  return metrics;
+}
+
+function readManualMetricsInput(inputPath) {
+  const raw = JSON.parse(readFileSync(resolve(inputPath), "utf-8"));
+  const byPrNumber = new Map();
+  const addRecord = (numberValue, record, sourceLabel) => {
+    const number = Number(numberValue);
+    if (!Number.isInteger(number) || number <= 0) {
+      throw new Error(`--manual-metrics ${sourceLabel} must identify a positive PR number`);
+    }
+    if (byPrNumber.has(number)) {
+      throw new Error(`--manual-metrics has duplicate data for PR #${number}`);
+    }
+    byPrNumber.set(number, normalizeManualMetricsRecord(record, sourceLabel));
+  };
+
+  if (Array.isArray(raw)) {
+    raw.forEach((entry, index) => {
+      const number = entry?.number ?? entry?.pr ?? entry?.pr_number;
+      addRecord(number, entry, `entry[${index}]`);
+    });
+    return byPrNumber;
+  }
+  if (raw && typeof raw === "object" && Array.isArray(raw.prs)) {
+    raw.prs.forEach((entry, index) => {
+      const number = entry?.number ?? entry?.pr ?? entry?.pr_number;
+      addRecord(number, entry, `prs[${index}]`);
+    });
+    return byPrNumber;
+  }
+  if (raw && typeof raw === "object") {
+    for (const [number, record] of Object.entries(raw)) {
+      addRecord(number, record, `PR #${number}`);
+    }
+    return byPrNumber;
+  }
+  throw new Error("--manual-metrics must be a JSON object, array, or object with a prs array");
 }
 
 function runGhJson(args) {
@@ -1133,7 +1225,7 @@ function normalizeReview(review) {
   return { state, author };
 }
 
-function normalizePrMetricsPr(pr) {
+function normalizePrMetricsPr(pr, manualMetricsByNumber = new Map()) {
   const reviews = Array.isArray(pr?.reviews) ? pr.reviews.map(normalizeReview) : [];
   const coderabbitReviews = reviews.filter((review) => isCoderabbitActor(review.author));
   const coderabbitChangeRequests = coderabbitReviews.filter(
@@ -1143,8 +1235,10 @@ function normalizePrMetricsPr(pr) {
     (review) => review.state === "APPROVED",
   ).length;
   const wallclockHours = hoursBetween(pr?.createdAt, pr?.mergedAt ?? pr?.closedAt);
+  const number = Number(pr?.number);
+  const manualMetrics = manualMetricsByNumber.get(number) ?? {};
   return {
-    number: Number(pr?.number),
+    number,
     title: String(pr?.title ?? ""),
     url: String(pr?.url ?? ""),
     state: String(pr?.state ?? "").toUpperCase(),
@@ -1159,12 +1253,7 @@ function normalizePrMetricsPr(pr) {
     coderabbit_approvals: coderabbitApprovals,
     total_reviews: reviews.length,
     total_comments: Array.isArray(pr?.comments) ? pr.comments.length : null,
-    manual_metrics: {
-      api_token_cost: null,
-      independent_review_rework_rounds: null,
-      post_merge_hotfixes_7d: null,
-      operator_load: null,
-    },
+    manual_metrics: { ...emptyManualMetrics(), ...manualMetrics },
   };
 }
 
@@ -1217,6 +1306,17 @@ function renderPrMetricsMarkdown(metrics) {
       .map(escapeMarkdownCell)
       .join(" | "),
   );
+  const manualRows = metrics.prs.map((pr) =>
+    [
+      `PR #${pr.number}`,
+      pr.manual_metrics?.api_token_cost ?? "TBD",
+      pr.manual_metrics?.independent_review_rework_rounds ?? "TBD",
+      pr.manual_metrics?.post_merge_hotfixes_7d ?? "TBD",
+      pr.manual_metrics?.operator_load ?? "TBD",
+    ]
+      .map(escapeMarkdownCell)
+      .join(" | "),
+  );
   return [
     "# PR Metrics Report",
     "",
@@ -1242,12 +1342,11 @@ function renderPrMetricsMarkdown(metrics) {
     "",
     "## Manual metrics",
     "",
-    "The following PR metrics are not derivable from GitHub PR metadata and remain TBD until the operator fills them from dashboards or session logs:",
+    "The following PR metrics are not derivable from GitHub PR metadata. Provide --manual-metrics to fill them from dashboards or session logs; otherwise each value remains TBD.",
     "",
-    "- API token cost: TBD",
-    "- Independent review rework rounds: TBD",
-    "- Post-merge hot-fixes within 7 days: TBD",
-    "- Operator load: TBD",
+    "PR | API token cost | Independent review rework rounds | Post-merge hot-fixes 7d | Operator load",
+    "--- | ---: | ---: | ---: | ---",
+    ...manualRows,
     "",
   ].join("\n");
 }
@@ -1316,13 +1415,19 @@ async function cmdPrMetrics(rest) {
           .join(", ")}`,
       );
     }
-    const prs = filterPrMetricsPrsByRange(input.prs, parsedRange.numbers).map(normalizePrMetricsPr);
+    const manualMetricsByNumber = args.manualMetrics
+      ? readManualMetricsInput(args.manualMetrics)
+      : new Map();
+    const prs = filterPrMetricsPrsByRange(input.prs, parsedRange.numbers).map((pr) =>
+      normalizePrMetricsPr(pr, manualMetricsByNumber),
+    );
     const metrics = {
       generated_at: now.toISOString(),
       source: {
         pr_range: args.prRange,
         repository,
         input: args.input ? resolve(args.input) : "gh",
+        manual_metrics: args.manualMetrics ? resolve(args.manualMetrics) : null,
       },
       summary: summarizePrMetrics(prs),
       prs,

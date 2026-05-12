@@ -180,6 +180,7 @@ describe("bin/harness pr-metrics — PR metrics collection", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("usage: harness pr-metrics");
     expect(result.stdout).toContain("--input PATH");
+    expect(result.stdout).toContain("--manual-metrics PATH");
   });
 
   it("writes JSON and Markdown metrics reports from an offline PR fixture", () => {
@@ -256,6 +257,95 @@ describe("bin/harness pr-metrics — PR metrics collection", () => {
     expect(md).toContain("PR #90");
     expect(md).toContain("Manual metrics");
     expect(md).toContain("TBD");
+  });
+
+  it("overlays operator-supplied manual metrics from a sidecar fixture", () => {
+    const inputPath = join(tmpDir, "prs.json");
+    const manualPath = join(tmpDir, "manual-metrics.json");
+    const jsonOut = join(tmpDir, "pr-metrics.json");
+    const mdOut = join(tmpDir, "pr-metrics.md");
+    writeFileSync(
+      inputPath,
+      JSON.stringify(
+        {
+          repository: "example-org/my-project",
+          prs: [
+            {
+              number: 90,
+              title: "feat: first Model B slice",
+              url: "https://github.com/example-org/my-project/pull/90",
+              state: "MERGED",
+              createdAt: "2026-05-10T00:00:00Z",
+              mergedAt: "2026-05-10T01:00:00Z",
+              reviews: [],
+            },
+            {
+              number: 91,
+              title: "fix: second Model B slice",
+              url: "https://github.com/example-org/my-project/pull/91",
+              state: "MERGED",
+              createdAt: "2026-05-10T02:00:00Z",
+              mergedAt: "2026-05-10T03:00:00Z",
+              reviews: [],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(
+      manualPath,
+      JSON.stringify(
+        {
+          "90": {
+            api_token_cost: 42.5,
+            independent_review_rework_rounds: 2,
+            post_merge_hotfixes_7d: 0,
+            operator_load: 3,
+          },
+          "91": {
+            operator_load: "review reply x1",
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = runHarness(
+      [
+        "pr-metrics",
+        "--pr-range",
+        "90..91",
+        "--input",
+        inputPath,
+        "--manual-metrics",
+        manualPath,
+        "--output-json",
+        jsonOut,
+        "--output-md",
+        mdOut,
+      ],
+      { cwd: tmpDir },
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    const metrics = JSON.parse(readFileSync(jsonOut, "utf-8"));
+    expect(metrics.source.manual_metrics).toBe(resolve(manualPath));
+    expect(metrics.prs[0].manual_metrics).toEqual({
+      api_token_cost: 42.5,
+      independent_review_rework_rounds: 2,
+      post_merge_hotfixes_7d: 0,
+      operator_load: 3,
+    });
+    expect(metrics.prs[1].manual_metrics.operator_load).toBe("review reply x1");
+    expect(metrics.prs[1].manual_metrics.api_token_cost).toBeNull();
+
+    const md = readFileSync(mdOut, "utf-8");
+    expect(md).toContain("PR #90 | 42.5 | 2 | 0 | 3");
+    expect(md).toContain("PR #91 | TBD | TBD | TBD | review reply x1");
   });
 
   it("fails closed when the offline fixture is missing requested PR numbers", () => {
