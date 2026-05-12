@@ -347,8 +347,8 @@ tmp_src_9b_resolved=$(cd "$tmp_src_9b" && pwd -P)
 export HANDOFF_COPY_SOURCES="$tmp_src_9b"
 DRY_RUN=1
 out=$(copy_handoff_sources_to_worktree "$tmp_wt_9b" 2>&1)
-assert_contains "9b dry-run emits cp -r" \
-  "cp -r '$tmp_src_9b_resolved' '${tmp_wt_9b}/'" "$out"
+assert_contains "9b dry-run emits cp -RP" \
+  "cp -RP '$tmp_src_9b_resolved' '${tmp_wt_9b}/'" "$out"
 DRY_RUN=0
 rmdir "$tmp_src_9b" "$tmp_wt_9b"
 unset HANDOFF_COPY_SOURCES out tmp_src_9b tmp_src_9b_resolved tmp_wt_9b

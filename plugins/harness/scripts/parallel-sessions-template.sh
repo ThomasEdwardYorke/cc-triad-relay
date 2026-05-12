@@ -203,10 +203,24 @@ resolve_handoff_copy_sources() {
 }
 
 copy_handoff_sources_to_worktree() {
-  # Copy every HANDOFF_COPY_SOURCES entry into $1 via `emit "cp -r ..."`.
+  # Copy every HANDOFF_COPY_SOURCES entry into $1 via `emit "cp -RP ..."`.
   # No-op when env is empty. Used by cmd_start AFTER git worktree add and
   # BEFORE plugin install so the worktree path exists.
   # Args: $1 = worktree path (absolute or relative; passed through to cp).
+  #
+  # Why `cp -RP` (preserve symlinks) instead of `cp -r` (default follow):
+  # resolve_handoff_copy_sources already normalizes the ENTRY path via
+  # `cd && pwd -P` (dereferences operator-supplied symlinks at the top
+  # level). However, if the entry is a directory whose subtree contains
+  # symlinks to outside paths (e.g. a `link-to-secret -> /etc/private`
+  # inside an otherwise innocent handoff directory), BSD `cp -r` on macOS
+  # FOLLOWS those nested symlinks by default and materializes the targets
+  # inside the worktree — a silent data-exfiltration vector that bypasses
+  # the operator-trust boundary documented at the top of this file. `-RP`
+  # preserves the symlink as-is so the worktree mirrors the source tree
+  # literally; operators who genuinely want a flattened copy must either
+  # pre-flatten with their own command or set up the link target before
+  # invoking the launcher.
   local wt_path="$1"
   if [[ -z "${HANDOFF_COPY_SOURCES:-}" ]]; then
     return 0
@@ -214,7 +228,7 @@ copy_handoff_sources_to_worktree() {
   local src
   while IFS= read -r src; do
     [[ -z "$src" ]] && continue
-    emit "cp -r '$src' '${wt_path}/'"
+    emit "cp -RP '$src' '${wt_path}/'"
   done < <(resolve_handoff_copy_sources)
 }
 
