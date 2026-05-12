@@ -362,13 +362,14 @@ cat > "$tmp_settings_6a" <<'JSON'
   }
 }
 JSON
-# Use `paste -sd ' ' -` instead of `tr '\n' ' '` for portable newline→space
-# conversion: Git Bash on Windows occasionally fails to transform `\n` literally
-# via `tr` (observed in CI run on windows-latest 18/20/22), leaving the captured
-# output with embedded newlines. `paste -sd ' ' -` is POSIX and behaves the same
-# on macOS / Linux / Git Bash for Windows. Note: paste output has no trailing
-# space whereas `tr '\n' ' '` does, so the expected string is updated to match.
-out=$(resolve_enabled_plugins "$tmp_settings_6a" 2>/dev/null | sort | paste -sd ' ' -)
+# Portable newline→space conversion across macOS / Linux / Git Bash for Windows:
+#   - `tr -d '\r'` strips Windows CRLF endings (python3 print() under MSYS bash
+#     emits `\r\n` rather than `\n`, leaving stray CRs that prevent `paste`
+#     from joining lines correctly — observed empirically on the prior CI run
+#     where paste alone still produced embedded newlines).
+#   - `paste -sd ' ' -` is POSIX-portable and produces space-joined output
+#     without the trailing space that `tr '\n' ' '` would have added.
+out=$(resolve_enabled_plugins "$tmp_settings_6a" 2>/dev/null | tr -d '\r' | sort | paste -sd ' ' -)
 assert_eq "6a enabled plugins extracted (3 true values, sorted)" \
   "codex@openai-codex document-skills@anthropic-agent-skills harness@cc-triad-relay" \
   "$out"
