@@ -1046,12 +1046,19 @@ function readPrMetricsInput(inputPath) {
   return { repository: raw.repository, prs: raw.prs };
 }
 
-const MANUAL_METRIC_KEYS = [
-  "api_token_cost",
-  "independent_review_rework_rounds",
-  "post_merge_hotfixes_7d",
-  "operator_load",
-];
+const EXPECTED_MANUAL_METRIC_TYPES = {
+  api_token_cost: "number",
+  independent_review_rework_rounds: "number",
+  post_merge_hotfixes_7d: "number",
+  operator_load: "string_or_number",
+};
+const MANUAL_METRIC_KEYS = Object.keys(EXPECTED_MANUAL_METRIC_TYPES);
+const MANUAL_METRIC_RECORD_KEYS = new Set([
+  ...MANUAL_METRIC_KEYS,
+  "number",
+  "pr",
+  "pr_number",
+]);
 
 function emptyManualMetrics() {
   return {
@@ -1065,6 +1072,7 @@ function emptyManualMetrics() {
 function normalizeManualMetricValue(value, sourceLabel, key) {
   if (value === undefined) return undefined;
   if (value === null) return null;
+  const expectedType = EXPECTED_MANUAL_METRIC_TYPES[key];
   if (typeof value === "number") {
     if (!Number.isFinite(value)) {
       throw new Error(`--manual-metrics ${sourceLabel}.${key} must be finite`);
@@ -1073,14 +1081,28 @@ function normalizeManualMetricValue(value, sourceLabel, key) {
   }
   if (typeof value === "string") {
     const trimmed = value.trim();
-    return trimmed === "" ? null : trimmed;
+    if (trimmed === "") return null;
+    if (expectedType === "number") {
+      const parsed = Number(trimmed);
+      if (!Number.isFinite(parsed)) {
+        throw new Error(`--manual-metrics ${sourceLabel}.${key} must be numeric`);
+      }
+      return parsed;
+    }
+    return trimmed;
   }
-  throw new Error(`--manual-metrics ${sourceLabel}.${key} must be a number, string, or null`);
+  const expectedLabel = expectedType === "number" ? "a number or numeric string" : "a number or string";
+  throw new Error(`--manual-metrics ${sourceLabel}.${key} must be ${expectedLabel}, or null`);
 }
 
 function normalizeManualMetricsRecord(record, sourceLabel) {
   if (!record || typeof record !== "object" || Array.isArray(record)) {
     throw new Error(`--manual-metrics ${sourceLabel} must be an object`);
+  }
+  for (const key of Object.keys(record)) {
+    if (!MANUAL_METRIC_RECORD_KEYS.has(key)) {
+      throw new Error(`--manual-metrics ${sourceLabel} has unknown field '${key}'`);
+    }
   }
   const metrics = {};
   for (const key of MANUAL_METRIC_KEYS) {

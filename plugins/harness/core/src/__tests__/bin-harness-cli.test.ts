@@ -299,7 +299,7 @@ describe("bin/harness pr-metrics — PR metrics collection", () => {
       JSON.stringify(
         {
           "90": {
-            api_token_cost: 42.5,
+            api_token_cost: "42.5",
             independent_review_rework_rounds: 2,
             post_merge_hotfixes_7d: 0,
             operator_load: 3,
@@ -346,6 +346,81 @@ describe("bin/harness pr-metrics — PR metrics collection", () => {
     const md = readFileSync(mdOut, "utf-8");
     expect(md).toContain("PR #90 | 42.5 | 2 | 0 | 3");
     expect(md).toContain("PR #91 | TBD | TBD | TBD | review reply x1");
+  });
+
+  it("rejects non-numeric manual values for numeric metrics", () => {
+    const inputPath = join(tmpDir, "prs.json");
+    const manualPath = join(tmpDir, "manual-metrics.json");
+    writeFileSync(
+      inputPath,
+      JSON.stringify({
+        prs: [
+          {
+            number: 90,
+            title: "feat: first Model B slice",
+            state: "MERGED",
+            createdAt: "2026-05-10T00:00:00Z",
+            mergedAt: "2026-05-10T01:00:00Z",
+            reviews: [],
+          },
+        ],
+      }),
+    );
+    writeFileSync(
+      manualPath,
+      JSON.stringify({
+        "90": {
+          api_token_cost: "n/a",
+        },
+      }),
+    );
+
+    const result = runHarness(
+      ["pr-metrics", "--pr-range", "90..90", "--input", inputPath, "--manual-metrics", manualPath],
+      { cwd: tmpDir },
+    );
+    const combined = result.stdout + result.stderr;
+
+    expect(result.exitCode).toBe(1);
+    expect(combined).toContain("api_token_cost");
+    expect(combined).toContain("must be numeric");
+  });
+
+  it("rejects unknown manual metrics fields instead of silently dropping typos", () => {
+    const inputPath = join(tmpDir, "prs.json");
+    const manualPath = join(tmpDir, "manual-metrics.json");
+    writeFileSync(
+      inputPath,
+      JSON.stringify({
+        prs: [
+          {
+            number: 90,
+            title: "feat: first Model B slice",
+            state: "MERGED",
+            createdAt: "2026-05-10T00:00:00Z",
+            mergedAt: "2026-05-10T01:00:00Z",
+            reviews: [],
+          },
+        ],
+      }),
+    );
+    writeFileSync(
+      manualPath,
+      JSON.stringify({
+        "90": {
+          api_token_costs: 42.5,
+        },
+      }),
+    );
+
+    const result = runHarness(
+      ["pr-metrics", "--pr-range", "90..90", "--input", inputPath, "--manual-metrics", manualPath],
+      { cwd: tmpDir },
+    );
+    const combined = result.stdout + result.stderr;
+
+    expect(result.exitCode).toBe(1);
+    expect(combined).toContain("unknown field 'api_token_costs'");
   });
 
   it("fails closed when the offline fixture is missing requested PR numbers", () => {
