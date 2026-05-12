@@ -264,7 +264,11 @@ install_plugins_for_worktree() {
   fi
   local plugins
   local resolve_rc=0
-  plugins=$(resolve_enabled_plugins "$settings_path") || resolve_rc=$?
+  # `tr -d '\r'` strips Windows CRLF endings emitted by python3 print() under
+  # Git Bash for Windows, so that the per-plugin `while IFS= read -r plugin`
+  # loop below does not capture a trailing `\r` and reject every plugin
+  # identifier as malformed via the strict regex.
+  plugins=$(resolve_enabled_plugins "$settings_path" | tr -d '\r') || resolve_rc=$?
   if [[ $resolve_rc -ne 0 ]]; then
     echo "[plugin-install] '$wt_path' FAILED — resolve_enabled_plugins rc=$resolve_rc" >&2
     return 1
@@ -1106,7 +1110,10 @@ cmd_cleanup() {
     # path is gone (already removed) or settings.json is absent.
     if [[ -d "$wt" ]] && [[ -f "${wt}/.claude/settings.json" ]]; then
       local plugins
-      plugins=$(resolve_enabled_plugins "${wt}/.claude/settings.json" 2>/dev/null || true)
+      # See install_plugins_for_worktree comment: `tr -d '\r'` is required to
+      # strip Git Bash for Windows CRLF before the per-plugin loop matches the
+      # regex.
+      plugins=$(resolve_enabled_plugins "${wt}/.claude/settings.json" 2>/dev/null | tr -d '\r' || true)
       local plugin
       while IFS= read -r plugin; do
         [[ -z "$plugin" ]] && continue
