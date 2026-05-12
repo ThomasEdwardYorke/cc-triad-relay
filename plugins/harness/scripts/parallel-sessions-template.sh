@@ -241,7 +241,7 @@ install_plugins_for_worktree() {
   #       generic consumers) / 1 (resolve_enabled_plugins error or invalid
   #       plugin name).
   # Why skip-on-missing-settings: this template is generic (a `<project>`
-  # placeholder template), not parts-management-specific. A consumer without
+  # placeholder template), not consumer-specific. A consumer without
   # `.claude/settings.json` should not be forced into Layer 3. The skip emits
   # a stderr INFO so an operator can confirm the path was reached.
   local wt_path="$1"
