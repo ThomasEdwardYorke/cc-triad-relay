@@ -93,7 +93,7 @@ validate_env_var_name() {
   fi
 }
 
-# --- Layer 3 plugin-discovery helpers (D-220 auto-install) ----------------
+# --- Layer 3 plugin-discovery helpers (auto-install) ----------------------
 # Background: parallel-worktree-v2 spawns a fresh top-level claude REPL per
 # worktree. Without project-scoped plugin install, the REPL only sees user-
 # scope plugins (~/.claude/plugins/) and the harness skill catalog appears
@@ -123,10 +123,10 @@ resolve_enabled_plugins() {
     echo "Error: python3 is required for plugin discovery but is not on PATH" >&2
     return 2
   fi
-  # Phase 4 review F8 (MINOR) fix: distinguish JSON parse errors from generic
-  # exceptions so the operator can tell "file is corrupted" from "Python itself
-  # failed". Both still exit 3 (the bash caller treats any non-zero rc here as
-  # "could not list plugins") but the stderr message points at the right thing.
+  # Distinguish JSON parse errors from generic exceptions so the operator can
+  # tell "file is corrupted" from "Python itself failed". Both still exit 3
+  # (the bash caller treats any non-zero rc here as "could not list plugins")
+  # but the stderr message points at the right thing.
   python3 -c '
 import json, sys
 try:
@@ -162,18 +162,18 @@ resolve_handoff_copy_sources() {
   # value compatible with `tmux new-session -e KEY=VAL` propagation if a
   # downstream consumer ever forwards HANDOFF_COPY_SOURCES into the worker
   # environment (not done by default, but future-safe).
-  # Phase 4 review F2 (MINOR) note: each entry is realpath-normalized via
+  # Note: each entry is realpath-normalized via
   # `cd "$(dirname ...)" && pwd -P` which FOLLOWS SYMLINKS to the canonical
   # target. This is intentional (operators may symlink handoff sources from a
   # central drop point) but means the function will silently widen the actual
   # filesystem reach beyond what the literal env string suggests. Per the
   # operator-trust-boundary at the top of this file, callers are responsible
   # for not pointing HANDOFF_COPY_SOURCES at symlinks they do not vouch for.
-  # Phase 4 review F9 (MINOR) note: filesystems allow `:` in path components
-  # (HFS+ / ext4 both permit it). Because IFS=':' is the chosen separator,
-  # operators MUST NOT place paths containing literal colons here — the loop
-  # below would split such paths mid-component and reject the fragments as
-  # relative. This restriction is documented in `usage()`.
+  # Note: filesystems allow `:` in path components (HFS+ / ext4 both permit
+  # it). Because IFS=':' is the chosen separator, operators MUST NOT place
+  # paths containing literal colons here — the loop below would split such
+  # paths mid-component and reject the fragments as relative. This
+  # restriction is documented in `usage()`.
   local raw="${HANDOFF_COPY_SOURCES:-}"
   if [[ -z "$raw" ]]; then
     return 0
@@ -790,19 +790,19 @@ cmd_start() {
       if ! install_plugins_for_worktree "$wt"; then
         echo "Error: plugin install failed for worktree '$wt' (Layer 3)" >&2
         echo "       Coordinator MUST stop before sending the initial /tdd-implement prompt." >&2
-        # Phase 4 review F5 (BLOCKER) fix: tmux new-session at the top of cmd_start
-        # has already created the session, but only some worker windows are added.
-        # Kill the half-spawned session so the next `start` invocation does not
-        # collide on "Session already exists" + so the operator does not need to
-        # manually clean up. `|| true` because the session may already be gone if
-        # an earlier-loop slug failed mid-add.
+        # tmux new-session at the top of cmd_start has already created the
+        # session, but only some worker windows are added. Kill the half-spawned
+        # session so the next `start` invocation does not collide on
+        # "Session already exists" + so the operator does not need to manually
+        # clean up. `|| true` because the session may already be gone if an
+        # earlier-loop slug failed mid-add.
         tmux kill-session -t "$session" 2>/dev/null || true
         exit 3
       fi
     else
       # dry-run emits all install commands even if real-mode would fail-fast on
-      # the first error (Phase 4 review F6 MINOR). This is intentional: dry-run
-      # exists to preview the full command stream, not to model error pathways.
+      # the first error. This is intentional: dry-run exists to preview the
+      # full command stream, not to model error pathways.
       install_plugins_for_worktree "$wt" || true
     fi
     emit "tmux new-window -t '$session' -n '$slug' \"cd '$wt' && $claude -n '$slug' $model_flag --permission-mode $perm\""
@@ -962,19 +962,24 @@ cmd_cleanup() {
       [[ -z "$line" || "$line" == "coordinator" ]] && continue
       slugs+=("$line")
     done <<< "$windows_out"
-    # Phase 4 review F7 (MAJOR) fix: when the tmux session is already gone the
-    # primary discovery returns an empty list and the cleanup would silently
-    # leak every worktree + project-scoped plugin install. Fall back to
+    # Fallback: when the tmux session is already gone the primary discovery
+    # returns an empty list and the cleanup would silently leak every worktree
+    # + project-scoped plugin install. Fall back to
     # `git worktree list --porcelain` and extract <slug> from worktree paths
     # that match the launcher's `${parent}/${prefix}` naming convention.
+    # `base` is captured once so the prefix-strip parameter expansion can
+    # quote it via `${wt_path#"$base"}` (avoids ShellCheck SC2295 — without
+    # the inner quotes, a literal `*` / `?` / `[` inside ${parent} or
+    # ${prefix} would be treated as a glob pattern).
     if [[ ${#slugs[@]} -eq 0 ]]; then
       echo "[cleanup] tmux session '$session' unreachable; falling back to git worktree list" >&2
+      local base="${parent}/${prefix}"
       local wt_line wt_path slug_from_path
       while IFS= read -r wt_line; do
         [[ "$wt_line" =~ ^worktree[[:space:]]+(.+)$ ]] || continue
         wt_path="${BASH_REMATCH[1]}"
-        if [[ "$wt_path" == "${parent}/${prefix}"* ]]; then
-          slug_from_path="${wt_path#${parent}/${prefix}}"
+        if [[ "$wt_path" == "$base"* ]]; then
+          slug_from_path="${wt_path#"$base"}"
           if [[ "$slug_from_path" =~ ^[a-zA-Z0-9._-]+$ ]]; then
             slugs+=("$slug_from_path")
           fi
