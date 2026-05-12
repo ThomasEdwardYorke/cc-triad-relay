@@ -1068,16 +1068,32 @@ function collectPrMetricsPrsFromGh(numbers, repo) {
     "reviews",
     "comments",
   ].join(",");
-  return numbers.map((number) =>
-    runGhJson([
-      "pr",
-      "view",
-      String(number),
-      "--json",
-      fields,
-      ...(repo ? ["--repo", repo] : []),
-    ]),
-  );
+  const prs = [];
+  const missing = [];
+  for (const number of numbers) {
+    try {
+      prs.push(
+        runGhJson([
+          "pr",
+          "view",
+          String(number),
+          "--json",
+          fields,
+          ...(repo ? ["--repo", repo] : []),
+        ]),
+      );
+    } catch {
+      missing.push(number);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `missing PR data for requested range: ${missing
+        .map((number) => `#${number}`)
+        .join(", ")}`,
+    );
+  }
+  return prs;
 }
 
 function asDate(value) {

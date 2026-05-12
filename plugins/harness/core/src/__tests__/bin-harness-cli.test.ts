@@ -23,9 +23,10 @@ import {
   readFileSync,
   writeFileSync,
   mkdirSync,
+  chmodSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, resolve, join } from "node:path";
+import { basename, delimiter, dirname, resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -191,12 +192,12 @@ describe("bin/harness pr-metrics — PR metrics collection", () => {
       inputPath,
       JSON.stringify(
         {
-          repository: "ThomasEdwardYorke/cc-triad-relay",
+          repository: "example-org/my-project",
           prs: [
             {
               number: 90,
               title: "feat: add first pilot endpoint",
-              url: "https://github.com/ThomasEdwardYorke/cc-triad-relay/pull/90",
+              url: "https://github.com/example-org/my-project/pull/90",
               state: "MERGED",
               createdAt: "2026-05-10T00:00:00Z",
               mergedAt: "2026-05-10T03:30:00Z",
@@ -209,7 +210,7 @@ describe("bin/harness pr-metrics — PR metrics collection", () => {
             {
               number: 91,
               title: "fix: second pilot cleanup",
-              url: "https://github.com/ThomasEdwardYorke/cc-triad-relay/pull/91",
+              url: "https://github.com/example-org/my-project/pull/91",
               state: "MERGED",
               createdAt: "2026-05-10T04:00:00Z",
               mergedAt: "2026-05-10T05:00:00Z",
@@ -290,6 +291,77 @@ describe("bin/harness pr-metrics — PR metrics collection", () => {
     expect(result.exitCode).toBe(1);
     expect(combined).toContain("missing PR data for requested range");
     expect(combined).toContain("#91");
+  });
+
+  it("fails closed with aggregated missing PR numbers when gh cannot fetch a requested PR", () => {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir);
+    const fakeGhJs = join(binDir, "fake-gh.js");
+    writeFileSync(
+      fakeGhJs,
+      [
+        "const args = process.argv.slice(2);",
+        "if (args[0] === 'repo' && args[1] === 'view') {",
+        "  console.log(JSON.stringify({ nameWithOwner: 'example-org/my-project' }));",
+        "  process.exit(0);",
+        "}",
+        "if (args[0] === 'pr' && args[1] === 'view') {",
+        "  const number = args[2];",
+        "  if (number === '90') {",
+        "    console.log(JSON.stringify({",
+        "      number: 90,",
+        "      title: 'feat: first PR',",
+        "      url: 'https://github.com/example-org/my-project/pull/90',",
+        "      state: 'MERGED',",
+        "      createdAt: '2026-05-10T00:00:00Z',",
+        "      mergedAt: '2026-05-10T01:00:00Z',",
+        "      reviews: []",
+        "    }));",
+        "    process.exit(0);",
+        "  }",
+        "  console.error(`missing PR ${number}`);",
+        "  process.exit(1);",
+        "}",
+        "console.error(`unexpected gh args: ${args.join(' ')}`);",
+        "process.exit(1);",
+        "",
+      ].join("\n"),
+    );
+    if (process.platform === "win32") {
+      writeFileSync(
+        join(binDir, "gh.cmd"),
+        `@echo off\r\n"${process.execPath}" "${fakeGhJs}" %*\r\n`,
+      );
+    } else {
+      const ghShim = join(binDir, "gh");
+      writeFileSync(
+        ghShim,
+        `#!/usr/bin/env node\nrequire(${JSON.stringify(fakeGhJs)});\n`,
+      );
+      chmodSync(ghShim, 0o755);
+    }
+
+    const jsonOut = join(tmpDir, "pr-metrics.json");
+    const mdOut = join(tmpDir, "pr-metrics.md");
+    const result = runHarness(
+      [
+        "pr-metrics",
+        "--pr-range",
+        "90..91",
+        "--output-json",
+        jsonOut,
+        "--output-md",
+        mdOut,
+      ],
+      { cwd: tmpDir, env: { PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}` } },
+    );
+    const combined = result.stdout + result.stderr;
+
+    expect(result.exitCode).toBe(1);
+    expect(combined).toContain("missing PR data for requested range");
+    expect(combined).toContain("#91");
+    expect(existsSync(jsonOut)).toBe(false);
+    expect(existsSync(mdOut)).toBe(false);
   });
 });
 
