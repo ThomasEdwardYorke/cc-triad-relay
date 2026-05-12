@@ -362,9 +362,15 @@ cat > "$tmp_settings_6a" <<'JSON'
   }
 }
 JSON
-out=$(resolve_enabled_plugins "$tmp_settings_6a" 2>/dev/null | sort | tr '\n' ' ')
+# Use `paste -sd ' ' -` instead of `tr '\n' ' '` for portable newline→space
+# conversion: Git Bash on Windows occasionally fails to transform `\n` literally
+# via `tr` (observed in CI run on windows-latest 18/20/22), leaving the captured
+# output with embedded newlines. `paste -sd ' ' -` is POSIX and behaves the same
+# on macOS / Linux / Git Bash for Windows. Note: paste output has no trailing
+# space whereas `tr '\n' ' '` does, so the expected string is updated to match.
+out=$(resolve_enabled_plugins "$tmp_settings_6a" 2>/dev/null | sort | paste -sd ' ' -)
 assert_eq "6a enabled plugins extracted (3 true values, sorted)" \
-  "codex@openai-codex document-skills@anthropic-agent-skills harness@cc-triad-relay " \
+  "codex@openai-codex document-skills@anthropic-agent-skills harness@cc-triad-relay" \
   "$out"
 rm -f "$tmp_settings_6a"
 unset tmp_settings_6a out
@@ -395,15 +401,23 @@ out=$(resolve_handoff_copy_sources 2>/dev/null)
 assert_eq "7a empty env → empty stdout" "" "$out"
 unset out
 
-# 7b: colon-separated absolute paths → newline-separated stdout
+# 7b: colon-separated absolute paths → newline-separated stdout. macOS resolves
+# `/var` → `/private/var` and Git Bash on Windows resolves `/tmp/...` (MSYS
+# mounted form) → `/c/Users/.../AppData/Local/Temp/...` (canonical Windows form)
+# via `cd ... && pwd -P` inside resolve_handoff_copy_sources, so the expected
+# needles must use the same normalization (otherwise the test is environment-
+# sensitive and fails on macOS/Windows). Also use `paste -sd ' ' -` instead of
+# `tr '\n' ' '` for portable newline handling.
 tmp_dir_7b_1=$(mktemp -d)
 tmp_dir_7b_2=$(mktemp -d)
+tmp_dir_7b_1_resolved=$(cd "$tmp_dir_7b_1" && pwd -P)
+tmp_dir_7b_2_resolved=$(cd "$tmp_dir_7b_2" && pwd -P)
 export HANDOFF_COPY_SOURCES="${tmp_dir_7b_1}:${tmp_dir_7b_2}"
-out=$(resolve_handoff_copy_sources 2>/dev/null | tr '\n' ' ')
-assert_contains "7b first abs path resolved" "$tmp_dir_7b_1" "$out"
-assert_contains "7b second abs path resolved" "$tmp_dir_7b_2" "$out"
+out=$(resolve_handoff_copy_sources 2>/dev/null | paste -sd ' ' -)
+assert_contains "7b first abs path resolved" "$tmp_dir_7b_1_resolved" "$out"
+assert_contains "7b second abs path resolved" "$tmp_dir_7b_2_resolved" "$out"
 rmdir "$tmp_dir_7b_1" "$tmp_dir_7b_2"
-unset HANDOFF_COPY_SOURCES out tmp_dir_7b_1 tmp_dir_7b_2
+unset HANDOFF_COPY_SOURCES out tmp_dir_7b_1 tmp_dir_7b_2 tmp_dir_7b_1_resolved tmp_dir_7b_2_resolved
 
 # 7c: relative path → rc=1 (must be absolute, path-traversal mitigation)
 export HANDOFF_COPY_SOURCES="relative/path"
