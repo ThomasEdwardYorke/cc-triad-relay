@@ -217,8 +217,19 @@ resolve_handoff_copy_sources() {
 copy_handoff_sources_to_worktree() {
   # Copy every HANDOFF_COPY_SOURCES entry into $1 via `emit "cp -RP ..."`.
   # No-op when env is empty. Used by cmd_start AFTER git worktree add and
-  # BEFORE plugin install so the worktree path exists.
+  # BEFORE plugin install so the worktree path exists. Fail-fast on
+  # resolve_handoff_copy_sources errors so the caller (cmd_start) can abort
+  # the spawn cleanly instead of silently skipping malformed entries.
   # Args: $1 = worktree path (absolute or relative; passed through to cp).
+  # Exit: 0 (ok or no entries) / 1 (resolve_handoff_copy_sources rc != 0,
+  #       e.g. a relative path entry rejected).
+  #
+  # Why capture-then-read instead of process substitution: the previous form
+  # `done < <(resolve_handoff_copy_sources)` could not propagate the
+  # function's rc to the caller — a malformed entry produced a stderr
+  # warning but the while loop saw an empty stream and continued silently.
+  # Capturing into `$sources` lets us observe the rc via `|| rc=$?` and
+  # return it to cmd_start (chatgpt-codex-connector review P2 fix).
   #
   # Why `cp -RP` (preserve symlinks) instead of `cp -r` (default follow):
   # resolve_handoff_copy_sources already normalizes the ENTRY path via
@@ -237,11 +248,18 @@ copy_handoff_sources_to_worktree() {
   if [[ -z "${HANDOFF_COPY_SOURCES:-}" ]]; then
     return 0
   fi
+  local sources
+  local rc=0
+  sources=$(resolve_handoff_copy_sources) || rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo "Error: copy_handoff_sources_to_worktree aborted (resolve_handoff_copy_sources rc=$rc)" >&2
+    return "$rc"
+  fi
   local src
   while IFS= read -r src; do
     [[ -z "$src" ]] && continue
     emit "cp -RP '$src' '${wt_path}/'"
-  done < <(resolve_handoff_copy_sources)
+  done <<< "$sources"
 }
 
 install_plugins_for_worktree() {
@@ -277,6 +295,12 @@ install_plugins_for_worktree() {
     echo "[plugin-install] '$wt_path' no enabled plugins (skip)" >&2
     return 0
   fi
+  # Use the operator-resolved CLAUDE_BIN (same binary that worker tmux windows
+  # spawn) so a non-default claude binary path is honoured here too. This is a
+  # chatgpt-codex-connector review P1 fix: hard-coding `claude` here was
+  # inconsistent with cmd_start's resolve_claude_bin() usage for worker spawn.
+  local claude_bin
+  claude_bin=$(resolve_claude_bin)
   local plugin
   while IFS= read -r plugin; do
     [[ -z "$plugin" ]] && continue
@@ -289,7 +313,7 @@ install_plugins_for_worktree() {
       return 1
     fi
     echo "[plugin-install] '$wt_path' installing '$plugin'..." >&2
-    emit "cd '$wt_path' && claude plugin install '$plugin' --scope=project"
+    emit "cd '$wt_path' && $claude_bin plugin install '$plugin' --scope=project"
   done <<< "$plugins"
 }
 
@@ -1115,10 +1139,12 @@ cmd_cleanup() {
       # regex.
       plugins=$(resolve_enabled_plugins "${wt}/.claude/settings.json" 2>/dev/null | tr -d '\r' || true)
       local plugin
+      local claude_bin
+      claude_bin=$(resolve_claude_bin)
       while IFS= read -r plugin; do
         [[ -z "$plugin" ]] && continue
         if [[ "$plugin" =~ ^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+$ ]]; then
-          emit "cd '$wt' && claude plugin uninstall '$plugin' --scope=project -y"
+          emit "cd '$wt' && $claude_bin plugin uninstall '$plugin' --scope=project -y"
         fi
       done <<< "$plugins"
     fi
