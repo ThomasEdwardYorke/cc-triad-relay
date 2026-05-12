@@ -38,10 +38,11 @@ Claude Code enforces the decision
 
 1. **Guardrails** — 13 declarative rules. Domain-neutral defaults plus 3
    parameter-driven rules (R10 / R11 / R13) that can be enabled per project.
-2. **Skills** — 5 verb commands (`plan` / `work` / `review` / `release` /
-   `setup`) that live under `commands/`.
-3. **Agents** — 3 general-purpose agents (`worker` / `reviewer` /
-   `scaffolder`) plus 2 helpers (`security-auditor`, `codex-sync`).
+2. **Skills** — 19 commands: 5 verb commands (`plan` / `work` / `review` /
+   `release` / `setup`) plus 14 workflow commands under `commands/`.
+3. **Agents** — 7 specialised agents: 5 native agents (`worker` / `reviewer` /
+   `scaffolder` / `security-auditor` / `context-audit-agent`) plus 2 optional
+   Codex-backed helpers (`codex-sync`, `coderabbit-mimic`).
 4. **State** — pure-JS JSON file at `<projectRoot>/.claude/state/harness.json`.
    No native SQLite. Single-process safe.
 

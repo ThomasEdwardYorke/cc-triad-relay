@@ -28,11 +28,23 @@ DRY_RUN=0
 
 validate_identifier() {
   # alphanumeric + underscore + hyphen + dot only.
-  # Used for: slug, CLAUDE_MODEL alias.
+  # Used for: CLAUDE_MODEL alias.
   local name="$1"
   local val="$2"
   if [[ ! "$val" =~ ^[a-zA-Z0-9._-]+$ ]]; then
     echo "Error: $name '$val' contains invalid characters (allowed: a-z A-Z 0-9 . _ -)" >&2
+    exit 2
+  fi
+}
+
+validate_slug() {
+  # tmux target syntax uses "." to separate window and pane, so slug/window
+  # names must not contain dots if we target panes as "${session}:${slug}".
+  # It also tries numeric indexes before exact window names, so avoid leading
+  # digits.
+  local val="$1"
+  if [[ ! "$val" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]; then
+    echo "Error: slug '$val' contains invalid characters (allowed: leading a-z A-Z _, then a-z A-Z 0-9 _ -; dot and leading digits are reserved by tmux target syntax)" >&2
     exit 2
   fi
 }
@@ -348,8 +360,8 @@ Env vars:
                                            safety net.)
   CLAUDE_OVERLAY_LOAD_VERIFY              (default 1; set 0 to skip wait+verify, e.g. mock-claude tests)
   CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS    (default 5; baseline sleep after spawn before any probe)
-  CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS    (default 20; max total wait incl. baseline + ready poll)
-  CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS     (default 12; max wait for /help probe output to populate)
+  CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS    (default 20; total wait budget, auto-raised to cover every worker probe)
+  CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS     (default 12; max wait for /help probe output to populate, minimum 2)
   CLAUDE_SKILL_VERIFY_ESCALATE            (default 1; set 0 to skip BLOCKED prompt injection on failure)
   CLAUDE_REQUIRED_SKILLS                  (default 6 harness skills; whitespace-separated list)
 
@@ -395,7 +407,7 @@ emit() {
 #            overlay finishes loading before any probe.
 #   Stage 2: send `/help` and scan `capture-pane` for the six required skill
 #            identifiers.
-#   Stage 3: on probe failure, inject the 8-section BLOCKED final-report
+#   Stage 3: on probe failure, inject the 8-field BLOCKED final-report
 #            prompt via `tmux send-keys` so the coordinator can switch to a
 #            takeover path.
 #   Stage 4: the `cmd_verify` subcommand lets an operator re-run the probe on
@@ -433,8 +445,33 @@ resolve_required_skills() {
       printf '%s' "${__DEFAULT_REQUIRED_SKILLS[*]}"
       return 0
     fi
+    local tokens=()
+    local token_count=0
+    # Split on spaces while temporarily disabling filename expansion. A plain
+    # `for tok in $CLAUDE_REQUIRED_SKILLS` would otherwise expand `*` into
+    # repository paths before the token regex sees it, while `read -a` exits
+    # non-zero for whitespace-only input on older Bash under `set -e`.
+    local IFS=' '
+    local had_noglob=0
+    case "$-" in
+      *f*) had_noglob=1 ;;
+    esac
+    set -f
     local tok
     for tok in $CLAUDE_REQUIRED_SKILLS; do
+      tokens+=("$tok")
+      token_count=$((token_count + 1))
+    done
+    if [[ "$had_noglob" -eq 0 ]]; then
+      set +f
+    fi
+    if [[ "$token_count" -eq 0 ]]; then
+      echo "Warning: CLAUDE_REQUIRED_SKILLS contains no skill tokens; using defaults" >&2
+      local IFS=' '
+      printf '%s' "${__DEFAULT_REQUIRED_SKILLS[*]}"
+      return 0
+    fi
+    for tok in "${tokens[@]}"; do
       if [[ ! "$tok" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
         echo "Warning: CLAUDE_REQUIRED_SKILLS token '$tok' rejected (allowed chars: A-Z a-z 0-9 . _ : / -); using defaults" >&2
         local IFS=' '
@@ -442,7 +479,8 @@ resolve_required_skills() {
         return 0
       fi
     done
-    printf '%s' "$CLAUDE_REQUIRED_SKILLS"
+    local IFS=' '
+    printf '%s' "${tokens[*]}"
   else
     # join with single space
     local IFS=' '
@@ -461,6 +499,8 @@ check_skill_registry_in_output() {
   local missing=()
   local skill
   local flat
+  local spaced
+  local token_stream
   if [[ -z "$required" ]]; then
     return 0
   fi
@@ -470,8 +510,20 @@ check_skill_registry_in_output() {
   # space — a space breaks the literal match too) so wrapped identifiers still
   # match `grep -qF`.
   flat=$(printf '%s' "$output" | tr -d '\n')
+  spaced=$(printf '%s' "$output" | tr '\n' ' ')
+  # Match exact command/skill tokens instead of substrings so
+  # `harness:tdd-implementation` does not satisfy `harness:tdd-implement`.
+  # `/help` commonly renders slash commands with a leading "/" while required
+  # skills are configured without it, so accept either exact token form.
+  token_stream=$(
+    {
+      printf '%s\n' "$spaced"
+      printf '%s\n' "$flat"
+    } | tr -cs 'A-Za-z0-9._:/-' '\n'
+  )
   for skill in $required; do
-    if ! printf '%s' "$flat" | grep -qF -- "$skill"; then
+    if ! printf '%s\n' "$token_stream" | grep -qxF -- "$skill" &&
+       ! printf '%s\n' "$token_stream" | grep -qxF -- "/$skill"; then
       missing+=("$skill")
     fi
   done
@@ -483,25 +535,25 @@ check_skill_registry_in_output() {
 }
 
 build_blocked_escalation_message() {
-  # Build the 8-section BLOCKED final-report prompt that is injected when the
-  # overlay-load race is detected. The whole prompt must fit on one logical
-  # line because `tmux send-keys` injects it as a single REPL submission;
-  # fields are delimited by `;`.
+  # Build the 8-field BLOCKED final-report prompt that is injected when the
+  # overlay-load race is detected. Keep the injected prompt itself one logical
+  # line for `tmux send-keys`, but require the worker's final report to use the
+  # canonical newline-separated field schema parsed by the coordinator.
   # Args: $1 = slug (worker identifier)
   #       $2 = missing_skills (whitespace-separated single string)
   local slug="$1"
   local missing="$2"
   printf 'OVERLAY_LOAD_TIMEOUT detected by launcher (overlay-load race) for slug=%s. ' "$slug"
   printf 'Required harness skills not loaded: [%s]. ' "$missing"
-  printf 'STOP all work. Output the 8-field final report exactly as: '
-  printf 'STATUS: BLOCKED; '
-  printf 'CHANGED_FILES: (none); '
-  printf 'COMMIT: (none); '
-  printf 'PUSHED_BRANCH: (none); '
-  printf 'VALIDATION: SKIPPED; '
-  printf 'BLOCKERS: harness overlay load timeout (overlay-load race) - skills missing [%s]; ' "$missing"
-  printf 'NEXT_ACTION: (escalate to coordinator for parallel-agent takeover); '
-  printf 'FORBIDDEN_ACTIONS_USED: no.\n'
+  printf 'STOP all work. Output the final report as exactly 8 newline-separated fields, one field per line, using this schema: '
+  printf '[1] STATUS: BLOCKED '
+  printf '[2] CHANGED_FILES: (none) '
+  printf '[3] COMMIT: (none) '
+  printf '[4] PUSHED_BRANCH: (none) '
+  printf '[5] VALIDATION: SKIPPED '
+  printf '[6] BLOCKERS: harness overlay load timeout (overlay-load race) - skills missing [%s] ' "$missing"
+  printf '[7] NEXT_ACTION: (escalate to coordinator for parallel-agent takeover) '
+  printf '[8] FORBIDDEN_ACTIONS_USED: no\n'
 }
 
 probe_skill_registry() {
@@ -532,16 +584,26 @@ probe_skill_registry() {
     echo "Warning: CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS='$timeout' is not an integer; defaulting to 12" >&2
     timeout=12
   fi
+  local poll_interval=2
+  if [[ "$timeout" -lt "$poll_interval" ]]; then
+    echo "Warning: CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS='$timeout' < poll interval ${poll_interval}; raising to ${poll_interval}" >&2
+    timeout=$poll_interval
+  fi
 
-  # Adversarial review fix (stale-content false-positive): clear scrollback +
-  # send Escape to flush any pending input *before* the probe, then capture
-  # only the visible pane (no -S history) so the substring match only sees
-  # output produced by THIS /help invocation. Without this, any old pane
-  # content that happened to contain the 6 skill identifiers (e.g. a previous
-  # /help, a doc snippet, the user manually typing /harness:... earlier) would
-  # let verify pass while the current REPL is still unloaded.
+  local before_output
+  if ! before_output=$(tmux capture-pane -t "${session}:${slug}" -p 2>/dev/null); then
+    printf 'tmux capture-pane failed\n'
+    return 2
+  fi
+
+  # Adversarial review fix (stale-content false-positive): record the visible
+  # pane before `/help`, then scan only the output appended by this probe.
+  # `tmux clear-history` does not clear the visible screen, and `C-l` is a best-
+  # effort REPL key rather than a tmux-level guarantee, so snapshot exclusion is
+  # the real guard against old text satisfying a fresh registry check.
   tmux send-keys -t "${session}:${slug}" Escape 2>/dev/null || true
   tmux send-keys -t "${session}:${slug}" Escape 2>/dev/null || true
+  tmux send-keys -t "${session}:${slug}" C-l 2>/dev/null || true
   tmux clear-history -t "${session}:${slug}" 2>/dev/null || true
 
   # Send `/help` to trigger the built-in skill-list rendering; the trailing
@@ -564,14 +626,20 @@ probe_skill_registry() {
     # treated as "no skills loaded" which is technically true but the proper
     # signal is "session gone" (rc=2) so the caller doesn't pointlessly inject
     # an escalation prompt to a dead pane.
-    if ! output=$(tmux capture-pane -t "${session}:${slug}" -p 2>/dev/null); then
+    if output=$(tmux capture-pane -t "${session}:${slug}" -p 2>/dev/null); then
+      capture_rc=0
+    else
       capture_rc=$?
     fi
     if [[ $capture_rc -ne 0 ]]; then
       printf 'tmux capture-pane failed\n'
       return 2
     fi
-    if missing_output=$(check_skill_registry_in_output "$output" "$required"); then
+    local scan_output="$output"
+    if [[ "$output" == "$before_output"* ]]; then
+      scan_output="${output#"$before_output"}"
+    fi
+    if missing_output=$(check_skill_registry_in_output "$scan_output" "$required"); then
       # rc=0: all present. Clear /help screen with Escape so subsequent
       # prompts (e.g. /tdd-implement) don't conflict with help overlay.
       tmux send-keys -t "${session}:${slug}" Escape 2>/dev/null || true
@@ -584,7 +652,7 @@ probe_skill_registry() {
 }
 
 escalate_blocked_to_slug() {
-  # On verification failure, inject the BLOCKED 8-section directive via
+  # On verification failure, inject the BLOCKED 8-field directive via
   # tmux send-keys. Send Escape first to dismiss any open typeahead / help
   # overlay so the message is delivered to a clean prompt.
   # Args: $1 = session, $2 = slug, $3 = missing skills (whitespace-joined)
@@ -596,10 +664,7 @@ escalate_blocked_to_slug() {
   local msg
   msg=$(build_blocked_escalation_message "$slug" "$missing")
   # Use `--` to terminate option parsing so tmux never reinterprets a leading
-  # dash or future option-like prefix in `$msg` as a flag. The 8-section
-  # escalation message contains literal `;` delimiters which are safe inside
-  # the quoted arg, but `--` is the belt-and-suspenders guard across tmux
-  # versions.
+  # dash or future option-like prefix in `$msg` as a flag.
   tmux send-keys -t "${session}:${slug}" -- "$msg" Enter 2>/dev/null || true
 }
 
@@ -639,13 +704,28 @@ wait_for_all_workers_ready() {
     echo "Warning: CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS must be integer; defaulting to 12" >&2
     probe_timeout=12
   fi
-  # Adversarial review fix (enforce MAX_WAIT_SECONDS as a real ceiling):
-  # max_wait must be >= min_wait + probe_timeout. If the operator set max_wait
-  # too low, raise it silently so the probe loop is not truncated below its
-  # own minimum useful duration.
-  local required_max=$((min_wait + probe_timeout))
+  local probe_poll_interval=2
+  if [[ "$probe_timeout" -lt "$probe_poll_interval" ]]; then
+    echo "Warning: CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS=$probe_timeout < poll interval ${probe_poll_interval}; raising to ${probe_poll_interval}" >&2
+    probe_timeout=$probe_poll_interval
+  fi
+  # Adversarial review fix (enforce MAX_WAIT_SECONDS without false-skipping
+  # later workers): probe_skill_registry polls in 2s chunks, so a timeout of 1
+  # still spends up to 2 real seconds. max_wait must cover the baseline plus
+  # one real probe ceiling per slug. If the operator set max_wait too low, raise
+  # it so every worker receives at least one probe before any MAX_WAIT branch
+  # can fire.
+  local probe_budget=0
+  if [[ "$probe_timeout" -gt 0 ]]; then
+    probe_budget=$(( ((probe_timeout + probe_poll_interval - 1) / probe_poll_interval) * probe_poll_interval ))
+  fi
+  local escalation_budget=0
+  if [[ "${CLAUDE_SKILL_VERIFY_ESCALATE:-1}" == "1" ]]; then
+    escalation_budget=1
+  fi
+  local required_max=$((min_wait + (probe_budget + escalation_budget) * ${#slugs[@]}))
   if [[ "$max_wait" -lt "$required_max" ]]; then
-    echo "Warning: CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=$max_wait < (MIN_WAIT $min_wait + VERIFY_TIMEOUT $probe_timeout); raising to $required_max" >&2
+    echo "Warning: CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=$max_wait < (MIN_WAIT $min_wait + (PROBE_BUDGET $probe_budget + ESCALATION_BUDGET $escalation_budget) * WORKERS ${#slugs[@]}); raising to $required_max" >&2
     max_wait=$required_max
   fi
 
@@ -684,7 +764,7 @@ wait_for_all_workers_ready() {
       __VERIFY_FAILED_SLUGS+=("$slug")
       if [[ "${CLAUDE_SKILL_VERIFY_ESCALATE:-1}" == "1" ]]; then
         escalate_blocked_to_slug "$session" "$slug" "${missing//$'\n'/ }"
-        echo "[verify] '$slug' escalation injected (BLOCKED 8-section)" >&2
+        echo "[verify] '$slug' escalation injected (BLOCKED 8-field)" >&2
       fi
     fi
   done
@@ -733,7 +813,18 @@ resolve_tmux_env_args() {
   local keys=("CLAUDE_ONESHOT_LOG_DIR")
   local extra_keys=()
   if [[ -n "${TMUX_PASS_ENV:-}" ]]; then
-    read -r -a extra_keys <<< "${TMUX_PASS_ENV}"
+    local had_noglob=0
+    case "$-" in
+      *f*) had_noglob=1 ;;
+    esac
+    set -f
+    local extra_key
+    for extra_key in $TMUX_PASS_ENV; do
+      extra_keys+=("$extra_key")
+    done
+    if [[ "$had_noglob" -eq 0 ]]; then
+      set +f
+    fi
   fi
   local key
   for key in "${extra_keys[@]+"${extra_keys[@]}"}"; do
@@ -771,6 +862,12 @@ cmd_start() {
   local feat="$1"
   validate_branch_name "$feat"
   shift
+  local requested_slugs=("$@")
+  local slug
+  for slug in "${requested_slugs[@]}"; do
+    validate_slug "$slug"
+  done
+
   local session parent prefix claude perm
   session="$(resolve_session_name)"
   parent="$(resolve_worktree_parent_dir)"
@@ -787,10 +884,9 @@ cmd_start() {
   local tmux_env_args
   tmux_env_args="$(resolve_tmux_env_args)"
   emit "tmux new-session -d${tmux_env_args} -s '$session' -n coordinator"
-  local slug wt branch
+  local wt branch
   local spawned_slugs=()
-  for slug in "$@"; do
-    validate_identifier "slug" "$slug"
+  for slug in "${requested_slugs[@]}"; do
     wt="${parent}/${prefix}${slug}"
     branch="feature/${feat}-${slug}"
     emit "git worktree add '$wt' -b '$branch' '$feat'"
@@ -871,7 +967,7 @@ cmd_verify() {
   if [[ $# -gt 0 ]]; then
     local s
     for s in "$@"; do
-      validate_identifier "slug" "$s"
+      validate_slug "$s"
       slugs+=("$s")
     done
   else
@@ -965,7 +1061,7 @@ cmd_cleanup() {
   if [[ ${#explicit_slugs[@]} -gt 0 ]]; then
     local s
     for s in "${explicit_slugs[@]}"; do
-      validate_identifier "slug" "$s"
+      validate_slug "$s"
       slugs+=("$s")
     done
   elif [[ $DRY_RUN -eq 0 ]]; then
@@ -1043,7 +1139,7 @@ cmd_attach() {
     exit 2
   fi
   local slug="$1"
-  validate_identifier "slug" "$slug"
+  validate_slug "$slug"
   local session="${2:-$(resolve_session_name)}"
   # `tmux attach` blocks until the user detaches, so chaining
   # `tmux attach ... \; select-window ...` would only run select-window

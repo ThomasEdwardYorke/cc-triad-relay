@@ -8,28 +8,47 @@ harness plugin の release 手順 + rollback 戦略 + release PR checklist。
 
 ## 通常 release フロー
 
-前提: `feature/release-v{NEW_VERSION}` branch が main に merge 済み、CI green、
+前提: feature branch 群が `dev` に merge 済み、`dev` が release candidate として CI green、
 Codex / CodeRabbit レビュー全件対応済。
 
-1. **annotated tag 作成** (GPG 署名があれば `-s` 付与):
+1. **release PR 作成 / merge**:
+   ```text
+   base: main
+   compare: dev
+   ```
+
+   merge 前に少なくとも以下を実行:
+
    ```bash
-   cd ~/.claude/plugins/marketplaces/cc-triad-relay
-   git checkout main && git pull --ff-only
+   cd /path/to/cc-triad-relay
+   git switch dev
+   git pull --ff-only
+   npm test --workspace=plugins/harness/core
+   npm run build
+   git ls-files -- harness.config.json docs/maintainer/handoff
+   ```
+
+   The final command must print nothing. Live self-hosting state stays in ignored local files and must not enter a release PR.
+
+2. **annotated tag 作成** (GPG 署名があれば `-s` 付与):
+   ```bash
+   cd /path/to/cc-triad-relay
+   git switch main && git pull --ff-only
    git tag -a v{NEW_VERSION} -m "release: v{NEW_VERSION}"
    ```
 
-2. **単体 tag push** (`--tags` を使わず、意図しない tag の一括 push を防止):
+3. **単体 tag push** (`--tags` を使わず、意図しない tag の一括 push を防止):
    ```bash
    git push origin v{NEW_VERSION}
    ```
 
-3. **自動 Release 発行** — `.github/workflows/release.yml` が
+4. **自動 Release 発行** — `.github/workflows/release.yml` が
    `v[0-9]+.[0-9]+.[0-9]+` pattern に trigger し以下を実行:
    - `npm ci` + `npm run build` + `npm test` + `npm run smoke`
    - `node scripts/extract-changelog.mjs v{NEW_VERSION}` で CHANGELOG 当該 section を抽出
    - `softprops/action-gh-release@v2` で GitHub Release 発行 (body = CHANGELOG section、asset = `CHANGELOG.md` / `LICENSE` / `NOTICE`)
 
-4. **検証**:
+5. **検証**:
    ```bash
    gh release view v{NEW_VERSION}
    ```

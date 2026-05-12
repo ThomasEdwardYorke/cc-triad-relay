@@ -18,6 +18,8 @@
  *                                 Open every git worktree in cmux (preferred)
  *                                 or tmux. Falls back to a text listing when
  *                                 neither multiplexer is installed.
+ *   harness pr-metrics --pr-range <from>..<to>
+ *                                 Collect pull-request review metrics
  *   harness --version
  */
 
@@ -75,6 +77,8 @@ function printUsage() {
       "  harness migrate [--from D]    Migrate legacy .claude/state to v3 JSON",
       "  harness worktree-mux [--multiplexer=cmux|tmux|auto] [--with-claude]",
       "                                  Open git worktrees in cmux/tmux panes",
+      "  harness pr-metrics --pr-range <from>..<to>",
+      "                                  Collect pull-request review metrics",
       "  harness --version",
       "",
     ].join("\n"),
@@ -918,6 +922,428 @@ async function cmdWorktreeMux(rest) {
 }
 
 // ------------------------------------------------------------
+// harness pr-metrics
+// ------------------------------------------------------------
+
+function printPrMetricsUsage(stream = process.stderr) {
+  stream.write(
+    [
+      "usage: harness pr-metrics --pr-range <from>..<to> [--repo owner/name]",
+      "       [--input PATH] [--output-json PATH] [--output-md PATH]",
+      "",
+      "Collect PR review metrics from GitHub PR metadata.",
+      "Use --input for an offline fixture with { repository, prs }.",
+      "",
+    ].join("\n"),
+  );
+}
+
+function parsePrMetricsArgs(rest) {
+  const args = {
+    prRange: undefined,
+    input: undefined,
+    outputJson: undefined,
+    outputMd: undefined,
+    repo: undefined,
+    help: false,
+  };
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    if (arg === "--help" || arg === "-h") {
+      args.help = true;
+      continue;
+    }
+    const readValue = (flag) => {
+      const value = rest[i + 1];
+      if (!value || value.startsWith("--")) {
+        throw new Error(`${flag} expects a value`);
+      }
+      i++;
+      return value;
+    };
+    if (arg === "--pr-range") {
+      args.prRange = readValue(arg);
+      continue;
+    }
+    if (arg.startsWith("--pr-range=")) {
+      args.prRange = arg.slice("--pr-range=".length);
+      continue;
+    }
+    if (arg === "--input") {
+      args.input = readValue(arg);
+      continue;
+    }
+    if (arg.startsWith("--input=")) {
+      args.input = arg.slice("--input=".length);
+      continue;
+    }
+    if (arg === "--output-json") {
+      args.outputJson = readValue(arg);
+      continue;
+    }
+    if (arg.startsWith("--output-json=")) {
+      args.outputJson = arg.slice("--output-json=".length);
+      continue;
+    }
+    if (arg === "--output-md") {
+      args.outputMd = readValue(arg);
+      continue;
+    }
+    if (arg.startsWith("--output-md=")) {
+      args.outputMd = arg.slice("--output-md=".length);
+      continue;
+    }
+    if (arg === "--repo") {
+      args.repo = readValue(arg);
+      continue;
+    }
+    if (arg.startsWith("--repo=")) {
+      args.repo = arg.slice("--repo=".length);
+      continue;
+    }
+    throw new Error(`unknown flag '${arg}'`);
+  }
+  return args;
+}
+
+function parsePrRange(prRange) {
+  const match = String(prRange ?? "").trim().match(/^(\d+)\.\.(\d+)$/);
+  if (!match) {
+    throw new Error("--pr-range expects '<from>..<to>' with numeric PR numbers");
+  }
+  const from = Number(match[1]);
+  const to = Number(match[2]);
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from <= 0 || to <= 0 || from > to) {
+    throw new Error("--pr-range expects '<from>..<to>' where from <= to");
+  }
+  return { from, to, numbers: Array.from({ length: to - from + 1 }, (_, idx) => from + idx) };
+}
+
+function resolvePrMetricsNow() {
+  const raw = process.env.HARNESS_PR_METRICS_NOW;
+  if (!raw) return new Date();
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return new Date();
+  return parsed;
+}
+
+function readPrMetricsInput(inputPath) {
+  const raw = JSON.parse(readFileSync(resolve(inputPath), "utf-8"));
+  if (Array.isArray(raw)) return { repository: undefined, prs: raw };
+  if (!raw || !Array.isArray(raw.prs)) {
+    throw new Error("--input must be a JSON array or an object with a prs array");
+  }
+  return { repository: raw.repository, prs: raw.prs };
+}
+
+function runGhJson(args) {
+  const out = execFileSync("gh", args, {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return JSON.parse(out);
+}
+
+function resolvePrMetricsRepo(explicitRepo) {
+  if (explicitRepo) return explicitRepo;
+  const result = runGhJson(["repo", "view", "--json", "nameWithOwner"]);
+  return result.nameWithOwner;
+}
+
+function collectPrMetricsPrsFromGh(numbers, repo) {
+  if (!commandExists("gh")) {
+    throw new Error("gh CLI is required unless --input is provided");
+  }
+  const fields = [
+    "number",
+    "title",
+    "url",
+    "state",
+    "createdAt",
+    "mergedAt",
+    "closedAt",
+    "headRefName",
+    "baseRefName",
+    "author",
+    "reviews",
+    "comments",
+  ].join(",");
+  const prs = [];
+  const missing = [];
+  for (const number of numbers) {
+    try {
+      prs.push(
+        runGhJson([
+          "pr",
+          "view",
+          String(number),
+          "--json",
+          fields,
+          ...(repo ? ["--repo", repo] : []),
+        ]),
+      );
+    } catch {
+      missing.push(number);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `missing PR data for requested range: ${missing
+        .map((number) => `#${number}`)
+        .join(", ")}`,
+    );
+  }
+  return prs;
+}
+
+function asDate(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function round2(value) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return null;
+  return Math.round(value * 100) / 100;
+}
+
+function hoursBetween(startValue, endValue) {
+  const start = asDate(startValue);
+  const end = asDate(endValue);
+  if (!start || !end || end.getTime() < start.getTime()) return null;
+  return round2((end.getTime() - start.getTime()) / 3_600_000);
+}
+
+function median(values) {
+  const finite = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  if (finite.length === 0) return null;
+  const mid = Math.floor(finite.length / 2);
+  if (finite.length % 2 === 1) return round2(finite[mid]);
+  return round2((finite[mid - 1] + finite[mid]) / 2);
+}
+
+function isCoderabbitActor(actor) {
+  const login = String(actor?.login ?? actor ?? "").toLowerCase();
+  return login === "coderabbitai" || login === "coderabbitai[bot]" || login.startsWith("coderabbitai-");
+}
+
+function normalizeReview(review) {
+  const state = String(review?.state ?? "").toUpperCase();
+  const author = review?.author ?? review?.user ?? review?.actor;
+  return { state, author };
+}
+
+function normalizePrMetricsPr(pr) {
+  const reviews = Array.isArray(pr?.reviews) ? pr.reviews.map(normalizeReview) : [];
+  const coderabbitReviews = reviews.filter((review) => isCoderabbitActor(review.author));
+  const coderabbitChangeRequests = coderabbitReviews.filter(
+    (review) => review.state === "CHANGES_REQUESTED",
+  ).length;
+  const coderabbitApprovals = coderabbitReviews.filter(
+    (review) => review.state === "APPROVED",
+  ).length;
+  const wallclockHours = hoursBetween(pr?.createdAt, pr?.mergedAt ?? pr?.closedAt);
+  return {
+    number: Number(pr?.number),
+    title: String(pr?.title ?? ""),
+    url: String(pr?.url ?? ""),
+    state: String(pr?.state ?? "").toUpperCase(),
+    created_at: pr?.createdAt ?? null,
+    merged_at: pr?.mergedAt ?? null,
+    closed_at: pr?.closedAt ?? null,
+    head_ref: pr?.headRefName ?? null,
+    base_ref: pr?.baseRefName ?? null,
+    wallclock_hours: wallclockHours,
+    coderabbit_reviews: coderabbitReviews.length,
+    coderabbit_change_requests: coderabbitChangeRequests,
+    coderabbit_approvals: coderabbitApprovals,
+    total_reviews: reviews.length,
+    total_comments: Array.isArray(pr?.comments) ? pr.comments.length : null,
+    manual_metrics: {
+      api_token_cost: null,
+      independent_review_rework_rounds: null,
+      post_merge_hotfixes_7d: null,
+      operator_load: null,
+    },
+  };
+}
+
+function summarizePrMetrics(prs) {
+  const wallclock = prs
+    .map((pr) => pr.wallclock_hours)
+    .filter((value) => Number.isFinite(value));
+  return {
+    pr_count: prs.length,
+    merged_pr_count: prs.filter((pr) => pr.state === "MERGED").length,
+    wallclock_hours_median: median(wallclock),
+    wallclock_hours_max: wallclock.length > 0 ? round2(Math.max(...wallclock)) : null,
+    coderabbit_reviews_total: prs.reduce((sum, pr) => sum + pr.coderabbit_reviews, 0),
+    coderabbit_change_requests_total: prs.reduce(
+      (sum, pr) => sum + pr.coderabbit_change_requests,
+      0,
+    ),
+    coderabbit_approvals_total: prs.reduce((sum, pr) => sum + pr.coderabbit_approvals, 0),
+  };
+}
+
+function filterPrMetricsPrsByRange(prs, numbers) {
+  const allowed = new Set(numbers);
+  return prs.filter((pr) => allowed.has(Number(pr?.number)));
+}
+
+function findMissingPrMetricsPrNumbers(prs, numbers) {
+  const present = new Set(
+    prs.map((pr) => Number(pr?.number)).filter((number) => Number.isInteger(number)),
+  );
+  return numbers.filter((number) => !present.has(number));
+}
+
+function escapeMarkdownCell(value) {
+  return String(value ?? "TBD").replace(/\|/g, "\\|").replace(/\n/g, " ");
+}
+
+function renderPrMetricsMarkdown(metrics) {
+  const rows = metrics.prs.map((pr) =>
+    [
+      `PR #${pr.number}`,
+      pr.title,
+      pr.state || "TBD",
+      pr.wallclock_hours ?? "TBD",
+      pr.coderabbit_reviews,
+      pr.coderabbit_change_requests,
+      pr.coderabbit_approvals,
+      pr.url || "TBD",
+    ]
+      .map(escapeMarkdownCell)
+      .join(" | "),
+  );
+  return [
+    "# PR Metrics Report",
+    "",
+    `Generated: ${metrics.generated_at}`,
+    `Repository: ${metrics.source.repository ?? "TBD"}`,
+    `PR range: ${metrics.source.pr_range}`,
+    "",
+    "## Summary",
+    "",
+    `- PR count: ${metrics.summary.pr_count}`,
+    `- Merged PR count: ${metrics.summary.merged_pr_count}`,
+    `- Wallclock median hours: ${metrics.summary.wallclock_hours_median ?? "TBD"}`,
+    `- Wallclock max hours: ${metrics.summary.wallclock_hours_max ?? "TBD"}`,
+    `- CodeRabbit reviews: ${metrics.summary.coderabbit_reviews_total}`,
+    `- CodeRabbit change requests: ${metrics.summary.coderabbit_change_requests_total}`,
+    `- CodeRabbit approvals: ${metrics.summary.coderabbit_approvals_total}`,
+    "",
+    "## PR Metrics",
+    "",
+    "PR | Title | State | Wallclock hours | CR reviews | CR changes | CR approvals | URL",
+    "--- | --- | --- | ---: | ---: | ---: | ---: | ---",
+    ...rows,
+    "",
+    "## Manual metrics",
+    "",
+    "The following PR metrics are not derivable from GitHub PR metadata and remain TBD until the operator fills them from dashboards or session logs:",
+    "",
+    "- API token cost: TBD",
+    "- Independent review rework rounds: TBD",
+    "- Post-merge hot-fixes within 7 days: TBD",
+    "- Operator load: TBD",
+    "",
+  ].join("\n");
+}
+
+function ensureParentDir(filePath) {
+  mkdirSync(dirname(resolve(filePath)), { recursive: true });
+}
+
+async function cmdPrMetrics(rest) {
+  let args;
+  try {
+    args = parsePrMetricsArgs(rest);
+  } catch (err) {
+    process.stderr.write(
+      `harness pr-metrics: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    printPrMetricsUsage();
+    return 2;
+  }
+  if (args.help) {
+    printPrMetricsUsage(process.stdout);
+    return 0;
+  }
+  if (!args.prRange) {
+    printPrMetricsUsage();
+    return 2;
+  }
+
+  let parsedRange;
+  try {
+    parsedRange = parsePrRange(args.prRange);
+  } catch (err) {
+    process.stderr.write(
+      `harness pr-metrics: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    printPrMetricsUsage();
+    return 2;
+  }
+
+  const now = resolvePrMetricsNow();
+  const today = now.toISOString().slice(0, 10);
+  const outputJson = args.outputJson ?? join(process.cwd(), "docs", "metrics", "pr-metrics.json");
+  const outputMd =
+    args.outputMd ?? join(process.cwd(), "docs", "metrics", `pr-metrics-${today}.md`);
+
+  try {
+    let input;
+    if (args.input) {
+      input = readPrMetricsInput(args.input);
+    } else {
+      if (!commandExists("gh")) {
+        throw new Error("gh CLI is required unless --input is provided");
+      }
+      const repository = resolvePrMetricsRepo(args.repo);
+      input = {
+        repository,
+        prs: collectPrMetricsPrsFromGh(parsedRange.numbers, repository),
+      };
+    }
+    const repository = args.repo ?? input.repository ?? null;
+    const missingPrNumbers = findMissingPrMetricsPrNumbers(input.prs, parsedRange.numbers);
+    if (missingPrNumbers.length > 0) {
+      throw new Error(
+        `missing PR data for requested range: ${missingPrNumbers
+          .map((number) => `#${number}`)
+          .join(", ")}`,
+      );
+    }
+    const prs = filterPrMetricsPrsByRange(input.prs, parsedRange.numbers).map(normalizePrMetricsPr);
+    const metrics = {
+      generated_at: now.toISOString(),
+      source: {
+        pr_range: args.prRange,
+        repository,
+        input: args.input ? resolve(args.input) : "gh",
+      },
+      summary: summarizePrMetrics(prs),
+      prs,
+    };
+
+    ensureParentDir(outputJson);
+    ensureParentDir(outputMd);
+    writeFileSync(outputJson, JSON.stringify(metrics, null, 2) + "\n");
+    writeFileSync(outputMd, renderPrMetricsMarkdown(metrics));
+    process.stdout.write(`wrote ${outputJson}\n`);
+    process.stdout.write(`wrote ${outputMd}\n`);
+    return 0;
+  } catch (err) {
+    process.stderr.write(
+      `harness pr-metrics: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    return 1;
+  }
+}
+
+// ------------------------------------------------------------
 // Entry
 // ------------------------------------------------------------
 
@@ -961,6 +1387,8 @@ async function main() {
     }
     case "worktree-mux":
       return await cmdWorktreeMux(rest);
+    case "pr-metrics":
+      return await cmdPrMetrics(rest);
     default:
       process.stderr.write(`harness: unknown subcommand '${sub}'\n`);
       printUsage();

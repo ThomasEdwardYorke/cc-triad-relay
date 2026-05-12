@@ -41,12 +41,23 @@ export const DEFAULT_CONFIG = {
         // Default markers support ja / en projects. Override via harness.config.json.
         assignmentSectionMarkers: ["担当表", "Assignment", "In Progress"],
         handoffFiles: [],
-        // Task source defaults to legacy Plans.md mode. The 4-layer handoff
-        // structure (roadmap / backlog / current / decisions) is genuinely
-        // opt-in — `handoffPaths` is intentionally omitted so the absence of
-        // a configured path set is unambiguously a Plans.md user. Downstream
-        // skills must check `taskTrackerMode === "handoff"` before they
-        // dereference `handoffPaths`.
+        // Task source defaults to legacy Plans.md mode for backward
+        // compatibility — switching the in-memory default to "handoff"
+        // would silently regress consumers that omit `handoffPaths` (the
+        // validateConfig fallback below logs a stderr WARN that CI logs
+        // typically swallow, leaving Plans.md users thinking they are in
+        // handoff mode when they are not). New projects bootstrapped via
+        // `harness init` get handoff mode through the template
+        // (`template/.claude/harness.config.json.tmpl` ships with
+        // `taskTrackerMode = "handoff"` + a populated `handoffPaths`),
+        // making handoff mode the **template default** while keeping
+        // existing consumers safe. The 4-layer handoff structure
+        // (roadmap / backlog / current / decisions) remains opt-in at the
+        // schema level — `handoffPaths` is intentionally omitted from
+        // DEFAULT_CONFIG so the absence of a configured path set is
+        // unambiguously a Plans.md user. Downstream skills must check
+        // `taskTrackerMode === "handoff"` before they dereference
+        // `handoffPaths`.
         taskTrackerMode: "plans",
         maxParallel: 4,
         labelPriority: [],

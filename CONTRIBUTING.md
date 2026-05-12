@@ -1,6 +1,6 @@
 # Contributing to Claude Code Harness
 
-Thank you for contributing. These guidelines protect users who install this plugin in projects that have nothing to do with the development test bed. **Please read Sections 1–6 before opening a PR.**
+Thank you for contributing. These guidelines protect users who install this plugin in projects that have nothing to do with the development test bed. **Please read Sections 1–8 before opening a PR.**
 
 ---
 
@@ -214,7 +214,7 @@ Internal tracker IDs are maintainer metadata, not plugin behavior.
 
 ## Section 5 — Test Bed Project Policy
 
-Development is validated through a **test-bed project** (`parts-management` in the current cycle). The test bed is a **proving ground, not the specification**.
+Development is validated through **test-bed projects**. A test bed is a **proving ground, not the specification**.
 
 ### 5.1 Required order (R-Flow)
 
@@ -286,8 +286,10 @@ Add an entry to `docs/maintainer/test-bed-usage.md`:
 
 | File | Purpose |
 |---|---|
-| `plugins/harness/.claude-plugin/plugin.json` | Plugin manifest — metadata + plugin-owned component definitions |
-| `/.claude-plugin/marketplace.json` | Marketplace catalog — marketplace owner + installable plugin entries |
+| `.claude-plugin/marketplace.json` | Claude Code marketplace catalog: public marketplace owner + installable plugin entry |
+| `plugins/harness/.claude-plugin/plugin.json` | Plugin manifest: metadata + plugin-owned component definitions |
+| `.agents/plugins/marketplace.json` | Codex marketplace catalog: repo-local marketplace + installable Codex adapter entry |
+| `plugins/codex-harness/.codex-plugin/plugin.json` | Codex plugin manifest: metadata + skill entrypoint discovery |
 
 ### 6.2 Schema rules
 
@@ -297,9 +299,12 @@ Add an entry to `docs/maintainer/test-bed-usage.md`:
 
 ### 6.3 Marketplace rules
 
-- `marketplace.json` must define `name`, `owner`, and `plugins`.
-- Each plugin entry must define `name` and `source`.
-- Keep `strict: true` unless intentionally curating plugin components differently from the plugin repo.
+- Claude Code marketplace files must define `name`, `owner`, and `plugins`.
+- Claude Code plugin entries must define `name` and `source`.
+- Keep Claude Code `strict: true` unless intentionally curating plugin components differently from the plugin repo.
+- Codex marketplace files live at `.agents/plugins/marketplace.json`.
+- Codex plugin entries must define `name`, `source`, `policy`, and `category`.
+- Codex `source.path` must stay repo-relative, for example `./plugins/codex-harness`.
 
 ### 6.4 Versioning (semver)
 
@@ -339,6 +344,81 @@ No release if:
 
 ---
 
+## Section 7 — Public Surface and Local Self-Hosting Boundary
+
+This repository is public, while the harness is also used to develop itself. Keep these surfaces separate.
+
+Public, tracked surface:
+
+- `.claude-plugin/**`: Claude Code marketplace catalog for this public plugin.
+- `.agents/plugins/**`: Codex marketplace catalog for repo-local Codex adapter install.
+- `plugins/harness/**`: shipped plugin implementation, commands, agents, hooks, schemas, and committed `dist` artifacts.
+- `plugins/codex-harness/**`: Codex-native adapter implementation, manifest, and skills.
+- `template/**`: files installed into consumer projects.
+- `docs/en/**`, `docs/ja/**`, `README.md`, `CHANGELOG.md`, and generic maintainer process docs.
+- `harness.config.example.json`: public example for local self-hosting config shape.
+
+Local-only self-hosting surface:
+
+- `harness.config.json`: live config for developing this repository with the harness itself. Git ignores it.
+- `.docs/handoff/**`: active handoff, backlog, roadmap, and decision notes. Git ignores it.
+- Sibling-repository snapshots, personal absolute paths, active branch notes, and untriaged test-bed material.
+
+Rules:
+
+- Do not commit live self-hosting config or handoff state.
+- Do not move private handoff notes into `docs/maintainer/**` unless they have been rewritten as generic public maintainer guidance.
+- Release PRs must keep `git ls-files -- harness.config.json docs/maintainer/handoff` empty.
+- `content-integrity.test.ts` enforces this boundary in CI.
+
+---
+
+## Section 8 — Maintainer Branch Strategy
+
+This repository uses a three-branch maintainer flow:
+
+```text
+feature/* -> dev -> main
+```
+
+Branch roles:
+
+- `main`: public, stable, release-ready. No direct implementation work.
+- `dev`: next-release integration branch.
+- `feature/*`: short-lived implementation branches, cut from `dev`.
+
+Normal feature PRs target `dev`. `main` receives changes only through a release PR from `dev`.
+
+Before starting work:
+
+```bash
+cd /path/to/cc-triad-relay
+git switch dev
+git pull --ff-only
+git status --short --branch
+git switch -c feature/<short-slug>
+```
+
+Before release:
+
+```bash
+git switch dev
+git pull --ff-only
+npm test --workspace=plugins/harness/core
+npm run build
+```
+
+Then open:
+
+```text
+base: main
+compare: dev
+```
+
+The operational runbook lives in [`docs/maintainer/development-branching.md`](docs/maintainer/development-branching.md).
+
+---
+
 ## PR Review Flow
 
 1. Author completes Section 3 self-check before opening a PR. Any unchecked item blocks PR creation.
@@ -358,4 +438,6 @@ No release if:
 - [`plugins/harness/core/src/__tests__/generality.test.ts`](plugins/harness/core/src/__tests__/generality.test.ts) — Static leak detector (CI blocking)
 - [`.github/pull_request_template.md`](.github/pull_request_template.md) — PR checklist
 - [`docs/maintainer/test-bed-usage.md`](docs/maintainer/test-bed-usage.md) — Test bed usage log
+- [`docs/maintainer/development-branching.md`](docs/maintainer/development-branching.md) — Maintainer branch flow
+- [`harness.config.example.json`](harness.config.example.json) — Example local self-hosting config
 - [`CHANGELOG.md`](CHANGELOG.md) — Release notes

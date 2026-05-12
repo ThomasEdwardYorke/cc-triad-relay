@@ -229,6 +229,43 @@ describe("parallel-sessions-template.sh: input validation (injection prevention)
     expect(charClass).toContain("0-9");
   });
 
+  it("rejects slug containing dot because tmux target syntax reserves dot for panes", () => {
+    const r = runScript(["--dry-run", "start", "main", "api.v2"]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/slug|invalid\s+characters|tmux/i);
+  });
+
+  it("validates every slug before emitting any start plan", () => {
+    const r = runScript(["--dry-run", "start", "main", "alpha", "api.v2"]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/slug|invalid\s+characters|tmux/i);
+    expect(r.stdout).not.toMatch(/tmux new-session/);
+    expect(r.stdout).not.toMatch(/git worktree add/);
+    expect(r.stdout).not.toMatch(/tmux new-window/);
+  });
+
+  it("rejects slug starting with digit because tmux target syntax tries window indexes first", () => {
+    const r = runScript(["--dry-run", "start", "main", "2alpha"]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/slug|invalid\s+characters|tmux|start/i);
+  });
+
+  it("validate_slug regex denies dot and leading digit (tmux target-window compatibility)", () => {
+    const content = readFileSync(SCRIPT_PATH, "utf-8");
+    const validatorMatch = content.match(
+      /validate_slug\(\)\s*\{[\s\S]*?\[\[\s*!\s*"\$val"\s*=~\s*\^\[([^\]]+)\]\[([^\]]+)\]\*\$\s*\]\]/,
+    );
+    expect(validatorMatch).not.toBeNull();
+    const firstCharClass = validatorMatch![1];
+    const restCharClass = validatorMatch![2];
+    expect(firstCharClass).not.toContain(".");
+    expect(firstCharClass).not.toContain("0-9");
+    expect(firstCharClass).toContain("a-z");
+    expect(firstCharClass).toContain("A-Z");
+    expect(restCharClass).not.toContain(".");
+    expect(restCharClass).toContain("0-9");
+  });
+
   it("rejects slug containing whitespace", () => {
     const r = runScript(["--dry-run", "start", "main", "foo bar"]);
     expect(r.status).not.toBe(0);

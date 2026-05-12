@@ -1,0 +1,44 @@
+{
+  "$schema": "https://raw.githubusercontent.com/ThomasEdwardYorke/cc-triad-relay/main/plugins/harness/schemas/harness.config.schema.json",
+  "projectName": "cc-triad-relay-local",
+  "repoKind": "harness-itself",
+  "language": "en",
+  "protectedDirectories": [],
+  "protectedEnvVarNames": [
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "GITHUB_TOKEN",
+    "GOOGLE_API_KEY"
+  ],
+  "protectedFileSuffixes": [
+    ".env"
+  ],
+  "codex": {
+    "enabled": false
+  },
+  "workMode": {
+    "bypassRmRf": false,
+    "bypassGitPush": false
+  },
+  "tampering": {
+    "severity": "approve"
+  },
+  "work": {
+    "taskTrackerMode": "handoff",
+    "handoffPaths": {
+      "current": ".docs/handoff/cc-triad-relay-current.md",
+      "backlog": ".docs/handoff/cc-triad-relay-backlog.md",
+      "decisions": ".docs/handoff/cc-triad-relay-decisions.md",
+      "roadmap": ".docs/handoff/cc-triad-relay-roadmap.md"
+    },
+    "testCommand": "npm test --workspace=plugins/harness/core"
+  },
+  "release": {
+    "strategy": "three-branch",
+    "integrationBranch": "dev",
+    "productionBranch": "main",
+    "testCommand": "npm test --workspace=plugins/harness/core"
+  }
+}

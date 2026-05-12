@@ -8,6 +8,18 @@
 
 <!-- 何を変更したか。なぜ必要か。関連 issue があれば #123 でリンク。 -->
 
+## Branch Target
+
+- [ ] 通常開発 PR: `base = dev`
+- [ ] Release PR: `base = main`, `compare = dev`
+- [ ] 例外の場合、理由を Motivation に明記した
+
+## Repository Public Surface
+
+- [ ] Live self-hosting config is not included in the PR
+- [ ] Live self-hosting handoff files are not included in the PR
+- [ ] No personal absolute paths or untriaged sibling-repository notes are included
+
 ## 動機 / Motivation
 
 <!-- この変更がなぜ必要なのか。既存挙動の問題点、追加価値を明記。 -->
@@ -65,7 +77,7 @@ shipped spec (`plugins/harness/agents/*.md` / `plugins/harness/commands/*.md` / 
 - [ ] `generality.test.ts` に対応 assertion を追加 (新規 blocklist pattern の場合)
 - [ ] `content-integrity.test.ts` の既存 assertion が全件 pass
 - [ ] shipped spec に内部 PR 番号 / maintainer 申送 ID が残っていない
-- [ ] maintainer 内部資料は `docs/maintainer/` に配置した
+- [ ] public maintainer guidance is in `docs/maintainer/`; private self-hosting notes stay in ignored local files
 
 ---
 

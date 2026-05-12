@@ -8,7 +8,7 @@
 # 検証対象 (overlay-load race regression guard + reproducible multi-run scenario):
 #   1. check_skill_registry_in_output   — pane 内 skill 名検出 (純粋関数)
 #   2. resolve_required_skills          — env var / default の解決
-#   3. build_blocked_escalation_message — 8-section BLOCKED 文面組立
+#   3. build_blocked_escalation_message — 8-field BLOCKED 文面組立
 #   4. cmd_verify                       — exit code + escalate 動作
 #   5. wait_for_all_workers_ready (env disabled path) — opt-out 経路
 #
@@ -68,6 +68,22 @@ assert_contains() {
     FAIL_COUNT=$((FAIL_COUNT + 1))
     FAIL_DETAILS+=("$name: needle='$needle' not in haystack")
     echo "  FAIL: $name (needle not found)"
+    echo "    needle:   '$needle'"
+    echo "    haystack: '$haystack'"
+  fi
+}
+
+assert_not_contains() {
+  local name="$1"
+  local needle="$2"
+  local haystack="$3"
+  if [[ "$haystack" != *"$needle"* ]]; then
+    PASS_COUNT=$((PASS_COUNT + 1))
+    echo "  PASS: $name"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAIL_DETAILS+=("$name: needle='$needle' unexpectedly found in haystack")
+    echo "  FAIL: $name (unexpected needle found)"
     echo "    needle:   '$needle'"
     echo "    haystack: '$haystack'"
   fi
@@ -137,10 +153,8 @@ unset rc out wrapped
 out=$(check_skill_registry_in_output \
   "harness:tdd-implementation typo only" \
   "harness:tdd-implement" 2>&1) && rc=0 || rc=$?
-# 注: 現行 grep -F substring 一致では implementation も match する.
-# このテストは false-positive を明示的に記録し、将来 word-boundary 化する際の
-# regression guard とする (現状は意図的に loose 一致).
-assert_rc "1f substring match accepts longer word (documented behavior)" "0" "$rc"
+assert_rc "1f longer token does not satisfy required skill" "1" "$rc"
+assert_contains "1f missing skill listed despite longer token" "harness:tdd-implement" "$out"
 unset rc out
 
 echo
@@ -173,10 +187,35 @@ out=$(resolve_required_skills 2>/dev/null)
 assert_contains "2d newline-in-token rejected, falls back to defaults" "harness:tdd-implement" "$out"
 unset CLAUDE_REQUIRED_SKILLS out
 
+# 2e: whitespace-only override → reject + fall back, not an empty verify set
+export CLAUDE_REQUIRED_SKILLS='   '
+out=$(resolve_required_skills 2>/dev/null)
+assert_contains "2e whitespace-only override rejected, falls back to defaults" "harness:tdd-implement" "$out"
+check_skill_registry_in_output "" "$out" >/dev/null 2>&1 && rc=0 || rc=$?
+assert_rc "2e fallback default skills are still enforced" "1" "$rc"
+unset CLAUDE_REQUIRED_SKILLS out rc
+
+# 2f: glob metacharacter must be rejected before shell filename expansion
+export CLAUDE_REQUIRED_SKILLS='*'
+out=$(resolve_required_skills 2>/dev/null)
+assert_contains "2f glob token rejected, falls back to defaults" "harness:tdd-implement" "$out"
+assert_not_contains "2f glob token does not expand repository filenames" "CHANGELOG.md" "$out"
+unset CLAUDE_REQUIRED_SKILLS out
+
+# 2g: whitespace-only input must fall through to the empty-token fallback even
+# with `set -e` active.
+out=$(
+  export CLAUDE_REQUIRED_SKILLS='   '
+  set -e
+  resolve_required_skills 2>/dev/null
+)
+assert_contains "2g whitespace-only falls back under set -e" "harness:tdd-implement" "$out"
+unset out
+
 echo
 echo "=== Test 3: build_blocked_escalation_message ==="
 
-# 3a: 必須 8-section field 全部含む
+# 3a: 必須 8-field 全部含む
 msg=$(build_blocked_escalation_message "alpha" "harness:tdd-implement harness:codex-sync")
 assert_contains "3a contains STATUS: BLOCKED" "STATUS: BLOCKED" "$msg"
 assert_contains "3a contains CHANGED_FILES" "CHANGED_FILES" "$msg"
@@ -187,6 +226,9 @@ assert_contains "3a contains BLOCKERS (overlay-load race)" "overlay-load race" "
 assert_contains "3a contains missing skills listed" "harness:tdd-implement" "$msg"
 assert_contains "3a contains NEXT_ACTION" "NEXT_ACTION" "$msg"
 assert_contains "3a contains FORBIDDEN_ACTIONS_USED: no" "FORBIDDEN_ACTIONS_USED: no" "$msg"
+assert_contains "3a instructs newline-separated fields" "newline-separated" "$msg"
+assert_not_contains "3a does not request semicolon-separated final report" "semicolon-separated" "$msg"
+assert_not_contains "3a final field has no trailing period in copied value" "FORBIDDEN_ACTIONS_USED: no." "$msg"
 assert_contains "3a contains slug 'alpha'" "alpha" "$msg"
 unset msg
 
@@ -210,6 +252,89 @@ else
   echo "  FAIL: 4a opt-out took too long (elapsed=${elapsed}s)"
 fi
 unset CLAUDE_OVERLAY_LOAD_VERIFY rc
+
+# 4b: every slug must receive at least one probe even when earlier probes use
+# the configured timeout budget. This avoids false BLOCKED escalation for
+# healthy later workers in 3+ worker launches.
+out=$(
+  {
+    probe_skill_registry() {
+      sleep 2
+      return 0
+    }
+    escalate_blocked_to_slug() {
+      printf 'escalated:%s\n' "$2"
+    }
+    CLAUDE_OVERLAY_LOAD_VERIFY=1 \
+    CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS=0 \
+    CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=2 \
+    CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS=1 \
+      wait_for_all_workers_ready "session" "a" "b" "c"
+  } 2>&1
+) && rc=0 || rc=$?
+assert_rc "4b slow successful probes do not skip later workers → rc=0" "0" "$rc"
+assert_contains "4b final worker was probed" "probing skill registry for 'c'" "$out"
+assert_not_contains "4b no worker skipped before probe" "SKIPPED" "$out"
+assert_not_contains "4b no false BLOCKED escalation" "escalated:" "$out"
+unset out rc
+
+# 4c: timeout=0 is an operator mistake; normalize it instead of letting
+# MAX_WAIT skip every worker before one registry probe.
+out=$(
+  {
+    probe_skill_registry() {
+      printf 'probed:%s\n' "$2"
+      return 0
+    }
+    escalate_blocked_to_slug() {
+      printf 'escalated:%s\n' "$2"
+    }
+    CLAUDE_OVERLAY_LOAD_VERIFY=1 \
+    CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS=0 \
+    CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=0 \
+    CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS=0 \
+      wait_for_all_workers_ready "session" "a" "b" "c"
+  } 2>&1
+) && rc=0 || rc=$?
+assert_rc "4c zero timeout is normalized → rc=0" "0" "$rc"
+assert_contains "4c first worker was probed" "probing skill registry for 'a'" "$out"
+assert_contains "4c final worker was probed" "probing skill registry for 'c'" "$out"
+assert_not_contains "4c no worker skipped before probe" "SKIPPED" "$out"
+assert_not_contains "4c no false BLOCKED escalation" "escalated:" "$out"
+unset out rc
+
+# 4d: failed early probes spend escalation time too. The launcher must still
+# probe later workers instead of letting escalation delay consume the pre-probe
+# MAX_WAIT guarantee.
+out=$(
+  {
+    probe_skill_registry() {
+      if [[ "$2" == "a" || "$2" == "b" ]]; then
+        sleep 2
+        printf 'missing-skill\n'
+        return 1
+      fi
+      if [[ "$2" == "c" ]]; then
+        return 0
+      fi
+    }
+    escalate_blocked_to_slug() {
+      sleep 1
+      printf 'escalated:%s\n' "$2"
+    }
+    CLAUDE_OVERLAY_LOAD_VERIFY=1 \
+    CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS=0 \
+    CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=2 \
+    CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS=1 \
+      wait_for_all_workers_ready "session" "a" "b" "c"
+  } 2>&1
+) && rc=0 || rc=$?
+assert_rc "4d failed early probes still return failure → rc=1" "1" "$rc"
+assert_contains "4d final worker was still probed" "probing skill registry for 'c'" "$out"
+assert_contains "4d final worker can succeed" "'c' OK" "$out"
+assert_not_contains "4d final worker was not skipped" "'c' SKIPPED" "$out"
+assert_not_contains "4d no false escalation for final worker" "escalated:c" "$out"
+unset out rc
 
 echo
 echo "=== Test 5: cmd_verify validates session arg ==="
@@ -372,6 +497,85 @@ assert_contains "10a emits tmux kill-session" \
   "tmux kill-session -t 'test-cleanup-session'" "$out"
 DRY_RUN=0
 unset TMUX_SESSION_NAME WORKTREE_PARENT_DIR WORKTREE_PREFIX out
+
+echo
+echo "=== Test 11: probe_skill_registry tmux capture failure ==="
+
+# 11a: capture-pane failure must be surfaced as rc=2, not as missing skills.
+out=$(
+  tmux() {
+    if [[ "$1" == "send-keys" || "$1" == "clear-history" ]]; then
+      return 0
+    fi
+    if [[ "$1" == "capture-pane" ]]; then
+      return 99
+    fi
+    return 0
+  }
+  probe_skill_registry "session" "alpha" "harness:tdd-implement" 1
+) && rc=0 || rc=$?
+assert_rc "11a capture-pane failure → rc=2" "2" "$rc"
+assert_contains "11a capture failure message" "tmux capture-pane failed" "$out"
+unset out rc
+
+# 11b: stale visible pane content from before /help must not satisfy the probe.
+out=$(
+  capture_count=0
+  tmux() {
+    if [[ "$1" == "send-keys" || "$1" == "clear-history" ]]; then
+      return 0
+    fi
+    if [[ "$1" == "capture-pane" ]]; then
+      capture_count=$((capture_count + 1))
+      if [[ "$capture_count" -eq 1 ]]; then
+        printf 'stale prior pane says harness:tdd-implement\n'
+      else
+        printf 'stale prior pane says harness:tdd-implement\n'
+        printf 'fresh help output without loaded skill\n'
+      fi
+      return 0
+    fi
+    return 0
+  }
+  probe_skill_registry "session" "alpha" "harness:tdd-implement" 1
+) && rc=0 || rc=$?
+assert_rc "11b stale visible pane is excluded before scan → rc=1" "1" "$rc"
+assert_contains "11b reports missing skill from fresh output" "harness:tdd-implement" "$out"
+unset out rc
+
+# 11c: direct probe / cmd_verify path also normalizes timeout=0 to the poll
+# interval, otherwise the loop does not capture any fresh /help output.
+out=$(
+  count_file="$(mktemp)"
+  printf '0' > "$count_file"
+  sleep() { :; }
+  tmux() {
+    if [[ "$1" == "send-keys" || "$1" == "clear-history" ]]; then
+      return 0
+    fi
+    if [[ "$1" == "capture-pane" ]]; then
+      local capture_count
+      capture_count="$(cat "$count_file")"
+      capture_count=$((capture_count + 1))
+      printf '%s' "$capture_count" > "$count_file"
+      if [[ "$capture_count" -gt 1 ]]; then
+        printf 'harness:tdd-implement harness:codex-sync harness:pseudo-coderabbit-loop harness:coderabbit-review harness:codex-team harness:session-handoff\n'
+      fi
+      return 0
+    fi
+    return 0
+  }
+  probe_rc=0
+  CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS=0 probe_skill_registry "session" "alpha" || probe_rc=$?
+  printf 'probe_rc=%s\n' "$probe_rc"
+  printf 'capture_count=%s\n' "$(cat "$count_file")"
+  rm -f "$count_file"
+  exit "$probe_rc"
+) && rc=0 || rc=$?
+assert_rc "11c direct probe zero timeout is normalized → rc=0" "0" "$rc"
+assert_contains "11c direct probe returned zero" "probe_rc=0" "$out"
+assert_contains "11c direct probe captured fresh output" "capture_count=2" "$out"
+unset out rc
 
 echo
 echo "============================================================"

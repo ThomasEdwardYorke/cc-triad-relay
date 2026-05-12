@@ -139,7 +139,7 @@ reviews:
           "canonical SemVer" と混同する記述は避ける (docstring 精度)
 
     # ------------------------------------------------------------------
-    # agents frontmatter (plugin-scoped subagent 6 件)
+    # agents frontmatter (plugin-scoped subagent 7 件)
     # ------------------------------------------------------------------
     - path: "plugins/harness/agents/**/*.md"
       instructions: |
@@ -155,7 +155,7 @@ reviews:
           plugin core には含めず、project-local skill (`.claude/skills/<project>-local-rules/`) に委譲
 
     # ------------------------------------------------------------------
-    # commands (5 verb skills + 8 workflow skills = 13 commands)
+    # commands (5 verb skills + 14 workflow skills = 19 commands)
     # ------------------------------------------------------------------
     - path: "plugins/harness/commands/**/*.md"
       instructions: |
@@ -172,13 +172,14 @@ reviews:
           必ず `future release` or `a future version` で記述)
 
     # ------------------------------------------------------------------
-    # hooks.json (12 lifecycle events)
+    # hooks.json (16 lifecycle events)
     # ------------------------------------------------------------------
     - path: "plugins/harness/hooks/hooks.json"
       instructions: |
-        - 現在登録済 12 events: `PreToolUse` / `PostToolUse` / `PermissionRequest` /
+        - 現在登録済 16 events: `PreToolUse` / `PostToolUse` / `PermissionRequest` /
           `SessionStart` / `SessionEnd` / `PreCompact` / `SubagentStop` / `TaskCreated` /
-          `Stop` / `WorktreeCreate` / `WorktreeRemove` / `TaskCompleted`
+          `Stop` / `WorktreeCreate` / `WorktreeRemove` / `TaskCompleted` /
+          `UserPromptSubmit` / `PostToolUseFailure` / `ConfigChange` / `SubagentStart`
         - **blocking hook** (例: `WorktreeCreate`) は protocol-compliant 実装 (stdout
           absolute-path contract + real `git worktree` 生成 + exit 0/non-zero で
           成功/失敗を通知) が揃っている場合のみ hooks.json 登録を行う。observability-only
@@ -216,8 +217,8 @@ reviews:
       instructions: |
         - `metadata.version == plugins[0].version` 必須 (content-integrity.test.ts 既存 test)
         - `plugins[0].description` は:
-          - `plugin.json.commands.length` と一致する数字 (e.g. "13 commands")
-          - `hooks.json` keys 数と一致する数字 (e.g. "12 lifecycle hook events")
+          - `plugin.json.commands.length` と一致する数字 (e.g. "19 commands")
+          - `hooks.json` keys 数と一致する数字 (e.g. "16 lifecycle hook events")
           の両方を含む必要あり (content-integrity の description drift guards 2 件)
         - `allowCrossMarketplaceDependenciesOn: ["openai-codex"]` 維持
 

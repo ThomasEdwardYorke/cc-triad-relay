@@ -41,6 +41,22 @@ Then in your project root:
 
 This creates a `harness.config.json` tailored to your project.
 
+### Codex local adapter
+
+This repository also ships a Codex-native adapter in
+`plugins/codex-harness/`. It exposes Harness workflows as Codex skills rather
+than Claude Code commands, agents, or hooks.
+
+```bash
+codex plugin marketplace add /path/to/project
+```
+
+After adding the marketplace, enable `codex-harness` from the project
+marketplace. Current Codex skills are `harness-work`, `tdd-implement`,
+`session-handoff`, `coderabbit-review`, `pseudo-coderabbit-loop`,
+`new-feature-branch`, `branch-merge`, `harness-release`,
+`harness-merge-train`, `parallel-worktree`, and `codex-team`.
+
 ### Optional companion: `openai-codex`
 
 The Harness ships stack- and LLM-neutral. Two of its agents —
@@ -55,7 +71,7 @@ therefore optional**:
 
 | Plugin installed | What works | What errors on invocation |
 |------------------|------------|---------------------------|
-| `harness` only (default) | All 13 guardrails, 19 commands (5 verb + 14 workflow), 5 native agents (`worker` / `reviewer` / `scaffolder` / `security-auditor` / `context-audit-agent`), all 12 lifecycle hooks | `codex-sync` fails fast with `ERROR: Codex plugin not found` and `coderabbit-mimic` fails with `ERROR: codex-companion.mjs not found.` — both hard errors that stop the agent before any work starts. Other agents and commands are unaffected. |
+| `harness` only (default) | All 13 guardrails, 19 commands (5 verb + 14 workflow), 5 native agents (`worker` / `reviewer` / `scaffolder` / `security-auditor` / `context-audit-agent`), all 16 lifecycle hooks | `codex-sync` fails fast with `ERROR: Codex plugin not found` and `coderabbit-mimic` fails with `ERROR: codex-companion.mjs not found.` — both hard errors that stop the agent before any work starts. Other agents and commands are unaffected. |
 | `harness` + `codex` | Everything above **plus** Codex-powered synchronous second-opinion review (`codex-sync`) and local pseudo-CodeRabbit loop (`coderabbit-mimic`) | — |
 
 `install-project.sh --with-codex` flips the opt-in; otherwise run
