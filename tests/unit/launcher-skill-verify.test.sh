@@ -455,7 +455,13 @@ cat > "${tmp_wt_8b}/.claude/settings.json" <<'JSON'
 }
 JSON
 DRY_RUN=1
-out=$(install_plugins_for_worktree "$tmp_wt_8b" 2>&1)
+# `|| true` is defense-in-depth against rc=2 (python3 missing) under `set -e`
+# semantics inherited from the sourced launcher: even if the runtime lacks
+# python3, the assertion can still run and produce a meaningful FAIL message
+# rather than aborting the entire test runner with `exit 1` mid-suite. In
+# practice CI always installs python3 (see .github/workflows/ci.yml
+# setup-python step) so this branch is rarely exercised.
+out=$(install_plugins_for_worktree "$tmp_wt_8b" 2>&1) || true
 assert_contains "8b emits codex install" "claude plugin install 'codex@openai-codex' --scope=project" "$out"
 assert_contains "8b emits harness install" "claude plugin install 'harness@cc-triad-relay' --scope=project" "$out"
 DRY_RUN=0
