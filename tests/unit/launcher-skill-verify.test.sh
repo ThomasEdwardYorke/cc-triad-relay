@@ -364,10 +364,10 @@ export TMUX_SESSION_NAME="test-cleanup-session"
 export WORKTREE_PARENT_DIR="/tmp"
 export WORKTREE_PREFIX="test-cleanup-wt-"
 out=$(cmd_cleanup "test-cleanup-session" "alpha" "beta" 2>&1)
-assert_contains "10a emits worktree remove for alpha" \
-  "git worktree remove '/tmp/test-cleanup-wt-alpha'" "$out"
-assert_contains "10a emits worktree remove for beta" \
-  "git worktree remove '/tmp/test-cleanup-wt-beta'" "$out"
+assert_contains "10a emits worktree remove --force for alpha" \
+  "git worktree remove '/tmp/test-cleanup-wt-alpha' --force" "$out"
+assert_contains "10a emits worktree remove --force for beta" \
+  "git worktree remove '/tmp/test-cleanup-wt-beta' --force" "$out"
 assert_contains "10a emits tmux kill-session" \
   "tmux kill-session -t 'test-cleanup-session'" "$out"
 DRY_RUN=0
