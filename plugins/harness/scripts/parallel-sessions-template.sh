@@ -105,26 +105,250 @@ validate_env_var_name() {
   fi
 }
 
+# --- Layer 3 plugin-discovery helpers (auto-install) ----------------------
+# Background: parallel-worktree-v2 spawns a fresh top-level claude REPL per
+# worktree. Without project-scoped plugin install, the REPL only sees user-
+# scope plugins (~/.claude/plugins/) and the harness skill catalog appears
+# empty. Layer 3 closes this by reading the consumer's tracked
+# `.claude/settings.json` (Layer 1 invariant) and emitting
+# `claude plugin install <plugin>@<marketplace> --scope=project` for every
+# `enabledPlugins[*] === true` key, BEFORE the worker tmux window spawns.
+# All helpers respect the existing `emit` / `DRY_RUN` contract so the unit
+# tests can assert on emitted commands without invoking real `claude` /
+# `git` / `tmux`.
+
+resolve_enabled_plugins() {
+  # Parse `<settings_path>` JSON and emit one `name@marketplace` per line for
+  # every `enabledPlugins[*] === true` key. Pure read: no install side effect.
+  # Args: $1 = absolute path to settings.json.
+  # Exit: 0 (ok or no enabledPlugins) / 1 (missing file) / 2 (python3 absent) /
+  #       3 (malformed JSON).
+  # Why python3 (not jq): jq would add a homebrew-only external dep; python3
+  # ships with macOS and is in every linux distro the harness targets. argv
+  # passes the path as a literal so shell metachars in $1 cannot escape into
+  # the inline script.
+  local settings_path="$1"
+  if [[ ! -f "$settings_path" ]]; then
+    return 1
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: python3 is required for plugin discovery but is not on PATH" >&2
+    return 2
+  fi
+  # Distinguish JSON parse errors from generic exceptions so the operator can
+  # tell "file is corrupted" from "Python itself failed". Both still exit 3
+  # (the bash caller treats any non-zero rc here as "could not list plugins")
+  # but the stderr message points at the right thing.
+  python3 -c '
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        data = json.load(f)
+except json.JSONDecodeError as exc:
+    sys.stderr.write("Error: settings.json malformed JSON at line {} col {}: {}\n".format(
+        exc.lineno, exc.colno, exc.msg))
+    sys.exit(3)
+except OSError as exc:
+    sys.stderr.write("Error: settings.json could not be read: {}\n".format(exc))
+    sys.exit(3)
+except Exception as exc:
+    sys.stderr.write("Error: unexpected exception while reading settings.json: {}: {}\n".format(
+        type(exc).__name__, exc))
+    sys.exit(3)
+plugins = data.get("enabledPlugins", {})
+if not isinstance(plugins, dict):
+    sys.exit(0)
+for key, val in plugins.items():
+    if val is True:
+        print(key)
+' "$settings_path"
+}
+
+resolve_handoff_copy_sources() {
+  # Split HANDOFF_COPY_SOURCES (colon-separated ABSOLUTE paths) and emit one
+  # normalized path per line. Empty / unset env → no output, rc=0.
+  # Args: none (reads HANDOFF_COPY_SOURCES env).
+  # Exit: 0 (ok or empty) / 1 (any entry rejected as relative).
+  # Why colon-separated: existing validate_env_value charset
+  # `[a-zA-Z0-9._/=:@,+-]+` already allows `:`. Using it as IFS keeps the env
+  # value compatible with `tmux new-session -e KEY=VAL` propagation if a
+  # downstream consumer ever forwards HANDOFF_COPY_SOURCES into the worker
+  # environment (not done by default, but future-safe).
+  # Note: each entry is realpath-normalized via
+  # `cd "$(dirname ...)" && pwd -P` which FOLLOWS SYMLINKS to the canonical
+  # target. This is intentional (operators may symlink handoff sources from a
+  # central drop point) but means the function will silently widen the actual
+  # filesystem reach beyond what the literal env string suggests. Per the
+  # operator-trust-boundary at the top of this file, callers are responsible
+  # for not pointing HANDOFF_COPY_SOURCES at symlinks they do not vouch for.
+  # Note: filesystems allow `:` in path components (HFS+ / ext4 both permit
+  # it). Because IFS=':' is the chosen separator, operators MUST NOT place
+  # paths containing literal colons here — the loop below would split such
+  # paths mid-component and reject the fragments as relative. This
+  # restriction is documented in `usage()`.
+  local raw="${HANDOFF_COPY_SOURCES:-}"
+  if [[ -z "$raw" ]]; then
+    return 0
+  fi
+  local IFS=':'
+  local entry
+  for entry in $raw; do
+    [[ -z "$entry" ]] && continue
+    if [[ "$entry" != /* ]]; then
+      echo "Error: HANDOFF_COPY_SOURCES entry '$entry' must be an ABSOLUTE path" >&2
+      return 1
+    fi
+    if [[ ! -e "$entry" ]]; then
+      echo "Warning: HANDOFF_COPY_SOURCES entry '$entry' does not exist (skipping)" >&2
+      continue
+    fi
+    # realpath-style normalization without depending on coreutils `realpath`.
+    # macOS ships `readlink -f` only in coreutils homebrew; bash + cd -P is
+    # portable. Fail-soft on cd error (returns rc=1 to caller).
+    local real_dir
+    real_dir=$(cd "$(dirname "$entry")" 2>/dev/null && pwd -P) || {
+      echo "Error: HANDOFF_COPY_SOURCES entry '$entry' could not be resolved" >&2
+      return 1
+    }
+    printf '%s/%s\n' "$real_dir" "$(basename "$entry")"
+  done
+}
+
+copy_handoff_sources_to_worktree() {
+  # Copy every HANDOFF_COPY_SOURCES entry into $1 via `emit "cp -RP ..."`.
+  # No-op when env is empty. Used by cmd_start AFTER git worktree add and
+  # BEFORE plugin install so the worktree path exists. Fail-fast on
+  # resolve_handoff_copy_sources errors so the caller (cmd_start) can abort
+  # the spawn cleanly instead of silently skipping malformed entries.
+  # Args: $1 = worktree path (absolute or relative; passed through to cp).
+  # Exit: 0 (ok or no entries) / 1 (resolve_handoff_copy_sources rc != 0,
+  #       e.g. a relative path entry rejected).
+  #
+  # Why capture-then-read instead of process substitution: the previous form
+  # `done < <(resolve_handoff_copy_sources)` could not propagate the
+  # function's rc to the caller — a malformed entry produced a stderr
+  # warning but the while loop saw an empty stream and continued silently.
+  # Capturing into `$sources` lets us observe the rc via `|| rc=$?` and
+  # return it to cmd_start (chatgpt-codex-connector review P2 fix).
+  #
+  # Why `cp -RP` (preserve symlinks) instead of `cp -r` (default follow):
+  # resolve_handoff_copy_sources already normalizes the ENTRY path via
+  # `cd && pwd -P` (dereferences operator-supplied symlinks at the top
+  # level). However, if the entry is a directory whose subtree contains
+  # symlinks to outside paths (e.g. a `link-to-secret -> /etc/private`
+  # inside an otherwise innocent handoff directory), BSD `cp -r` on macOS
+  # FOLLOWS those nested symlinks by default and materializes the targets
+  # inside the worktree — a silent data-exfiltration vector that bypasses
+  # the operator-trust boundary documented at the top of this file. `-RP`
+  # preserves the symlink as-is so the worktree mirrors the source tree
+  # literally; operators who genuinely want a flattened copy must either
+  # pre-flatten with their own command or set up the link target before
+  # invoking the launcher.
+  local wt_path="$1"
+  if [[ -z "${HANDOFF_COPY_SOURCES:-}" ]]; then
+    return 0
+  fi
+  local sources
+  local rc=0
+  sources=$(resolve_handoff_copy_sources) || rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo "Error: copy_handoff_sources_to_worktree aborted (resolve_handoff_copy_sources rc=$rc)" >&2
+    return "$rc"
+  fi
+  local src
+  while IFS= read -r src; do
+    [[ -z "$src" ]] && continue
+    emit "cp -RP '$src' '${wt_path}/'"
+  done <<< "$sources"
+}
+
+install_plugins_for_worktree() {
+  # For every `enabledPlugins[*] === true` key in `<wt>/.claude/settings.json`,
+  # emit `claude plugin install <key> --scope=project` executed inside the
+  # worktree directory. Fail-fast on invalid plugin name format.
+  # Args: $1 = worktree path, $2 = settings.json path (default = $1/.claude/settings.json).
+  # Exit: 0 (ok or skipped because settings.json absent — non-fatal for
+  #       generic consumers) / 1 (resolve_enabled_plugins error or invalid
+  #       plugin name).
+  # Why skip-on-missing-settings: this template is generic (a `<project>`
+  # placeholder template), not consumer-specific. A consumer without
+  # `.claude/settings.json` should not be forced into Layer 3. The skip emits
+  # a stderr INFO so an operator can confirm the path was reached.
+  local wt_path="$1"
+  local settings_path="${2:-${wt_path}/.claude/settings.json}"
+  if [[ ! -f "$settings_path" ]]; then
+    echo "[plugin-install] '$wt_path' SKIPPED — settings.json not found at $settings_path" >&2
+    return 0
+  fi
+  local plugins
+  local resolve_rc=0
+  # `tr -d '\r'` strips Windows CRLF endings emitted by python3 print() under
+  # Git Bash for Windows, so that the per-plugin `while IFS= read -r plugin`
+  # loop below does not capture a trailing `\r` and reject every plugin
+  # identifier as malformed via the strict regex.
+  plugins=$(resolve_enabled_plugins "$settings_path" | tr -d '\r') || resolve_rc=$?
+  if [[ $resolve_rc -ne 0 ]]; then
+    echo "[plugin-install] '$wt_path' FAILED — resolve_enabled_plugins rc=$resolve_rc" >&2
+    return 1
+  fi
+  if [[ -z "$plugins" ]]; then
+    echo "[plugin-install] '$wt_path' no enabled plugins (skip)" >&2
+    return 0
+  fi
+  # Use the operator-resolved CLAUDE_BIN (same binary that worker tmux windows
+  # spawn) so a non-default claude binary path is honoured here too. This is a
+  # chatgpt-codex-connector review P1 fix: hard-coding `claude` here was
+  # inconsistent with cmd_start's resolve_claude_bin() usage for worker spawn.
+  local claude_bin
+  claude_bin=$(resolve_claude_bin)
+  local plugin
+  while IFS= read -r plugin; do
+    [[ -z "$plugin" ]] && continue
+    # Plugin name format: <name>@<marketplace>. Same charset as
+    # validate_identifier but with a single `@` separator. Reject anything
+    # else so a hostile / malformed settings.json cannot inject shell
+    # metachars through the single-quoted `emit` interpolation.
+    if [[ ! "$plugin" =~ ^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+$ ]]; then
+      echo "[plugin-install] '$wt_path' FAILED — invalid plugin identifier '$plugin'" >&2
+      return 1
+    fi
+    echo "[plugin-install] '$wt_path' installing '$plugin'..." >&2
+    emit "cd '$wt_path' && $claude_bin plugin install '$plugin' --scope=project"
+  done <<< "$plugins"
+}
+
 usage() {
   cat <<'USAGE'
 parallel-sessions-template.sh — tmux-based parallel-session launcher
 
 Usage:
   parallel-sessions-template.sh [--dry-run] start <feature_branch> <slug1> [slug2 ...]
-  parallel-sessions-template.sh [--dry-run] stop  [<session_name>]
-  parallel-sessions-template.sh [--dry-run] status [<session_name>]
-  parallel-sessions-template.sh [--dry-run] attach <slug> [<session_name>]
-  parallel-sessions-template.sh [--dry-run] verify <session_name> [<slug1> [slug2 ...]]
+  parallel-sessions-template.sh [--dry-run] stop    [<session_name>]
+  parallel-sessions-template.sh [--dry-run] cleanup [<session_name>] [<slug1> ...]
+  parallel-sessions-template.sh [--dry-run] status  [<session_name>]
+  parallel-sessions-template.sh [--dry-run] attach  <slug> [<session_name>]
+  parallel-sessions-template.sh [--dry-run] verify  <session_name> [<slug1> [slug2 ...]]
   parallel-sessions-template.sh --help
 
 Subcommands:
   start    Create N git worktrees + N tmux windows + N independent claude sessions.
+           For each worktree, optionally copy HANDOFF_COPY_SOURCES into it then
+           auto-install every plugin enabled in `<wt>/.claude/settings.json`
+           (`enabledPlugins` keys with value === true) via
+           `claude plugin install <plugin>@<marketplace> --scope=project`. Fail-
+           fast on any install error (exit 3) so the coordinator does not send
+           prompts into an unloaded REPL.
            After spawn, waits for overlay (~/.claude/) skill load + probes the
            harness skill registry per slug, then sends a structured BLOCKED
            8-field escalation prompt to any window whose skill registry is
            incomplete (overlay-load race guard). Disable per-session with
            CLAUDE_OVERLAY_LOAD_VERIFY=0.
-  stop     Kill the tmux session (no worktree cleanup).
+  stop     Kill the tmux session (no worktree cleanup, no plugin uninstall).
+  cleanup  Per-slug `claude plugin uninstall --scope=project -y` + `git worktree
+           remove --force` + tmux kill-session. When no slug args are given,
+           discovers slugs from tmux window names (excludes the coordinator
+           window). When explicit slugs are given (test / operator override),
+           uses those instead of tmux discovery.
   status   Print tmux windows + per-worktree git log -1.
   attach   Attach to the tmux session and select a slug's window.
   verify   Re-run the skill-registry probe on a live session (operator-driven
@@ -145,6 +369,23 @@ Env vars:
   CLAUDE_ONESHOT_LOG_DIR                  (optional, forwarded to tmux session via `-e`)
   TMUX_PASS_ENV                           (optional, whitespace-separated extra env var
                                            names to forward via `-e`)
+  HANDOFF_COPY_SOURCES                    (optional, colon-separated ABSOLUTE paths to
+                                           copy into each worktree before tmux spawn.
+                                           Example: HANDOFF_COPY_SOURCES="/a/handoff.md:/b/x"
+                                           IMPORTANT: paths must NOT contain colons (colon
+                                           is reserved as the entry separator). Each entry
+                                           is realpath-normalized via `cd && pwd -P` and
+                                           follows symlinks; operator is responsible for
+                                           the entries pointing only at trusted content.
+                                           IMPORTANT (Layer 3 interaction): consumers using
+                                           Layer 3 plugin auto-install should either commit
+                                           `.claude/settings.json` into the repo (so the
+                                           freshly-created worktree already has it) OR add
+                                           an absolute path that lands a settings.json
+                                           inside the worktree via this env. Otherwise
+                                           install_plugins_for_worktree() will skip silently
+                                           and the overlay-load race guard becomes the only
+                                           safety net.)
   CLAUDE_OVERLAY_LOAD_VERIFY              (default 1; set 0 to skip wait+verify, e.g. mock-claude tests)
   CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS    (default 5; baseline sleep after spawn before any probe)
   CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS    (default 20; total wait budget, auto-raised to cover every worker probe)
@@ -677,6 +918,31 @@ cmd_start() {
     wt="${parent}/${prefix}${slug}"
     branch="feature/${feat}-${slug}"
     emit "git worktree add '$wt' -b '$branch' '$feat'"
+    # Layer 3 — order matters: handoff doc copy must run before plugin install
+    # (some consumers reference handoff path from a plugin postinstall hook in
+    # theory), and plugin install must run before tmux spawns so the new REPL
+    # sees project-scoped plugins on launch. dry-run flows through `emit` so
+    # the unit-test golden output captures every command without executing it.
+    copy_handoff_sources_to_worktree "$wt"
+    if [[ $DRY_RUN -eq 0 ]]; then
+      if ! install_plugins_for_worktree "$wt"; then
+        echo "Error: plugin install failed for worktree '$wt' (Layer 3)" >&2
+        echo "       Coordinator MUST stop before sending the initial /tdd-implement prompt." >&2
+        # tmux new-session at the top of cmd_start has already created the
+        # session, but only some worker windows are added. Kill the half-spawned
+        # session so the next `start` invocation does not collide on
+        # "Session already exists" + so the operator does not need to manually
+        # clean up. `|| true` because the session may already be gone if an
+        # earlier-loop slug failed mid-add.
+        tmux kill-session -t "$session" 2>/dev/null || true
+        exit 3
+      fi
+    else
+      # dry-run emits all install commands even if real-mode would fail-fast on
+      # the first error. This is intentional: dry-run exists to preview the
+      # full command stream, not to model error pathways.
+      install_plugins_for_worktree "$wt" || true
+    fi
     emit "tmux new-window -t '$session' -n '$slug' \"cd '$wt' && $claude -n '$slug' $model_flag --permission-mode $perm\""
     spawned_slugs+=("$slug")
   done
@@ -794,6 +1060,106 @@ cmd_stop() {
   emit "tmux kill-session -t '$session'"
 }
 
+cmd_cleanup() {
+  # Symmetric counterpart to cmd_start: per-slug `claude plugin uninstall
+  # --scope=project -y` + `git worktree remove --force` + final tmux
+  # kill-session. Kept separate from cmd_stop so the existing tmux-kill-only
+  # contract (used by older callers and CI smoke tests) is unchanged.
+  #
+  # Slug discovery:
+  #   - With explicit slug args (`cleanup <session> <slug1> [slug2 ...]`),
+  #     use those (test path + operator override path).
+  #   - Without explicit slugs, query tmux for windows in <session> and skip
+  #     the `coordinator` window. Requires the tmux session to still be
+  #     alive at cleanup time (parallel-worktree-v2 squashes merge BEFORE
+  #     kill so this is the common flow).
+  #
+  # dry-run mode forwards everything through `emit`, so the unit tests can
+  # assert on the emitted command sequence without invoking real tmux / git
+  # / claude.
+  local session="${1:-$(resolve_session_name)}"
+  shift || true
+  local explicit_slugs=("$@")
+
+  local parent prefix
+  parent="$(resolve_worktree_parent_dir)"
+  prefix="$(resolve_worktree_prefix)"
+
+  local slugs=()
+  if [[ ${#explicit_slugs[@]} -gt 0 ]]; then
+    local s
+    for s in "${explicit_slugs[@]}"; do
+      validate_slug "$s"
+      slugs+=("$s")
+    done
+  elif [[ $DRY_RUN -eq 0 ]]; then
+    # Primary: discover from tmux window names.
+    local windows_out
+    windows_out=$(tmux list-windows -t "$session" -F '#W' 2>/dev/null) || windows_out=""
+    while IFS= read -r line; do
+      [[ -z "$line" || "$line" == "coordinator" ]] && continue
+      slugs+=("$line")
+    done <<< "$windows_out"
+    # Fallback: when the tmux session is already gone the primary discovery
+    # returns an empty list and the cleanup would silently leak every worktree
+    # + project-scoped plugin install. Fall back to
+    # `git worktree list --porcelain` and extract <slug> from worktree paths
+    # that match the launcher's `${parent}/${prefix}` naming convention.
+    # `base` is captured once so the prefix-strip parameter expansion can
+    # quote it via `${wt_path#"$base"}` (avoids ShellCheck SC2295 — without
+    # the inner quotes, a literal `*` / `?` / `[` inside ${parent} or
+    # ${prefix} would be treated as a glob pattern).
+    if [[ ${#slugs[@]} -eq 0 ]]; then
+      echo "[cleanup] tmux session '$session' unreachable; falling back to git worktree list" >&2
+      local base="${parent}/${prefix}"
+      local wt_line wt_path slug_from_path
+      while IFS= read -r wt_line; do
+        [[ "$wt_line" =~ ^worktree[[:space:]]+(.+)$ ]] || continue
+        wt_path="${BASH_REMATCH[1]}"
+        if [[ "$wt_path" == "$base"* ]]; then
+          slug_from_path="${wt_path#"$base"}"
+          if [[ "$slug_from_path" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+            slugs+=("$slug_from_path")
+          fi
+        fi
+      done < <(git worktree list --porcelain 2>/dev/null || true)
+    fi
+  fi
+
+  local slug wt
+  for slug in "${slugs[@]+"${slugs[@]}"}"; do
+    wt="${parent}/${prefix}${slug}"
+    # Uninstall every project-scoped plugin that the worktree's tracked
+    # `.claude/settings.json` advertises. Skip silently when the worktree
+    # path is gone (already removed) or settings.json is absent.
+    if [[ -d "$wt" ]] && [[ -f "${wt}/.claude/settings.json" ]]; then
+      local plugins
+      # See install_plugins_for_worktree comment: `tr -d '\r'` is required to
+      # strip Git Bash for Windows CRLF before the per-plugin loop matches the
+      # regex.
+      plugins=$(resolve_enabled_plugins "${wt}/.claude/settings.json" 2>/dev/null | tr -d '\r' || true)
+      local plugin
+      local claude_bin
+      claude_bin=$(resolve_claude_bin)
+      while IFS= read -r plugin; do
+        [[ -z "$plugin" ]] && continue
+        if [[ "$plugin" =~ ^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+$ ]]; then
+          emit "cd '$wt' && $claude_bin plugin uninstall '$plugin' --scope=project -y"
+        fi
+      done <<< "$plugins"
+    fi
+    emit "git worktree remove '$wt' --force"
+  done
+
+  emit "tmux kill-session -t '$session' 2>/dev/null || true"
+
+  if [[ ${#slugs[@]} -gt 0 ]]; then
+    echo "Cleanup complete for session '$session' (slugs: ${slugs[*]})"
+  else
+    echo "Cleanup complete for session '$session' (no slugs discovered)"
+  fi
+}
+
 cmd_status() {
   local session="${1:-$(resolve_session_name)}"
   emit "tmux list-windows -t '$session'"
@@ -843,6 +1209,7 @@ main() {
   case "$subcmd" in
     start) cmd_start "$@" ;;
     stop) cmd_stop "$@" ;;
+    cleanup) cmd_cleanup "$@" ;;
     status) cmd_status "$@" ;;
     attach) cmd_attach "$@" ;;
     verify) cmd_verify "$@" ;;

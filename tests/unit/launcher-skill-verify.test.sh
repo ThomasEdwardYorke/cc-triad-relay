@@ -5,7 +5,7 @@
 # Unit tests for the skill-registry-verify helpers in
 # `plugins/harness/scripts/parallel-sessions-template.sh`.
 #
-# 検証対象 (overlay-load race guard regression coverage):
+# 検証対象 (overlay-load race regression guard + reproducible multi-run scenario):
 #   1. check_skill_registry_in_output   — pane 内 skill 名検出 (純粋関数)
 #   2. resolve_required_skills          — env var / default の解決
 #   3. build_blocked_escalation_message — 8-field BLOCKED 文面組立
@@ -143,7 +143,7 @@ out=$(check_skill_registry_in_output "anything" "" 2>&1) && rc=0 || rc=$?
 assert_rc "1d empty required → rc=0" "0" "$rc"
 unset rc out
 
-# 1e: tmux line-wrap (skill split across newline) → still found
+# 1e: tmux line-wrap (skill split across newline) → still found (line-wrap regression guard)
 wrapped=$(printf 'some prefix harness:\ntdd-implement and other text\nharness:codex-sync here\n')
 out=$(check_skill_registry_in_output "$wrapped" "harness:tdd-implement harness:codex-sync") && rc=0 || rc=$?
 assert_rc "1e line-wrap split skill found → rc=0" "0" "$rc"
@@ -175,7 +175,7 @@ assert_eq "2b env override" "custom:a custom:b" "$out"
 unset CLAUDE_REQUIRED_SKILLS out
 
 # 2c: adversarial - invalid token (shell metachar) → fall back to defaults + warn
-# Security regression guard.
+# (security regression guard against env-var injection).
 export CLAUDE_REQUIRED_SKILLS='custom:safe; rm -rf /'
 out=$(resolve_required_skills 2>/dev/null)
 assert_contains "2c invalid token rejected, falls back to defaults (tdd-implement)" "harness:tdd-implement" "$out"
@@ -346,9 +346,183 @@ assert_rc "5a empty session arg → rc=2" "2" "$rc"
 unset rc
 
 echo
-echo "=== Test 6: probe_skill_registry tmux capture failure ==="
+echo "=== Test 6: resolve_enabled_plugins (Layer 3) ==="
+# Layer 3 auto-install: parse .claude/settings.json `enabledPlugins` (object with bool
+# values, only `true` entries are active) and emit one `key@marketplace` per line.
 
-# 6a: capture-pane failure must be surfaced as rc=2, not as missing skills.
+# 6a: valid settings.json with mixed true/false values
+tmp_settings_6a=$(mktemp)
+cat > "$tmp_settings_6a" <<'JSON'
+{
+  "enabledPlugins": {
+    "codex@openai-codex": true,
+    "harness@cc-triad-relay": true,
+    "disabled-plugin@unknown": false,
+    "document-skills@anthropic-agent-skills": true
+  }
+}
+JSON
+# Portable newline→space conversion across macOS / Linux / Git Bash for Windows:
+#   - `tr -d '\r'` strips Windows CRLF endings (python3 print() under MSYS bash
+#     emits `\r\n` rather than `\n`, leaving stray CRs that prevent `paste`
+#     from joining lines correctly — observed empirically on the prior CI run
+#     where paste alone still produced embedded newlines).
+#   - `paste -sd ' ' -` is POSIX-portable and produces space-joined output
+#     without the trailing space that `tr '\n' ' '` would have added.
+out=$(resolve_enabled_plugins "$tmp_settings_6a" 2>/dev/null | tr -d '\r' | sort | paste -sd ' ' -)
+assert_eq "6a enabled plugins extracted (3 true values, sorted)" \
+  "codex@openai-codex document-skills@anthropic-agent-skills harness@cc-triad-relay" \
+  "$out"
+rm -f "$tmp_settings_6a"
+unset tmp_settings_6a out
+
+# 6b: missing settings.json → rc=1
+rc=0
+out=$(resolve_enabled_plugins "/nonexistent/path/settings.json" 2>/dev/null) || rc=$?
+assert_rc "6b missing settings.json → rc=1" "1" "$rc"
+assert_eq "6b empty stdout on missing settings.json" "" "$out"
+unset rc out
+
+# 6c: settings.json without enabledPlugins key → empty stdout, rc=0
+tmp_settings_6c=$(mktemp)
+echo '{"theme": "dark"}' > "$tmp_settings_6c"
+out=$(resolve_enabled_plugins "$tmp_settings_6c" 2>/dev/null)
+assert_eq "6c missing enabledPlugins key → empty stdout" "" "$out"
+rm -f "$tmp_settings_6c"
+unset tmp_settings_6c out
+
+echo
+echo "=== Test 7: resolve_handoff_copy_sources (Layer 3) ==="
+# HANDOFF_COPY_SOURCES env: colon-separated absolute paths. Each is realpath-
+# normalized and emitted one per line on stdout.
+
+# 7a: empty env → empty stdout, rc=0
+unset HANDOFF_COPY_SOURCES
+out=$(resolve_handoff_copy_sources 2>/dev/null)
+assert_eq "7a empty env → empty stdout" "" "$out"
+unset out
+
+# 7b: colon-separated absolute paths → newline-separated stdout. macOS resolves
+# `/var` → `/private/var` and Git Bash on Windows resolves `/tmp/...` (MSYS
+# mounted form) → `/c/Users/.../AppData/Local/Temp/...` (canonical Windows form)
+# via `cd ... && pwd -P` inside resolve_handoff_copy_sources, so the expected
+# needles must use the same normalization (otherwise the test is environment-
+# sensitive and fails on macOS/Windows). Also use `paste -sd ' ' -` instead of
+# `tr '\n' ' '` for portable newline handling.
+tmp_dir_7b_1=$(mktemp -d)
+tmp_dir_7b_2=$(mktemp -d)
+tmp_dir_7b_1_resolved=$(cd "$tmp_dir_7b_1" && pwd -P)
+tmp_dir_7b_2_resolved=$(cd "$tmp_dir_7b_2" && pwd -P)
+export HANDOFF_COPY_SOURCES="${tmp_dir_7b_1}:${tmp_dir_7b_2}"
+out=$(resolve_handoff_copy_sources 2>/dev/null | paste -sd ' ' -)
+assert_contains "7b first abs path resolved" "$tmp_dir_7b_1_resolved" "$out"
+assert_contains "7b second abs path resolved" "$tmp_dir_7b_2_resolved" "$out"
+rmdir "$tmp_dir_7b_1" "$tmp_dir_7b_2"
+unset HANDOFF_COPY_SOURCES out tmp_dir_7b_1 tmp_dir_7b_2 tmp_dir_7b_1_resolved tmp_dir_7b_2_resolved
+
+# 7c: relative path → rc=1 (must be absolute, path-traversal mitigation)
+export HANDOFF_COPY_SOURCES="relative/path"
+rc=0
+out=$(resolve_handoff_copy_sources 2>/dev/null) || rc=$?
+assert_rc "7c relative path → rc=1" "1" "$rc"
+unset HANDOFF_COPY_SOURCES rc out
+
+echo
+echo "=== Test 8: install_plugins_for_worktree (Layer 3, dry-run) ==="
+# install_plugins_for_worktree <wt_path> [<settings_json_path>]: enumerates enabled
+# plugins and emits `claude plugin install <name@marketplace> --scope=project` per plugin.
+
+# 8a: missing settings.json → skip with rc=0 (generic launcher; not all consumers ship
+#     a settings.json; skip is non-fatal)
+tmp_wt_8a=$(mktemp -d)
+DRY_RUN=1
+rc=0
+install_plugins_for_worktree "$tmp_wt_8a" 2>/dev/null || rc=$?
+assert_rc "8a missing settings.json skipped (rc=0)" "0" "$rc"
+DRY_RUN=0
+rmdir "$tmp_wt_8a"
+unset rc tmp_wt_8a
+
+# 8b: valid settings.json → emits one install command per enabled plugin (dry-run)
+tmp_wt_8b=$(mktemp -d)
+mkdir -p "${tmp_wt_8b}/.claude"
+cat > "${tmp_wt_8b}/.claude/settings.json" <<'JSON'
+{
+  "enabledPlugins": {
+    "codex@openai-codex": true,
+    "harness@cc-triad-relay": true
+  }
+}
+JSON
+DRY_RUN=1
+# `|| true` is defense-in-depth against rc=2 (python3 missing) under `set -e`
+# semantics inherited from the sourced launcher: even if the runtime lacks
+# python3, the assertion can still run and produce a meaningful FAIL message
+# rather than aborting the entire test runner with `exit 1` mid-suite. In
+# practice CI always installs python3 (see .github/workflows/ci.yml
+# setup-python step) so this branch is rarely exercised.
+out=$(install_plugins_for_worktree "$tmp_wt_8b" 2>&1) || true
+assert_contains "8b emits codex install" "claude plugin install 'codex@openai-codex' --scope=project" "$out"
+assert_contains "8b emits harness install" "claude plugin install 'harness@cc-triad-relay' --scope=project" "$out"
+DRY_RUN=0
+rm -rf "$tmp_wt_8b"
+unset out tmp_wt_8b
+
+echo
+echo "=== Test 9: copy_handoff_sources_to_worktree (Layer 3, dry-run) ==="
+# copy_handoff_sources_to_worktree <wt_path>: reads HANDOFF_COPY_SOURCES, validates,
+# and emits `cp -RP <src> <wt_path>/` per source (preserves nested symlinks).
+
+# 9a: empty env → no emit (no-op)
+tmp_wt_9a=$(mktemp -d)
+unset HANDOFF_COPY_SOURCES
+DRY_RUN=1
+out=$(copy_handoff_sources_to_worktree "$tmp_wt_9a" 2>&1)
+assert_eq "9a empty env → no emit" "" "$out"
+DRY_RUN=0
+rmdir "$tmp_wt_9a"
+unset out tmp_wt_9a
+
+# 9b: 1 abs path → emits cp -RP. macOS resolves `/var` → `/private/var` via the
+# `cd ... && pwd -P` realpath step inside resolve_handoff_copy_sources, so the
+# expected needle must use the same normalization (otherwise the test is
+# environment-sensitive and fails on macOS but passes on Linux).
+tmp_src_9b=$(mktemp -d)
+tmp_wt_9b=$(mktemp -d)
+tmp_src_9b_resolved=$(cd "$tmp_src_9b" && pwd -P)
+export HANDOFF_COPY_SOURCES="$tmp_src_9b"
+DRY_RUN=1
+out=$(copy_handoff_sources_to_worktree "$tmp_wt_9b" 2>&1)
+assert_contains "9b dry-run emits cp -RP" \
+  "cp -RP '$tmp_src_9b_resolved' '${tmp_wt_9b}/'" "$out"
+DRY_RUN=0
+rmdir "$tmp_src_9b" "$tmp_wt_9b"
+unset HANDOFF_COPY_SOURCES out tmp_src_9b tmp_src_9b_resolved tmp_wt_9b
+
+echo
+echo "=== Test 10: cmd_cleanup (Layer 3, dry-run with explicit slugs) ==="
+# cmd_cleanup <session> [<slug1> ...]: when explicit slugs are passed (test path or
+# operator override), emits per-slug worktree remove + final tmux kill-session.
+
+# 10a: dry-run with explicit slugs → emits git worktree remove + tmux kill-session
+DRY_RUN=1
+export TMUX_SESSION_NAME="test-cleanup-session"
+export WORKTREE_PARENT_DIR="/tmp"
+export WORKTREE_PREFIX="test-cleanup-wt-"
+out=$(cmd_cleanup "test-cleanup-session" "alpha" "beta" 2>&1)
+assert_contains "10a emits worktree remove --force for alpha" \
+  "git worktree remove '/tmp/test-cleanup-wt-alpha' --force" "$out"
+assert_contains "10a emits worktree remove --force for beta" \
+  "git worktree remove '/tmp/test-cleanup-wt-beta' --force" "$out"
+assert_contains "10a emits tmux kill-session" \
+  "tmux kill-session -t 'test-cleanup-session'" "$out"
+DRY_RUN=0
+unset TMUX_SESSION_NAME WORKTREE_PARENT_DIR WORKTREE_PREFIX out
+
+echo
+echo "=== Test 11: probe_skill_registry tmux capture failure ==="
+
+# 11a: capture-pane failure must be surfaced as rc=2, not as missing skills.
 out=$(
   tmux() {
     if [[ "$1" == "send-keys" || "$1" == "clear-history" ]]; then
@@ -361,11 +535,11 @@ out=$(
   }
   probe_skill_registry "session" "alpha" "harness:tdd-implement" 1
 ) && rc=0 || rc=$?
-assert_rc "6a capture-pane failure → rc=2" "2" "$rc"
-assert_contains "6a capture failure message" "tmux capture-pane failed" "$out"
+assert_rc "11a capture-pane failure → rc=2" "2" "$rc"
+assert_contains "11a capture failure message" "tmux capture-pane failed" "$out"
 unset out rc
 
-# 6b: stale visible pane content from before /help must not satisfy the probe.
+# 11b: stale visible pane content from before /help must not satisfy the probe.
 out=$(
   capture_count=0
   tmux() {
@@ -386,11 +560,11 @@ out=$(
   }
   probe_skill_registry "session" "alpha" "harness:tdd-implement" 1
 ) && rc=0 || rc=$?
-assert_rc "6b stale visible pane is excluded before scan → rc=1" "1" "$rc"
-assert_contains "6b reports missing skill from fresh output" "harness:tdd-implement" "$out"
+assert_rc "11b stale visible pane is excluded before scan → rc=1" "1" "$rc"
+assert_contains "11b reports missing skill from fresh output" "harness:tdd-implement" "$out"
 unset out rc
 
-# 6c: direct probe / cmd_verify path also normalizes timeout=0 to the poll
+# 11c: direct probe / cmd_verify path also normalizes timeout=0 to the poll
 # interval, otherwise the loop does not capture any fresh /help output.
 out=$(
   count_file="$(mktemp)"
@@ -419,9 +593,9 @@ out=$(
   rm -f "$count_file"
   exit "$probe_rc"
 ) && rc=0 || rc=$?
-assert_rc "6c direct probe zero timeout is normalized → rc=0" "0" "$rc"
-assert_contains "6c direct probe returned zero" "probe_rc=0" "$out"
-assert_contains "6c direct probe captured fresh output" "capture_count=2" "$out"
+assert_rc "11c direct probe zero timeout is normalized → rc=0" "0" "$rc"
+assert_contains "11c direct probe returned zero" "probe_rc=0" "$out"
+assert_contains "11c direct probe captured fresh output" "capture_count=2" "$out"
 unset out rc
 
 echo
