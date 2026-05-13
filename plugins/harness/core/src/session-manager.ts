@@ -420,15 +420,14 @@ export function renderIdlePaneTitle(
 
 export function planIdlePaneLabels(
   summaries: Pick<SessionSummary, "slug" | "idle">[],
-  opts: { sessionName: string; paneIndex?: number },
+  opts: { sessionName: string },
 ): IdlePaneLabelPlan[] {
-  const paneIndex = opts.paneIndex ?? 0;
   // Keep the tmux window name as the stable slug target. Labels are applied to
   // the worker pane title so attach / verify / cleanup can still address
   // `${sessionName}:${slug}` after an idle marker is displayed.
   return summaries.map((summary) => ({
     slug: summary.slug,
-    target: `${opts.sessionName}:${summary.slug}.${paneIndex}`,
+    target: `${opts.sessionName}:${summary.slug}.0`,
     title: renderIdlePaneTitle(summary),
   }));
 }

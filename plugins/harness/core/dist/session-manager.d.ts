@@ -88,7 +88,6 @@ export declare function buildSessionSummary(slug: string, opts: {
 export declare function renderIdlePaneTitle(summary: Pick<SessionSummary, "slug" | "idle">): string;
 export declare function planIdlePaneLabels(summaries: Pick<SessionSummary, "slug" | "idle">[], opts: {
     sessionName: string;
-    paneIndex?: number;
 }): IdlePaneLabelPlan[];
 export declare function renderDashboard(summaries: SessionSummary[]): string;
 //# sourceMappingURL=session-manager.d.ts.map
