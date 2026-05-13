@@ -5,6 +5,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`session-manager` idle pane label helpers** — exported `renderIdlePaneTitle()` and `planIdlePaneLabels()` so tmux wrappers can mark stale worker panes as `<slug>-IDLE-<min>m` from the same deterministic session summaries that drive the dashboard. The helper returns structured pane targets/titles instead of shell command strings, and `parallel-sessions-template.sh label-panes` applies those labels through a dry-run-testable `tmux select-pane -T` boundary while keeping dashboard idle status canonical and preserving stable window names for attach / verify / cleanup.
+
 ### Fixed
 
 - **`session-manager` idle visibility** — running sessions now expose `WARN-idle` after 10 minutes and `FAIL-idle` after 30 minutes without activity, using parsed stream-json event timestamps first and git commit timestamps as a fallback when no event stream exists. Errored completion results (`is_error: true` / `error_*` subtype) surface as `error` instead of being hidden as `unknown`, and timestampless log lines use stable file mtime fallback instead of resetting activity on every dashboard refresh.

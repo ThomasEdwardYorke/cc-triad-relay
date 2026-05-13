@@ -49,6 +49,28 @@ validate_slug() {
   fi
 }
 
+validate_tmux_session_name() {
+  # Session names flow into single-quoted tmux targets inside emit strings.
+  # Keep the same target-safe subset as slugs, while allowing the default
+  # hyphenated session name (`harness-parallel`).
+  local val="$1"
+  if [[ ! "$val" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]; then
+    echo "Error: tmux session name '$val' contains invalid characters (allowed: leading a-z A-Z _, then a-z A-Z 0-9 _ -)" >&2
+    exit 2
+  fi
+}
+
+validate_pane_title() {
+  # Safe subset emitted by session-manager idle pane helpers:
+  # the canonical slug title or a convenience label such as <slug>-IDLE-12m.
+  # This value flows into `tmux select-pane -T`; keep it shell-safe.
+  local val="$1"
+  if [[ ! "$val" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]; then
+    echo "Error: pane title '$val' contains invalid characters (allowed: leading a-z A-Z _, then a-z A-Z 0-9 _ -)" >&2
+    exit 2
+  fi
+}
+
 validate_branch_name() {
   # git ref-name subset: alphanumeric + . _ - / only, no `..`, no leading -.
   local val="$1"
@@ -328,6 +350,7 @@ Usage:
   parallel-sessions-template.sh [--dry-run] status  [<session_name>]
   parallel-sessions-template.sh [--dry-run] attach  <slug> [<session_name>]
   parallel-sessions-template.sh [--dry-run] verify  <session_name> [<slug1> [slug2 ...]]
+  parallel-sessions-template.sh [--dry-run] label-panes <session_name> <slug=title> [slug=title ...]
   parallel-sessions-template.sh --help
 
 Subcommands:
@@ -354,6 +377,11 @@ Subcommands:
   verify   Re-run the skill-registry probe on a live session (operator-driven
            repush path). Useful after `attach` reveals an early-prompt race
            that `start` did not catch.
+  label-panes
+           Apply deterministic tmux pane labels generated from
+           session-manager summaries, for example `api=api-IDLE-12m`.
+           This is convenience-only; the session-manager dashboard remains
+           the canonical idle / hung status view.
 
 Flags:
   --dry-run  Print the planned commands without executing tmux / git / claude.
@@ -804,7 +832,9 @@ wait_for_all_workers_ready() {
 }
 
 resolve_session_name() {
-  printf '%s' "${TMUX_SESSION_NAME:-harness-parallel}"
+  local session="${TMUX_SESSION_NAME:-harness-parallel}"
+  validate_tmux_session_name "$session"
+  printf '%s' "$session"
 }
 
 resolve_worktree_parent_dir() {
@@ -987,6 +1017,7 @@ cmd_verify() {
     usage >&2
     exit 2
   fi
+  validate_tmux_session_name "$session"
   shift
 
   # Slugs argument: when omitted, discover every window name in the session
@@ -1057,6 +1088,7 @@ cmd_verify() {
 
 cmd_stop() {
   local session="${1:-$(resolve_session_name)}"
+  validate_tmux_session_name "$session"
   emit "tmux kill-session -t '$session'"
 }
 
@@ -1078,6 +1110,7 @@ cmd_cleanup() {
   # assert on the emitted command sequence without invoking real tmux / git
   # / claude.
   local session="${1:-$(resolve_session_name)}"
+  validate_tmux_session_name "$session"
   shift || true
   local explicit_slugs=("$@")
 
@@ -1162,7 +1195,36 @@ cmd_cleanup() {
 
 cmd_status() {
   local session="${1:-$(resolve_session_name)}"
+  validate_tmux_session_name "$session"
   emit "tmux list-windows -t '$session'"
+}
+
+cmd_label_panes() {
+  if [[ $# -lt 2 ]]; then
+    echo "Error: label-panes requires <session_name> and at least one <slug=title> mapping" >&2
+    usage >&2
+    exit 2
+  fi
+  local session="$1"
+  validate_tmux_session_name "$session"
+  shift
+  local mapping slug title
+  for mapping in "$@"; do
+    if [[ "$mapping" != *=* ]]; then
+      echo "Error: label-panes mapping '$mapping' must use <slug=title>" >&2
+      exit 2
+    fi
+    slug="${mapping%%=*}"
+    title="${mapping#*=}"
+    validate_slug "$slug"
+    validate_pane_title "$title"
+  done
+
+  for mapping in "$@"; do
+    slug="${mapping%%=*}"
+    title="${mapping#*=}"
+    emit "tmux select-pane -t '$session:$slug.0' -T '$title'"
+  done
 }
 
 cmd_attach() {
@@ -1174,6 +1236,7 @@ cmd_attach() {
   local slug="$1"
   validate_slug "$slug"
   local session="${2:-$(resolve_session_name)}"
+  validate_tmux_session_name "$session"
   # `tmux attach` blocks until the user detaches, so chaining
   # `tmux attach ... \; select-window ...` would only run select-window
   # after the user exits. Use `select-window` first (or `switch-client`
@@ -1213,6 +1276,7 @@ main() {
     status) cmd_status "$@" ;;
     attach) cmd_attach "$@" ;;
     verify) cmd_verify "$@" ;;
+    label-panes) cmd_label_panes "$@" ;;
     "")
       usage
       ;;

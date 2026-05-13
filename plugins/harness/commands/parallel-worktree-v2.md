@@ -372,6 +372,13 @@ the dashboard path:
 - **git commit log** — which slug landed which commit and when (`git log --oneline -1` in each worktree path).
 - **stream-json logs** — when present at `<log_dir>/claude-log-<slug>.jsonl`, phase markers, tool calls, and completion events are parsed from the event stream.
 - **idle detection** — derived first from the latest parsed stream-json event timestamp, then falls back to the latest git commit timestamp when no event stream exists; `running` / unknown-active sessions render `WARN-idle` after 10 min and `FAIL-idle` after 30 min without activity.
+- **idle pane labels** — wrappers may call `renderIdlePaneTitle()` /
+  `planIdlePaneLabels()` from `session-manager.ts` to apply convenience
+  tmux pane labels such as `<slug>-IDLE-11m`, then pass the resulting
+  `slug=title` pairs to
+  `parallel-sessions-template.sh label-panes <session> ...`. The dashboard
+  status cell remains the source of truth; pane labels are a presentation
+  hint only, and tmux window names remain stable slug targets.
 
 When a worktree explicitly opts into a headless one-shot run, it can use
 the `claude-oneshot` primitive to obtain `claude -p '<prompt>' --output-format stream-json`
