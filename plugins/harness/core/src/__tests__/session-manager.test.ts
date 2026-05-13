@@ -518,6 +518,31 @@ describe("buildSessionSummary", () => {
     expect(summary.idle).toBeNull();
   });
 
+  it("preserves a terminal phase when a successful completion follows it", () => {
+    writeFileSync(
+      join(workdir, "claude-log-ship-completed.jsonl"),
+      [
+        JSON.stringify({
+          type: "assistant",
+          message: { content: [{ type: "text", text: "Phase 7 SHIP — review passed" }] },
+          timestamp: "2026-04-28T11:00:00Z",
+        }),
+        JSON.stringify({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          timestamp: "2026-04-28T11:01:00Z",
+        }),
+      ].join("\n"),
+    );
+    const summary = buildSessionSummary("ship-completed", {
+      logDir: workdir,
+      now: "2026-04-28T11:45:00Z",
+    });
+    expect(summary.status).toBe("ship");
+    expect(summary.idle).toBeNull();
+  });
+
   it("surfaces errored completion results as error status", () => {
     writeFileSync(
       join(workdir, "claude-log-error-result.jsonl"),
@@ -536,6 +561,60 @@ describe("buildSessionSummary", () => {
       ].join("\n"),
     );
     const summary = buildSessionSummary("error-result", {
+      logDir: workdir,
+      now: "2026-04-28T11:45:00Z",
+    });
+    expect(summary.status).toBe("error");
+    expect(summary.idle).toBeNull();
+  });
+
+  it("does not let an older errored completion override a later terminal phase", () => {
+    writeFileSync(
+      join(workdir, "claude-log-recovered-result.jsonl"),
+      [
+        JSON.stringify({
+          type: "result",
+          subtype: "error_max_turns",
+          is_error: true,
+          timestamp: "2026-04-28T11:01:00Z",
+        }),
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            content: [{ type: "text", text: "Phase 7 SHIP — retry completed cleanly" }],
+          },
+          timestamp: "2026-04-28T11:02:00Z",
+        }),
+      ].join("\n"),
+    );
+    const summary = buildSessionSummary("recovered-result", {
+      logDir: workdir,
+      now: "2026-04-28T11:45:00Z",
+    });
+    expect(summary.status).toBe("ship");
+    expect(summary.idle).toBeNull();
+  });
+
+  it("uses a later errored completion over an earlier terminal phase", () => {
+    writeFileSync(
+      join(workdir, "claude-log-late-error-result.jsonl"),
+      [
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            content: [{ type: "text", text: "Phase 7 SHIP — initial review passed" }],
+          },
+          timestamp: "2026-04-28T11:00:00Z",
+        }),
+        JSON.stringify({
+          type: "result",
+          subtype: "error_during_cleanup",
+          is_error: true,
+          timestamp: "2026-04-28T11:01:00Z",
+        }),
+      ].join("\n"),
+    );
+    const summary = buildSessionSummary("late-error-result", {
       logDir: workdir,
       now: "2026-04-28T11:45:00Z",
     });

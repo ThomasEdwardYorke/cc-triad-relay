@@ -183,28 +183,36 @@ function readGitBranch(worktreePath) {
     return out || null;
 }
 function inferStatus(events) {
-    const hasCompletion = events.some((e) => e.type === "completion");
-    const hasErrorCompletion = events.some((e) => {
-        if (e.type !== "completion")
-            return false;
-        const raw = e.payload.raw;
-        if (!raw || typeof raw !== "object")
-            return false;
-        const record = raw;
-        if (record.is_error === true)
-            return true;
-        return typeof record.subtype === "string" && /^error(?:_|$)/i.test(record.subtype);
-    });
-    if (hasErrorCompletion)
-        return "error";
-    const phaseEvents = events.filter((e) => e.type === "phase_marker");
-    if (phaseEvents.length === 0) {
+    let latestCompletion = null;
+    let latestPhase = null;
+    for (let index = 0; index < events.length; index += 1) {
+        const event = events[index];
+        if (event.type === "completion") {
+            latestCompletion = {
+                index,
+                status: completionIndicatesError(event) ? "error" : "unknown",
+            };
+        }
+        else if (event.type === "phase_marker") {
+            latestPhase = { index, event };
+        }
+    }
+    if (!latestPhase) {
         const hasToolUse = events.some((e) => e.type === "tool_use");
-        if (hasCompletion)
-            return "unknown";
+        if (latestCompletion)
+            return latestCompletion.status;
         return hasToolUse ? "running" : "unknown";
     }
-    const last = phaseEvents[phaseEvents.length - 1];
+    const phaseStatus = terminalStatusFromPhase(latestPhase.event);
+    if (latestCompletion && latestCompletion.index > latestPhase.index) {
+        if (latestCompletion.status === "error")
+            return "error";
+        return phaseStatus ?? "unknown";
+    }
+    return phaseStatus ?? "running";
+}
+function terminalStatusFromPhase(event) {
+    const last = event;
     const payload = last.payload;
     const haystack = `${payload.text ?? ""} ${payload.phase ?? ""}`;
     if (/SHIP/i.test(haystack))
@@ -215,9 +223,16 @@ function inferStatus(events) {
         return "actionable=0";
     if (/APPROVED|merged/i.test(haystack))
         return "merged";
-    if (hasCompletion)
-        return "unknown";
-    return "running";
+    return null;
+}
+function completionIndicatesError(event) {
+    const raw = event.payload.raw;
+    if (!raw || typeof raw !== "object")
+        return false;
+    const record = raw;
+    if (record.is_error === true)
+        return true;
+    return typeof record.subtype === "string" && /^error(?:_|$)/i.test(record.subtype);
 }
 function latestEventActivity(events) {
     let latest = null;
