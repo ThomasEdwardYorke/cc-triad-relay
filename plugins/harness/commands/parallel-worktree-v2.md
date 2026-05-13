@@ -69,7 +69,7 @@ This skill depends on three companion primitives shipped with the harness:
 | primitive | path | role |
 |---|---|---|
 | tmux launcher script | `plugins/harness/scripts/parallel-sessions-template.sh` | `start N <slugs>` creates N worktrees + N tmux windows + N independent claude sessions |
-| progress aggregator | `plugins/harness/core/src/session-manager.ts` | reads each window's git log + tmux pane state and renders a single coordinator dashboard |
+| progress aggregator | `plugins/harness/core/src/session-manager.ts` | reads each worktree's git log + optional stream-json logs and renders a single coordinator dashboard |
 | headless one-shot wrapper | `plugins/harness/commands/claude-oneshot.md` | wraps `claude -p <instruction> --output-format stream-json`; useful when a worktree needs a deterministic non-interactive task with a structured event stream |
 
 All three primitives must be present in the installed plugin tree before
@@ -361,23 +361,22 @@ Sample dashboard:
   | slug      | branch              | phase | last commit          | status                          |
   |-----------|---------------------|-------|----------------------|----------------------------------|
   | frontend  | feature/main-fe     | 5.5   | a1b2c3d 2 min ago    | actionable=0, Pseudo CR clean    |
-  | backend   | feature/main-be     | 5     | e4f5g6h 6 min ago    | running Codex review (Phase 5)   |
+  | backend   | feature/main-be     | 5     | e4f5g6h 11 min ago   | running (WARN-idle 11m)          |
   | shared    | feature/main-shared | 7     | i7j8k9l 12 min ago   | Codex Phase 7 SHIP               |
   | docs      | feature/main-docs   | 8     | m0n1o2p 18 min ago   | merged ✓                         |
 ```
 
-session-manager aggregates per-worktree signal from sources that are
-available for **interactive** claude sessions:
+session-manager aggregates per-worktree signal from sources available to
+the dashboard path:
 
 - **git commit log** — which slug landed which commit and when (`git log --oneline -1` in each worktree path).
-- **tmux pane state** — `tmux capture-pane -t "${session}:${slug}"` extracts the visible buffer for that window. Phase markers, status messages, and last-tool-call hints are read from there.
-- **idle detection** — derived from "no new commit + no new tmux pane content" within the configured threshold (WARN at 10 min, FAIL at 30 min).
+- **stream-json logs** — when present at `<log_dir>/claude-log-<slug>.jsonl`, phase markers, tool calls, and completion events are parsed from the event stream.
+- **idle detection** — derived first from the latest parsed stream-json event timestamp, then falls back to the latest git commit timestamp when no event stream exists; `running` / unknown-active sessions render `WARN-idle` after 10 min and `FAIL-idle` after 30 min without activity.
 
 When a worktree explicitly opts into a headless one-shot run, it can use
 the `claude-oneshot` primitive to obtain `claude -p '<prompt>' --output-format stream-json`
 output and write it to `<log_dir>/claude-log-<slug>.jsonl`. session-manager
-reads any such jsonl files when present, in addition to the always-on
-git + tmux signals.
+reads any such jsonl files when present, in addition to the git fallback.
 
 ---
 
@@ -407,8 +406,8 @@ The merge train:
 
 | symptom | detection | action |
 |---|---|---|
-| 10 min without new commit / pane activity in a window | session-manager WARN | operator runs `/parallel-worktree-v2 attach <slug>` and inspects |
-| 30 min without activity | session-manager FAIL | operator kills the window (`tmux kill-window`), then resumes manually with `claude -r <session-id>` after fixing the underlying cause |
+| 10 min without parsed stream-json events or new commits in a running window | session-manager `WARN-idle` | operator runs `/parallel-worktree-v2 attach <slug>` and inspects |
+| 30 min without parsed stream-json events or new commits in a running window | session-manager `FAIL-idle` | operator kills the window (`tmux kill-window`), then resumes manually with `claude -r <session-id>` after fixing the underlying cause |
 | `claude-oneshot` stream-json reports `subtype: "error_max_turns"` | jsonl parsed by session-manager | raise budget, retry; consider splitting the sub-task into smaller acceptance criteria |
 | `claude-oneshot` stream-json reports `subtype: "error_during_execution"` | jsonl parsed by session-manager | inspect crash log, fix bug, retry |
 | tmux session disappears (host reboot etc.) | session lookup fails | use `--rollback` to remove worktrees, or resume each branch manually |

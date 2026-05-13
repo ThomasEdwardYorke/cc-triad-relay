@@ -19,9 +19,11 @@
  * Implementation is intentionally synchronous and dependency-free so that
  * vitest can drive it from in-memory fixtures without polyfills.
  */
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+const IDLE_WARN_MS = 10 * 60 * 1000;
+const IDLE_FAIL_MS = 30 * 60 * 1000;
 const PHASE_MARKER_REGEX = /Phase\s*\d+(?:\.\d+)?\b[^\n]*?(?:GREEN|RED|REFACTOR|actionable|SHIP|FIX_FIRST|APPROVED|Real\s+CR|Pseudo\s+CR|merged)?/i;
 export function detectPhaseMarker(text) {
     if (!text)
@@ -86,7 +88,7 @@ function parseAssistant(slug, obj, timestamp) {
  * to "unknown" status. A future end-to-end smoke test against a live
  * `claude -p` session is the supplementary detector for that drift.
  */
-export function parseStreamJsonLine(slug, line) {
+export function parseStreamJsonLine(slug, line, fallbackTimestamp = new Date().toISOString()) {
     const trimmed = line.trim();
     if (!trimmed)
         return null;
@@ -101,7 +103,7 @@ export function parseStreamJsonLine(slug, line) {
         return null;
     const timestamp = typeof obj.timestamp === "string"
         ? obj.timestamp
-        : new Date().toISOString();
+        : fallbackTimestamp;
     if (obj.type === "assistant") {
         return parseAssistant(slug, obj, timestamp);
     }
@@ -125,7 +127,9 @@ export function readSessionLog(slug, logDir) {
     // log issue must not crash dashboard build for the rest of the orchestrator,
     // so swallow the error and return [].
     let content;
+    let fallbackTimestamp;
     try {
+        fallbackTimestamp = statSync(path).mtime.toISOString();
         content = readFileSync(path, "utf-8");
     }
     catch {
@@ -133,7 +137,7 @@ export function readSessionLog(slug, logDir) {
     }
     const events = [];
     for (const line of content.split(/\r?\n/)) {
-        const ev = parseStreamJsonLine(slug, line);
+        const ev = parseStreamJsonLine(slug, line, fallbackTimestamp);
         if (ev)
             events.push(ev);
     }
@@ -142,7 +146,7 @@ export function readSessionLog(slug, logDir) {
 export function readGitCommits(worktreePath, limit = 1) {
     if (!existsSync(worktreePath))
         return [];
-    const r = spawnSync("git", ["log", `-${limit}`, "--format=%H%x09%s%x09%cr"], { cwd: worktreePath, encoding: "utf-8" });
+    const r = spawnSync("git", ["log", `-${limit}`, "--format=%H%x09%s%x09%cr%x09%cI"], { cwd: worktreePath, encoding: "utf-8" });
     if (r.status !== 0)
         return [];
     const out = (r.stdout ?? "").trim();
@@ -150,19 +154,21 @@ export function readGitCommits(worktreePath, limit = 1) {
         return [];
     // %s (subject) may rarely contain tab characters. Naive `split("\t")`
     // would silently truncate the message at the first inner tab and shift
-    // relativeTime into the wrong slot. Use first-tab / last-tab anchors
-    // to keep the middle (message) intact even with embedded tabs. %H (hash)
-    // and %cr (relative time) are tab-free by Git's format guarantees.
+    // relativeTime into the wrong slot. Use first-tab plus two right-side
+    // anchors to keep the middle (message) intact even with embedded tabs.
+    // %H, %cr, and %cI are tab-free by Git's format guarantees.
     return out.split(/\r?\n/).flatMap((line) => {
         const firstTab = line.indexOf("\t");
         const lastTab = line.lastIndexOf("\t");
-        if (firstTab < 0 || firstTab === lastTab)
+        const secondLastTab = line.lastIndexOf("\t", lastTab - 1);
+        if (firstTab < 0 || secondLastTab <= firstTab || secondLastTab === lastTab)
             return [];
         return [
             {
                 hash: line.slice(0, firstTab),
-                message: line.slice(firstTab + 1, lastTab),
-                relativeTime: line.slice(lastTab + 1),
+                message: line.slice(firstTab + 1, secondLastTab),
+                relativeTime: line.slice(secondLastTab + 1, lastTab),
+                timestamp: line.slice(lastTab + 1),
             },
         ];
     });
@@ -177,9 +183,25 @@ function readGitBranch(worktreePath) {
     return out || null;
 }
 function inferStatus(events) {
+    const hasCompletion = events.some((e) => e.type === "completion");
+    const hasErrorCompletion = events.some((e) => {
+        if (e.type !== "completion")
+            return false;
+        const raw = e.payload.raw;
+        if (!raw || typeof raw !== "object")
+            return false;
+        const record = raw;
+        if (record.is_error === true)
+            return true;
+        return typeof record.subtype === "string" && /^error(?:_|$)/i.test(record.subtype);
+    });
+    if (hasErrorCompletion)
+        return "error";
     const phaseEvents = events.filter((e) => e.type === "phase_marker");
     if (phaseEvents.length === 0) {
         const hasToolUse = events.some((e) => e.type === "tool_use");
+        if (hasCompletion)
+            return "unknown";
         return hasToolUse ? "running" : "unknown";
     }
     const last = phaseEvents[phaseEvents.length - 1];
@@ -193,7 +215,46 @@ function inferStatus(events) {
         return "actionable=0";
     if (/APPROVED|merged/i.test(haystack))
         return "merged";
+    if (hasCompletion)
+        return "unknown";
     return "running";
+}
+function latestEventActivity(events) {
+    let latest = null;
+    for (const event of events) {
+        const time = Date.parse(event.timestamp);
+        if (!Number.isFinite(time))
+            continue;
+        if (!latest || time > latest.time) {
+            latest = { timestamp: event.timestamp, time };
+        }
+    }
+    return latest;
+}
+function classifyIdle(events, status, now = new Date(), fallbackTimestamp) {
+    const eventActivity = latestEventActivity(events);
+    const fallbackMs = fallbackTimestamp === undefined ? Number.NaN : Date.parse(fallbackTimestamp);
+    const canUseFallback = fallbackTimestamp !== undefined && Number.isFinite(fallbackMs);
+    const activity = status === "running"
+        ? eventActivity ??
+            (canUseFallback ? { timestamp: fallbackTimestamp, time: fallbackMs } : null)
+        : status === "unknown" && !eventActivity && canUseFallback
+            ? { timestamp: fallbackTimestamp, time: fallbackMs }
+            : null;
+    if (!activity)
+        return null;
+    const nowMs = now instanceof Date ? now.getTime() : typeof now === "number" ? now : Date.parse(now);
+    if (!Number.isFinite(nowMs))
+        return null;
+    const ageMs = Math.max(0, nowMs - activity.time);
+    const severity = ageMs >= IDLE_FAIL_MS ? "fail" : ageMs >= IDLE_WARN_MS ? "warn" : "fresh";
+    return {
+        severity,
+        ageMinutes: Math.floor(ageMs / 60000),
+        latestActivityTimestamp: activity.timestamp,
+        latestEventTimestamp: eventActivity?.timestamp ?? null,
+        source: eventActivity ? "event" : "commit",
+    };
 }
 export function buildSessionSummary(slug, opts) {
     const events = readSessionLog(slug, opts.logDir);
@@ -208,12 +269,14 @@ export function buildSessionSummary(slug, opts) {
         ? phaseEvents[phaseEvents.length - 1].payload
             .phase
         : null;
+    const status = inferStatus(events);
     return {
         slug,
         branch,
         phase: lastPhase,
         lastCommit: commits[0] ?? null,
-        status: inferStatus(events),
+        status,
+        idle: classifyIdle(events, status, opts.now, commits[0]?.timestamp),
         events,
     };
 }
@@ -223,6 +286,13 @@ export function buildSessionSummary(slug, opts) {
 // commit messages / branch names / phase markers into the table.
 function escapeCell(value) {
     return value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+function renderStatusCell(summary) {
+    const idle = summary.idle;
+    if (!idle || idle.severity === "fresh")
+        return summary.status;
+    const label = idle.severity === "fail" ? "FAIL-idle" : "WARN-idle";
+    return `${summary.status} (${label} ${idle.ageMinutes}m)`;
 }
 export function renderDashboard(summaries) {
     if (summaries.length === 0) {
@@ -240,7 +310,7 @@ export function renderDashboard(summaries) {
         const commit = s.lastCommit
             ? `${s.lastCommit.hash.slice(0, 7)} ${escapeCell(s.lastCommit.message).replace(/`/g, "")} (${escapeCell(s.lastCommit.relativeTime)})`
             : "—";
-        return `| ${escapeCell(s.slug)} | ${branch} | ${phase} | ${commit} | ${s.status} |`;
+        return `| ${escapeCell(s.slug)} | ${branch} | ${phase} | ${commit} | ${escapeCell(renderStatusCell(s))} |`;
     });
     return [header, ...rows].join("\n");
 }

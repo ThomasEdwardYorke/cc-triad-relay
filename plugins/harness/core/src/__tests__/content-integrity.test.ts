@@ -5337,10 +5337,10 @@ describe("commands/parallel-worktree-v2.md — Model B v2 skill anchors", () => 
     expect(skill).toMatch(/-r\b|--resume/);
   });
 
-  it("interactive と headless の signal 経路を明示する (interactive=tmux capture / git log、headless=stream-json)", () => {
+  it("interactive と headless の signal 経路を明示する (interactive=git log、headless=stream-json)", () => {
     // CR PR #68 round 1 Critical 指摘: interactive `claude -n` は stream-json を
     // 出さない。spec body で interactive と headless の経路を区別する drift guard。
-    expect(skill).toMatch(/tmux\s*capture-pane|git\s*(?:commit\s*)?log|interactive/i);
+    expect(skill).toMatch(/git\s*(?:commit\s*)?log|interactive/i);
     // headless 経路 (claude-oneshot 経由) で stream-json が取得できることを記述
     expect(skill).toMatch(/stream-json/);
     expect(skill).toMatch(/-p\b|--print|headless|claude-oneshot/);

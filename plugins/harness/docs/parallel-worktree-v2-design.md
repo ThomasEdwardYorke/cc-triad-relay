@@ -27,7 +27,8 @@ subagents that share its context. While effective for small parallel work
 **Model B** dissolves these limits by giving each worktree its own
 top-level `claude` process. Every worktree is an autonomous session that
 can use the full skill catalog, run its own Agent/Codex subagents, and
-report back via stream-json without burdening any sibling.
+report back via git progress and optional stream-json logs without burdening
+any sibling.
 
 ## Architecture
 
@@ -35,7 +36,7 @@ report back via stream-json without burdening any sibling.
 +--------------------------------------------------------------+
 | coordinator session (this skill, v2)                         |
 |  - tmux session manager (orchestrates N windows)             |
-|  - progress monitor (reads /tmp/claude-log-<slug>.jsonl)     |
+|  - progress monitor (reads git log + optional stream-json)   |
 |  - merge-train integration (post-completion phase 8)         |
 +-------+----------------------+----------------------+--------+
         |                      |                      |
@@ -60,7 +61,7 @@ report back via stream-json without burdening any sibling.
 | harness inheritance | shared from coordinator context     | each worktree inherits user-level `~/.claude/` overlay |
 | skill access     | restricted (no Skill / no Agent for worker) | full access (skills, agents, MCP) per worktree    |
 | context budget   | shared with coordinator                  | each worktree has its own 1 M context budget          |
-| progress         | TaskList + worker prompt return value    | stream-json log + git commit log per worktree         |
+| progress         | TaskList + worker prompt return value    | git commit log + optional stream-json per worktree    |
 | phase 5.5 / 6 / 7| coordinator-only, after all workers finish | each worktree runs them inside its own claude session |
 | phase 8 (merge)  | coordinator                              | coordinator (`/harness-merge-train` after all sessions complete) |
 
@@ -143,13 +144,16 @@ runs the full quality gate chain on its own PR.
 
 ## Progress monitoring
 
-Each `claude -n <slug>` writes to `/tmp/claude-log-<slug>.jsonl`
-(stream-json output). The coordinator runs a **session-manager**
-(`session-manager.ts`, Stage C) that aggregates:
+Interactive `claude -n <slug>` sessions are monitored through git commit
+timestamps; headless / mock flows may also write
+`/tmp/claude-log-<slug>.jsonl` stream-json output. The coordinator runs a
+**session-manager** (`session-manager.ts`, Stage C) that aggregates:
 
 - per-window git commit log (which slug landed which commit when)
 - per-window stream-json tool calls (current Phase, last tool used)
 - per-window phase markers (`Phase 5 GREEN reached`, `Phase 5.5 actionable=0`)
+- per-window idle age from the latest parsed stream-json event timestamp,
+  falling back to the latest git commit timestamp when no event stream exists
 
 Aggregator output is rendered to a single coordinator dashboard:
 
@@ -159,7 +163,7 @@ Aggregator output is rendered to a single coordinator dashboard:
   | slug      | branch              | phase | last commit          | status |
   |-----------|---------------------|-------|----------------------|--------|
   | frontend  | feature/main-fe     | 5.5   | a1b2c3d 2 min ago    | actionable=0, Pseudo CR clean |
-  | backend   | feature/main-be     | 5     | e4f5g6h 6 min ago    | running Codex review (Phase 5) |
+  | backend   | feature/main-be     | 5     | e4f5g6h 11 min ago   | running (WARN-idle 11m) |
   | shared    | feature/main-shared | 7     | i7j8k9l 12 min ago   | Codex Phase 7 SHIP |
   | docs      | feature/main-docs   | 8     | m0n1o2p 18 min ago   | merged ✓ |
 ```
@@ -204,8 +208,9 @@ infrastructure.
   `/parallel-worktree-v2 attach <slug>` subcommand that runs
   `tmux attach-session -t <session> ; tmux select-window -t <slug>`.
 - **Failure recovery**: if a worktree's claude session crashes mid-task,
-  session-manager should detect (last-event timestamp > 10 min) and
-  prompt the operator. Specifically, what auto-restart vs human-in-the-loop
+  session-manager should detect (last-event timestamp > 10 min, or latest
+  commit timestamp when no event stream exists) and prompt the operator.
+  Specifically, what auto-restart vs human-in-the-loop
   policy? Default: alert only, no auto-restart (Anthropic responsible-AI
   guidance leans toward operator confirmation for autonomous restarts).
 

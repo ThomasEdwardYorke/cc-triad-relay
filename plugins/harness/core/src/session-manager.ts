@@ -20,7 +20,7 @@
  * vitest can drive it from in-memory fixtures without polyfills.
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
@@ -31,12 +31,20 @@ export interface SessionEvent {
   payload: Record<string, unknown>;
 }
 
+export interface SessionIdleState {
+  severity: "fresh" | "warn" | "fail";
+  ageMinutes: number;
+  latestActivityTimestamp: string;
+  latestEventTimestamp: string | null;
+  source: "event" | "commit";
+}
+
 export interface SessionSummary {
   slug: string;
   branch: string | null;
   phase: string | null;
   lastCommit:
-    | { hash: string; message: string; relativeTime: string }
+    | { hash: string; message: string; relativeTime: string; timestamp?: string }
     | null;
   status:
     | "running"
@@ -45,8 +53,12 @@ export interface SessionSummary {
     | "merged"
     | "error"
     | "unknown";
+  idle?: SessionIdleState | null;
   events: SessionEvent[];
 }
+
+const IDLE_WARN_MS = 10 * 60 * 1000;
+const IDLE_FAIL_MS = 30 * 60 * 1000;
 
 const PHASE_MARKER_REGEX =
   /Phase\s*\d+(?:\.\d+)?\b[^\n]*?(?:GREEN|RED|REFACTOR|actionable|SHIP|FIX_FIRST|APPROVED|Real\s+CR|Pseudo\s+CR|merged)?/i;
@@ -137,6 +149,7 @@ function parseAssistant(
 export function parseStreamJsonLine(
   slug: string,
   line: string,
+  fallbackTimestamp = new Date().toISOString(),
 ): SessionEvent | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
@@ -150,7 +163,7 @@ export function parseStreamJsonLine(
   const timestamp =
     typeof obj.timestamp === "string"
       ? obj.timestamp
-      : new Date().toISOString();
+      : fallbackTimestamp;
   if (obj.type === "assistant") {
     return parseAssistant(slug, obj, timestamp);
   }
@@ -178,14 +191,16 @@ export function readSessionLog(
   // log issue must not crash dashboard build for the rest of the orchestrator,
   // so swallow the error and return [].
   let content: string;
+  let fallbackTimestamp: string;
   try {
+    fallbackTimestamp = statSync(path).mtime.toISOString();
     content = readFileSync(path, "utf-8");
   } catch {
     return [];
   }
   const events: SessionEvent[] = [];
   for (const line of content.split(/\r?\n/)) {
-    const ev = parseStreamJsonLine(slug, line);
+    const ev = parseStreamJsonLine(slug, line, fallbackTimestamp);
     if (ev) events.push(ev);
   }
   return events;
@@ -194,11 +209,11 @@ export function readSessionLog(
 export function readGitCommits(
   worktreePath: string,
   limit = 1,
-): { hash: string; message: string; relativeTime: string }[] {
+): { hash: string; message: string; relativeTime: string; timestamp?: string }[] {
   if (!existsSync(worktreePath)) return [];
   const r = spawnSync(
     "git",
-    ["log", `-${limit}`, "--format=%H%x09%s%x09%cr"],
+    ["log", `-${limit}`, "--format=%H%x09%s%x09%cr%x09%cI"],
     { cwd: worktreePath, encoding: "utf-8" },
   );
   if (r.status !== 0) return [];
@@ -206,18 +221,20 @@ export function readGitCommits(
   if (!out) return [];
   // %s (subject) may rarely contain tab characters. Naive `split("\t")`
   // would silently truncate the message at the first inner tab and shift
-  // relativeTime into the wrong slot. Use first-tab / last-tab anchors
-  // to keep the middle (message) intact even with embedded tabs. %H (hash)
-  // and %cr (relative time) are tab-free by Git's format guarantees.
+  // relativeTime into the wrong slot. Use first-tab plus two right-side
+  // anchors to keep the middle (message) intact even with embedded tabs.
+  // %H, %cr, and %cI are tab-free by Git's format guarantees.
   return out.split(/\r?\n/).flatMap((line) => {
     const firstTab = line.indexOf("\t");
     const lastTab = line.lastIndexOf("\t");
-    if (firstTab < 0 || firstTab === lastTab) return [];
+    const secondLastTab = line.lastIndexOf("\t", lastTab - 1);
+    if (firstTab < 0 || secondLastTab <= firstTab || secondLastTab === lastTab) return [];
     return [
       {
         hash: line.slice(0, firstTab),
-        message: line.slice(firstTab + 1, lastTab),
-        relativeTime: line.slice(lastTab + 1),
+        message: line.slice(firstTab + 1, secondLastTab),
+        relativeTime: line.slice(secondLastTab + 1, lastTab),
+        timestamp: line.slice(lastTab + 1),
       },
     ];
   });
@@ -238,9 +255,21 @@ function readGitBranch(worktreePath: string): string | null {
 function inferStatus(
   events: SessionEvent[],
 ): SessionSummary["status"] {
+  const hasCompletion = events.some((e) => e.type === "completion");
+  const hasErrorCompletion = events.some((e) => {
+    if (e.type !== "completion") return false;
+    const raw = e.payload.raw;
+    if (!raw || typeof raw !== "object") return false;
+    const record = raw as Record<string, unknown>;
+    if (record.is_error === true) return true;
+    return typeof record.subtype === "string" && /^error(?:_|$)/i.test(record.subtype);
+  });
+  if (hasErrorCompletion) return "error";
+
   const phaseEvents = events.filter((e) => e.type === "phase_marker");
   if (phaseEvents.length === 0) {
     const hasToolUse = events.some((e) => e.type === "tool_use");
+    if (hasCompletion) return "unknown";
     return hasToolUse ? "running" : "unknown";
   }
   const last = phaseEvents[phaseEvents.length - 1]!;
@@ -250,12 +279,63 @@ function inferStatus(
   if (/FIX_FIRST/i.test(haystack)) return "error";
   if (/actionable\s*=\s*0/i.test(haystack)) return "actionable=0";
   if (/APPROVED|merged/i.test(haystack)) return "merged";
+  if (hasCompletion) return "unknown";
   return "running";
+}
+
+function latestEventActivity(
+  events: SessionEvent[],
+): { timestamp: string; time: number } | null {
+  let latest: { timestamp: string; time: number } | null = null;
+  for (const event of events) {
+    const time = Date.parse(event.timestamp);
+    if (!Number.isFinite(time)) continue;
+    if (!latest || time > latest.time) {
+      latest = { timestamp: event.timestamp, time };
+    }
+  }
+  return latest;
+}
+
+function classifyIdle(
+  events: SessionEvent[],
+  status: SessionSummary["status"],
+  now: string | number | Date = new Date(),
+  fallbackTimestamp?: string,
+): SessionIdleState | null {
+  const eventActivity = latestEventActivity(events);
+  const fallbackMs =
+    fallbackTimestamp === undefined ? Number.NaN : Date.parse(fallbackTimestamp);
+  const canUseFallback =
+    fallbackTimestamp !== undefined && Number.isFinite(fallbackMs);
+  const activity =
+    status === "running"
+      ? eventActivity ??
+        (canUseFallback ? { timestamp: fallbackTimestamp, time: fallbackMs } : null)
+      : status === "unknown" && !eventActivity && canUseFallback
+        ? { timestamp: fallbackTimestamp, time: fallbackMs }
+        : null;
+  if (!activity) return null;
+
+  const nowMs =
+    now instanceof Date ? now.getTime() : typeof now === "number" ? now : Date.parse(now);
+  if (!Number.isFinite(nowMs)) return null;
+
+  const ageMs = Math.max(0, nowMs - activity.time);
+  const severity =
+    ageMs >= IDLE_FAIL_MS ? "fail" : ageMs >= IDLE_WARN_MS ? "warn" : "fresh";
+  return {
+    severity,
+    ageMinutes: Math.floor(ageMs / 60000),
+    latestActivityTimestamp: activity.timestamp,
+    latestEventTimestamp: eventActivity?.timestamp ?? null,
+    source: eventActivity ? "event" : "commit",
+  };
 }
 
 export function buildSessionSummary(
   slug: string,
-  opts: { logDir?: string; worktreePath?: string },
+  opts: { logDir?: string; worktreePath?: string; now?: string | number | Date },
 ): SessionSummary {
   const events = readSessionLog(slug, opts.logDir);
   const commits = opts.worktreePath
@@ -270,13 +350,15 @@ export function buildSessionSummary(
     ? (phaseEvents[phaseEvents.length - 1]!.payload as { phase: string })
         .phase
     : null;
+  const status = inferStatus(events);
 
   return {
     slug,
     branch,
     phase: lastPhase,
     lastCommit: commits[0] ?? null,
-    status: inferStatus(events),
+    status,
+    idle: classifyIdle(events, status, opts.now, commits[0]?.timestamp),
     events,
   };
 }
@@ -287,6 +369,13 @@ export function buildSessionSummary(
 // commit messages / branch names / phase markers into the table.
 function escapeCell(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
+function renderStatusCell(summary: SessionSummary): string {
+  const idle = summary.idle;
+  if (!idle || idle.severity === "fresh") return summary.status;
+  const label = idle.severity === "fail" ? "FAIL-idle" : "WARN-idle";
+  return `${summary.status} (${label} ${idle.ageMinutes}m)`;
 }
 
 export function renderDashboard(summaries: SessionSummary[]): string {
@@ -306,7 +395,7 @@ export function renderDashboard(summaries: SessionSummary[]): string {
     const commit = s.lastCommit
       ? `${s.lastCommit.hash.slice(0, 7)} ${escapeCell(s.lastCommit.message).replace(/`/g, "")} (${escapeCell(s.lastCommit.relativeTime)})`
       : "—";
-    return `| ${escapeCell(s.slug)} | ${branch} | ${phase} | ${commit} | ${s.status} |`;
+    return `| ${escapeCell(s.slug)} | ${branch} | ${phase} | ${commit} | ${escapeCell(renderStatusCell(s))} |`;
   });
   return [header, ...rows].join("\n");
 }

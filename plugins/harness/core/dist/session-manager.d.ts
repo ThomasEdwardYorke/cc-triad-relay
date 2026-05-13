@@ -25,6 +25,13 @@ export interface SessionEvent {
     type: "tool_use" | "phase_marker" | "commit" | "completion" | "error";
     payload: Record<string, unknown>;
 }
+export interface SessionIdleState {
+    severity: "fresh" | "warn" | "fail";
+    ageMinutes: number;
+    latestActivityTimestamp: string;
+    latestEventTimestamp: string | null;
+    source: "event" | "commit";
+}
 export interface SessionSummary {
     slug: string;
     branch: string | null;
@@ -33,8 +40,10 @@ export interface SessionSummary {
         hash: string;
         message: string;
         relativeTime: string;
+        timestamp?: string;
     } | null;
     status: "running" | "actionable=0" | "ship" | "merged" | "error" | "unknown";
+    idle?: SessionIdleState | null;
     events: SessionEvent[];
 }
 export declare function detectPhaseMarker(text: string): string | null;
@@ -58,16 +67,18 @@ export declare function detectPhaseMarker(text: string): string | null;
  * to "unknown" status. A future end-to-end smoke test against a live
  * `claude -p` session is the supplementary detector for that drift.
  */
-export declare function parseStreamJsonLine(slug: string, line: string): SessionEvent | null;
+export declare function parseStreamJsonLine(slug: string, line: string, fallbackTimestamp?: string): SessionEvent | null;
 export declare function readSessionLog(slug: string, logDir?: string): SessionEvent[];
 export declare function readGitCommits(worktreePath: string, limit?: number): {
     hash: string;
     message: string;
     relativeTime: string;
+    timestamp?: string;
 }[];
 export declare function buildSessionSummary(slug: string, opts: {
     logDir?: string;
     worktreePath?: string;
+    now?: string | number | Date;
 }): SessionSummary;
 export declare function renderDashboard(summaries: SessionSummary[]): string;
 //# sourceMappingURL=session-manager.d.ts.map
