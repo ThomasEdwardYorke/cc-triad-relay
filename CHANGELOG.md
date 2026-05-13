@@ -5,6 +5,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`session-manager` idle visibility** — running sessions now expose `WARN-idle` after 10 minutes and `FAIL-idle` after 30 minutes without activity, using parsed stream-json event timestamps first and git commit timestamps as a fallback when no event stream exists. Errored completion results (`is_error: true` / `error_*` subtype) surface as `error` instead of being hidden as `unknown`, and timestampless log lines use stable file mtime fallback instead of resetting activity on every dashboard refresh.
+
 ## [0.4.0-rc.2] - 2026-04-28
 
 ### Added
