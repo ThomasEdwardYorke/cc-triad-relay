@@ -28,6 +28,8 @@ import {
   readGitCommits,
   buildSessionSummary,
   renderDashboard,
+  renderIdlePaneTitle,
+  planIdlePaneLabels,
   type SessionEvent,
   type SessionSummary,
 } from "../session-manager.js";
@@ -767,6 +769,105 @@ describe("renderDashboard", () => {
       const cellCount = stripped.split("|").length - 1;
       expect(cellCount).toBe(6);
     }
+  });
+});
+
+describe("idle tmux pane label helpers", () => {
+  it("keeps non-idle and fresh summaries on the canonical slug title", () => {
+    const noIdle: SessionSummary = {
+      slug: "fresh",
+      branch: null,
+      phase: null,
+      lastCommit: null,
+      status: "running",
+      events: [],
+    };
+    const freshIdle: SessionSummary = {
+      ...noIdle,
+      slug: "recent",
+      idle: {
+        severity: "fresh",
+        ageMinutes: 9,
+        latestActivityTimestamp: "2026-04-28T11:00:00Z",
+        latestEventTimestamp: "2026-04-28T11:00:00Z",
+        source: "event",
+      },
+    };
+
+    expect(renderIdlePaneTitle(noIdle)).toBe("fresh");
+    expect(renderIdlePaneTitle(freshIdle)).toBe("recent");
+  });
+
+  it("adds a compact IDLE marker to warn/fail summaries without replacing dashboard status", () => {
+    const warn: SessionSummary = {
+      slug: "api",
+      branch: null,
+      phase: null,
+      lastCommit: null,
+      status: "running",
+      events: [],
+      idle: {
+        severity: "warn",
+        ageMinutes: 10,
+        latestActivityTimestamp: "2026-04-28T11:00:00Z",
+        latestEventTimestamp: "2026-04-28T11:00:00Z",
+        source: "event",
+      },
+    };
+    const fail: SessionSummary = {
+      ...warn,
+      slug: "worker",
+      idle: {
+        ...warn.idle!,
+        severity: "fail",
+        ageMinutes: 30,
+      },
+    };
+
+    expect(renderIdlePaneTitle(warn)).toBe("api-IDLE-10m");
+    expect(renderIdlePaneTitle(fail)).toBe("worker-IDLE-30m");
+    expect(renderDashboard([warn])).toMatch(/running \(WARN-idle 10m\)/);
+  });
+
+  it("returns structured tmux pane-label operations without mutating stable window names", () => {
+    const summaries: SessionSummary[] = [
+      {
+        slug: "api",
+        branch: null,
+        phase: null,
+        lastCommit: null,
+        status: "running",
+        events: [],
+        idle: {
+          severity: "warn",
+          ageMinutes: 12,
+          latestActivityTimestamp: "2026-04-28T11:00:00Z",
+          latestEventTimestamp: "2026-04-28T11:00:00Z",
+          source: "event",
+        },
+      },
+      {
+        slug: "frontend",
+        branch: null,
+        phase: null,
+        lastCommit: null,
+        status: "ship",
+        events: [],
+      },
+    ];
+
+    expect(planIdlePaneLabels(summaries, { sessionName: "harness-parallel" })).toEqual([
+      {
+        slug: "api",
+        target: "harness-parallel:api.0",
+        title: "api-IDLE-12m",
+      },
+      {
+        slug: "frontend",
+        target: "harness-parallel:frontend.0",
+        title: "frontend",
+      },
+    ]);
   });
 });
 

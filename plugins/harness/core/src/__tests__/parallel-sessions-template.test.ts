@@ -153,6 +153,15 @@ describe("parallel-sessions-template.sh: env var configuration", () => {
     expect(r.stdout).toMatch(/my-custom-session-xyz/);
   });
 
+  it("rejects TMUX_SESSION_NAME containing shell metacharacters", () => {
+    const r = runScript(["--dry-run", "start", "main", "alpha"], {
+      TMUX_SESSION_NAME: "bad';touch",
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/tmux session name|invalid characters|Error/i);
+    expect(r.stdout).not.toMatch(/new-session|new-window/);
+  });
+
   it("respects WORKTREE_PARENT_DIR env var", () => {
     const r = runScript(["--dry-run", "start", "main", "alpha"], {
       WORKTREE_PARENT_DIR: "/tmp/<test-stub>/parent",
@@ -540,5 +549,45 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
     expect(r.status).toBe(0);
     expect(r.stdout).toMatch(/attach|select-window/i);
     expect(r.stdout).toMatch(/frontend/);
+  });
+});
+
+describe("parallel-sessions-template.sh: dry-run idle pane labels", () => {
+  it("dry-run label-panes prints tmux select-pane commands for idle labels", () => {
+    const r = runScript([
+      "--dry-run",
+      "label-panes",
+      "harness-parallel",
+      "api=api-IDLE-12m",
+      "frontend=frontend",
+    ]);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/tmux select-pane -t 'harness-parallel:api\.0' -T 'api-IDLE-12m'/);
+    expect(r.stdout).toMatch(/tmux select-pane -t 'harness-parallel:frontend\.0' -T 'frontend'/);
+    expect(r.stdout).not.toMatch(/rename-window/);
+  });
+
+  it("rejects unsafe label-panes titles before emitting any tmux command", () => {
+    const r = runScript([
+      "--dry-run",
+      "label-panes",
+      "harness-parallel",
+      "api=api;rm",
+    ]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/pane title|invalid characters|Error/i);
+    expect(r.stdout).not.toMatch(/select-pane|rename-window/);
+  });
+
+  it("rejects unsafe label-panes session names before emitting any tmux command", () => {
+    const r = runScript([
+      "--dry-run",
+      "label-panes",
+      "bad'; touch /tmp/owned; echo '",
+      "api=api-IDLE-12m",
+    ]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/tmux session name|invalid characters|Error/i);
+    expect(r.stdout).not.toMatch(/select-pane|rename-window/);
   });
 });

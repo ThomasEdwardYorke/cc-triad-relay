@@ -46,6 +46,11 @@ export interface SessionSummary {
     idle?: SessionIdleState | null;
     events: SessionEvent[];
 }
+export interface IdlePaneLabelPlan {
+    slug: string;
+    target: string;
+    title: string;
+}
 export declare function detectPhaseMarker(text: string): string | null;
 /**
  * Parse a single stream-json line into a SessionEvent.
@@ -80,5 +85,9 @@ export declare function buildSessionSummary(slug: string, opts: {
     worktreePath?: string;
     now?: string | number | Date;
 }): SessionSummary;
+export declare function renderIdlePaneTitle(summary: Pick<SessionSummary, "slug" | "idle">): string;
+export declare function planIdlePaneLabels(summaries: Pick<SessionSummary, "slug" | "idle">[], opts: {
+    sessionName: string;
+}): IdlePaneLabelPlan[];
 export declare function renderDashboard(summaries: SessionSummary[]): string;
 //# sourceMappingURL=session-manager.d.ts.map

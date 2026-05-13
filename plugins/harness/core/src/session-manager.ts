@@ -57,6 +57,12 @@ export interface SessionSummary {
   events: SessionEvent[];
 }
 
+export interface IdlePaneLabelPlan {
+  slug: string;
+  target: string;
+  title: string;
+}
+
 const IDLE_WARN_MS = 10 * 60 * 1000;
 const IDLE_FAIL_MS = 30 * 60 * 1000;
 
@@ -401,6 +407,29 @@ function renderStatusCell(summary: SessionSummary): string {
   if (!idle || idle.severity === "fresh") return summary.status;
   const label = idle.severity === "fail" ? "FAIL-idle" : "WARN-idle";
   return `${summary.status} (${label} ${idle.ageMinutes}m)`;
+}
+
+export function renderIdlePaneTitle(
+  summary: Pick<SessionSummary, "slug" | "idle">,
+): string {
+  const idle = summary.idle;
+  if (!idle || idle.severity === "fresh") return summary.slug;
+  const ageMinutes = Math.max(0, Math.floor(idle.ageMinutes));
+  return `${summary.slug}-IDLE-${ageMinutes}m`;
+}
+
+export function planIdlePaneLabels(
+  summaries: Pick<SessionSummary, "slug" | "idle">[],
+  opts: { sessionName: string },
+): IdlePaneLabelPlan[] {
+  // Keep the tmux window name as the stable slug target. Labels are applied to
+  // the worker pane title so attach / verify / cleanup can still address
+  // `${sessionName}:${slug}` after an idle marker is displayed.
+  return summaries.map((summary) => ({
+    slug: summary.slug,
+    target: `${opts.sessionName}:${summary.slug}.0`,
+    title: renderIdlePaneTitle(summary),
+  }));
 }
 
 export function renderDashboard(summaries: SessionSummary[]): string {
