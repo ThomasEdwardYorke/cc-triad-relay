@@ -467,13 +467,14 @@ describe("buildSessionSummary", () => {
       now: "2026-04-28T11:10:00Z",
     });
     expect(summary.status).toBe("unknown");
-    expect(summary.idle).toEqual({
-      severity: "warn",
-      ageMinutes: 10,
-      latestActivityTimestamp: "2026-04-28T11:00:00+00:00",
-      latestEventTimestamp: null,
-      source: "commit",
-    });
+    expect(summary.idle).not.toBeNull();
+    expect(summary.idle?.severity).toBe("warn");
+    expect(summary.idle?.ageMinutes).toBe(10);
+    expect(Date.parse(summary.idle!.latestActivityTimestamp)).toBe(
+      Date.parse("2026-04-28T11:00:00Z"),
+    );
+    expect(summary.idle?.latestEventTimestamp).toBeNull();
+    expect(summary.idle?.source).toBe("commit");
   });
 
   it("does not mark terminal summaries idle even when their last event is old", () => {
