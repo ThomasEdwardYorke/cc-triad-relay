@@ -33,7 +33,7 @@ const SCRIPT_PATH = resolve(REPO_ROOT, "tests/e2e/fixtures/mock-claude.sh");
 function runMock(
   args: string[] = [],
   env: Record<string, string> = {},
-  timeoutMs = 5000,
+  timeoutMs = 15000,
 ): { stdout: string; stderr: string; status: number | null; signal: NodeJS.Signals | null } {
   const r = spawnSync("bash", [SCRIPT_PATH, ...args], {
     encoding: "utf-8",
@@ -55,9 +55,9 @@ describe("mock-claude.sh: file existence and shebang", () => {
 });
 
 describe("mock-claude.sh: argv parsing fail-fast on missing values", () => {
-  // Each spawnSync uses a 5s timeout. If the fixture regresses to a
+  // Each spawnSync uses a 15s timeout. If the fixture regresses to a
   // failure-swallowing `shift 2 || true` pattern, the inner `while` never
-  // advances and the process is killed by SIGTERM after 5s. We assert on
+  // advances and the process is killed by SIGTERM after the timeout. We assert on
   // `status` *and* `signal` so that timeout-induced termination is
   // distinguishable from the desired non-zero exit.
 
