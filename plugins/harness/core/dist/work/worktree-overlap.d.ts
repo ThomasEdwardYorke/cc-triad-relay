@@ -98,5 +98,36 @@ export interface OverlapReport {
     pairs: OverlapPair[];
     summary: OverlapSummary;
 }
+export interface DynamicChangedPathInput {
+    /**
+     * Stable identifier surfaced in merge-train output (e.g. current PR,
+     * remaining PR, or worktree slug). Must be unique across the comparison.
+     */
+    id: string;
+    /**
+     * Concrete relative file paths collected from a merge-base-aware diff
+     * (`git diff --name-only <merge-base>...HEAD`). This helper compares exact
+     * changed paths only; it does not run git and it does not expand globs.
+     */
+    changedFiles: readonly string[];
+}
+export interface DynamicChangedPathOverlapPair {
+    currentId: string;
+    otherId: string;
+    overlappingFiles: string[];
+}
+export interface DynamicChangedPathOverlapReport {
+    currentId: string;
+    blocking: boolean;
+    pairs: DynamicChangedPathOverlapPair[];
+    overlappingFiles: string[];
+}
 export declare function detectOverlap(subTasks: readonly SubTaskOverlapInput[]): OverlapReport;
+/**
+ * Runtime merge-train guard: compare concrete changed paths for the PR about to
+ * be merged against every remaining PR/worktree. Inputs should already be
+ * collected by the caller from merge-base-aware diffs; this helper stays pure
+ * and deterministic so it can be unit-tested without live git, GitHub, or tmux.
+ */
+export declare function detectDynamicChangedPathOverlap(current: DynamicChangedPathInput, remaining: readonly DynamicChangedPathInput[]): DynamicChangedPathOverlapReport;
 //# sourceMappingURL=worktree-overlap.d.ts.map

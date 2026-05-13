@@ -20,7 +20,9 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  detectDynamicChangedPathOverlap,
   detectOverlap,
+  type DynamicChangedPathOverlapReport,
   type SubTaskOverlapInput,
   type OverlapReport,
 } from "../work/worktree-overlap.js";
@@ -403,5 +405,139 @@ describe("detectOverlap — 非対称ケース (asymmetric coverage、CR Major �
     expect(r.pairs.length).toBe(1);
     // A 側 50% / B 側 33%、hasExact だが strict > 50% 不成立 → medium
     expect(r.pairs[0]!.severity).toBe("medium");
+  });
+});
+
+describe("detectDynamicChangedPathOverlap — merge-train runtime changed-path guard", () => {
+  it("current PR と remaining PR/worktree の changed path が独立なら non-blocking", () => {
+    const r: DynamicChangedPathOverlapReport = detectDynamicChangedPathOverlap(
+      { id: "pr-current", changedFiles: ["src/current.ts"] },
+      [
+        { id: "pr-next", changedFiles: ["src/next.ts"] },
+        { id: "worktree-docs", changedFiles: ["docs/readme.md"] },
+      ],
+    );
+
+    expect(r.currentId).toBe("pr-current");
+    expect(r.blocking).toBe(false);
+    expect(r.pairs).toEqual([]);
+    expect(r.overlappingFiles).toEqual([]);
+  });
+
+  it("merge-base 差分由来の同一 changed path は blocking pair として PR/worktree identifier 付きで返す", () => {
+    const r = detectDynamicChangedPathOverlap(
+      {
+        id: "pr-current",
+        changedFiles: [
+          "plugins/harness/commands/harness-merge-train.md",
+          "plugins/harness/core/src/work/worktree-overlap.ts",
+        ],
+      },
+      [
+        {
+          id: "pr-remaining",
+          changedFiles: [
+            "plugins/harness/commands/harness-merge-train.md",
+            "plugins/harness/core/src/__tests__/other.test.ts",
+          ],
+        },
+      ],
+    );
+
+    expect(r.blocking).toBe(true);
+    expect(r.overlappingFiles).toEqual([
+      "plugins/harness/commands/harness-merge-train.md",
+    ]);
+    expect(r.pairs).toEqual([
+      {
+        currentId: "pr-current",
+        otherId: "pr-remaining",
+        overlappingFiles: [
+          "plugins/harness/commands/harness-merge-train.md",
+        ],
+      },
+    ]);
+  });
+
+  it("重複 changed path を deterministic に dedupe し、複数 remaining pair を input 順に返す", () => {
+    const r = detectDynamicChangedPathOverlap(
+      {
+        id: "current",
+        changedFiles: ["shared/a.ts", "shared/a.ts", "shared/b.ts"],
+      },
+      [
+        {
+          id: "remaining-a",
+          changedFiles: ["shared/b.ts", "shared/b.ts"],
+        },
+        {
+          id: "remaining-b",
+          changedFiles: ["shared/a.ts", "shared/c.ts"],
+        },
+      ],
+    );
+
+    expect(r.blocking).toBe(true);
+    expect(r.overlappingFiles).toEqual(["shared/a.ts", "shared/b.ts"]);
+    expect(r.pairs).toEqual([
+      {
+        currentId: "current",
+        otherId: "remaining-a",
+        overlappingFiles: ["shared/b.ts"],
+      },
+      {
+        currentId: "current",
+        otherId: "remaining-b",
+        overlappingFiles: ["shared/a.ts"],
+      },
+    ]);
+  });
+
+  it("rename は caller が --no-renames で source/destination を含めると source path overlap で block できる", () => {
+    const r = detectDynamicChangedPathOverlap(
+      {
+        id: "current-renames",
+        changedFiles: ["src/original.ts", "src/current-destination.ts"],
+      },
+      [
+        {
+          id: "remaining-renames",
+          changedFiles: ["src/original.ts", "src/remaining-destination.ts"],
+        },
+      ],
+    );
+
+    expect(r.blocking).toBe(true);
+    expect(r.overlappingFiles).toEqual(["src/original.ts"]);
+    expect(r.pairs).toEqual([
+      {
+        currentId: "current-renames",
+        otherId: "remaining-renames",
+        overlappingFiles: ["src/original.ts"],
+      },
+    ]);
+  });
+
+  it("id の重複と unsafe changed path は fail-fast で reject", () => {
+    expect(() =>
+      detectDynamicChangedPathOverlap(
+        { id: "current", changedFiles: ["src/a.ts"] },
+        [{ id: "current", changedFiles: ["src/b.ts"] }],
+      ),
+    ).toThrow(/duplicate.*id|id.*duplicate/i);
+
+    expect(() =>
+      detectDynamicChangedPathOverlap(
+        { id: "current", changedFiles: ["/absolute/path.ts"] },
+        [],
+      ),
+    ).toThrow(/absolute|relative/i);
+
+    expect(() =>
+      detectDynamicChangedPathOverlap(
+        { id: "current", changedFiles: ["src/../secret.ts"] },
+        [],
+      ),
+    ).toThrow(/parent|traversal|\.\./i);
   });
 });

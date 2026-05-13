@@ -371,6 +371,85 @@ merge 前の最終 adversarial review。critical 発見時は **必ず M3 (修�
 > **G7 skip は構造規律違反** (鉄則 7 AND 判定)。本 skill 内で skip 検出時は
 > ledger 自動追記 + fail-fast。
 
+### M6.5 — Dynamic overlap recheck (merge-base changed-path guard)
+
+M6 の adversarial review が clean になった直後、M7 の `gh pr merge --squash` を
+実行する前に、現在 merge しようとしている PR と **remaining PR/worktree** の
+changed path を merge-base aware に再取得して overlap を再判定する。これは M0 の
+static preflight を置き換えない。M0 は declarative な事前 gate、M6.5 は merge
+直前の runtime guard。
+
+```bash
+# current PR/worktree: HEAD_BRANCH / BASE_BRANCH は M0 で解決済み
+REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel)}"
+DYNAMIC_OVERLAP_TMP=$(mktemp -d "${TMPDIR:-/tmp}/merge-train-overlap-$PR.XXXXXX")
+git -C "$REPO_ROOT" fetch origin "$BASE_BRANCH"
+WORKTREE_DIR="${WORKTREE_DIR:-$(
+  git -C "$REPO_ROOT" worktree list --porcelain | awk -v branch="$HEAD_BRANCH" '
+    /^worktree / { path = $2 }
+    $0 == "branch refs/heads/" branch { print path; exit }
+  '
+)}"
+[ -z "$WORKTREE_DIR" ] && { echo "Worktree for $HEAD_BRANCH not found — dynamic overlap recheck failed"; exit 1; }
+CURRENT_BASE=$(git -C "$WORKTREE_DIR" merge-base "origin/${BASE_BRANCH}" HEAD)
+git -C "$WORKTREE_DIR" diff --name-only --no-renames "$CURRENT_BASE"...HEAD \
+  > "$DYNAMIC_OVERLAP_TMP/current-changed-files"
+
+# remaining PR/worktree: 残り head branch ごとに merge-base から changed path を取得
+for OTHER_HEAD_BRANCH in <remaining-head-branches>; do
+  git -C "$REPO_ROOT" fetch origin "$OTHER_HEAD_BRANCH"
+  OTHER_BASE=$(git -C "$REPO_ROOT" merge-base "origin/${BASE_BRANCH}" "origin/${OTHER_HEAD_BRANCH}")
+  git -C "$REPO_ROOT" diff --name-only --no-renames "$OTHER_BASE"..."origin/${OTHER_HEAD_BRANCH}" \
+    > "$DYNAMIC_OVERLAP_TMP/remaining-changed-files-<safe-slug>"
+done
+```
+
+収集した path list は shell command string ではなく structured data として
+`core/src/work/worktree-overlap.ts` の pure helper に渡す:
+
+```ts
+import { detectDynamicChangedPathOverlap } from "@cc-triad-relay/core/dist/work/worktree-overlap.js";
+
+const report = detectDynamicChangedPathOverlap(
+  { id: `current:<head-branch>`, changedFiles: currentChangedFiles },
+  remainingItems.map((item) => ({
+    id: `remaining:${item.identifier}`,
+    changedFiles: item.changedFiles,
+  })),
+);
+```
+
+`report.blocking === true` の場合は **fail-fast** し、M7 へ進まない。出力には
+blocking result として `currentId`、remaining PR/worktree identifier
+(`otherId`)、`overlappingFiles` (conflicting paths) を必ず含める:
+
+```text
+DYNAMIC_OVERLAP_BLOCKED
+current: <current-id>
+remaining: <remaining-id>
+conflicting paths:
+  <repo-relative-path>
+```
+
+**規約**:
+- `detectDynamicChangedPathOverlap()` は exact changed path のみ比較する。glob
+  expansion / fs access / git / GitHub / tmux access は行わない。
+- live command は changed path の収集のみ担当し、blocking 判定は pure helper が
+  structured data から決定する。
+- base ref は各 M6.5 実行時に `git -C "$REPO_ROOT" fetch origin "$BASE_BRANCH"` で
+  refresh してから merge-base を計算する。
+- current PR の diff は必ず `git -C "$WORKTREE_DIR"` で PR worktree に固定する。
+  coordinator checkout の `HEAD` から changed path を計算しない。
+- path list の出力先は `mktemp -d "${TMPDIR:-/tmp}/..."` で作った専用 directory に
+  固定し、`TMPDIR` 未設定時でも repository root や filesystem root に書かない。
+- rename は source path を落とすと rename/rename conflict を見逃すため、
+  changed path 収集は `--no-renames` を付けて source / destination の両方を
+  path set に残す。
+- path は repository-relative POSIX path のみ受理し、absolute path / `..` parent
+  traversal / Windows backslash は fail-fast。
+- 動的 overlap が 1 件でもあれば、残り PR は touch せず user に判断委譲する
+  (merge 順序変更、PR 分割、または rebase 後の再実行)。
+
 ### M7 — Squash merge (commit hash 検証必須、empty で fail-fast)
 
 ```bash

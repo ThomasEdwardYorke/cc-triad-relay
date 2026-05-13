@@ -107,6 +107,33 @@ export interface OverlapReport {
   summary: OverlapSummary;
 }
 
+export interface DynamicChangedPathInput {
+  /**
+   * Stable identifier surfaced in merge-train output (e.g. current PR,
+   * remaining PR, or worktree slug). Must be unique across the comparison.
+   */
+  id: string;
+  /**
+   * Concrete relative file paths collected from a merge-base-aware diff
+   * (`git diff --name-only <merge-base>...HEAD`). This helper compares exact
+   * changed paths only; it does not run git and it does not expand globs.
+   */
+  changedFiles: readonly string[];
+}
+
+export interface DynamicChangedPathOverlapPair {
+  currentId: string;
+  otherId: string;
+  overlappingFiles: string[];
+}
+
+export interface DynamicChangedPathOverlapReport {
+  currentId: string;
+  blocking: boolean;
+  pairs: DynamicChangedPathOverlapPair[];
+  overlappingFiles: string[];
+}
+
 // ---------------------------------------------------------------------------
 // Pattern validation (input contract enforcement)
 // ---------------------------------------------------------------------------
@@ -180,6 +207,99 @@ function validatePattern(pattern: string, slug: string, field: string): void {
         `Only literal paths and trailing 'dir/**' territory patterns are supported (no 'src/*.ts', no 'dir/**/file.ts', no '**/foo.ts').`,
     );
   }
+}
+
+function validateDynamicId(id: string, role: string): void {
+  if (typeof id !== "string" || id.length === 0) {
+    throw new Error(
+      `detectDynamicChangedPathOverlap: ${role} id is empty or non-string.`,
+    );
+  }
+  if (id !== id.trim()) {
+    throw new Error(
+      `detectDynamicChangedPathOverlap: ${role} id '${id}' has leading/trailing whitespace.`,
+    );
+  }
+  if (/[\0\r\n]/.test(id)) {
+    throw new Error(
+      `detectDynamicChangedPathOverlap: ${role} id '${id}' contains a control character.`,
+    );
+  }
+}
+
+function validateChangedPath(path: string, id: string): void {
+  if (typeof path !== "string" || path.length === 0) {
+    throw new Error(
+      `detectDynamicChangedPathOverlap: changed path (id='${id}') is empty or non-string.`,
+    );
+  }
+  if (path !== path.trim()) {
+    throw new Error(
+      `detectDynamicChangedPathOverlap: changed path '${path}' (id='${id}') has leading/trailing whitespace.`,
+    );
+  }
+  if (/[\0\r\n]/.test(path)) {
+    throw new Error(
+      `detectDynamicChangedPathOverlap: changed path '${path}' (id='${id}') contains a control character.`,
+    );
+  }
+  if (path.includes("\\")) {
+    throw new Error(
+      `detectDynamicChangedPathOverlap: changed path '${path}' (id='${id}') contains a backslash. Use repository-relative POSIX paths.`,
+    );
+  }
+  if (path.startsWith("/")) {
+    throw new Error(
+      `detectDynamicChangedPathOverlap: changed path '${path}' (id='${id}') is absolute. Use repository-relative POSIX paths.`,
+    );
+  }
+  if (path === "." || path === "./" || path.startsWith("./")) {
+    throw new Error(
+      `detectDynamicChangedPathOverlap: changed path '${path}' (id='${id}') uses leading './'. Use repository-relative POSIX paths.`,
+    );
+  }
+  if (path.includes("//")) {
+    throw new Error(
+      `detectDynamicChangedPathOverlap: changed path '${path}' (id='${id}') contains consecutive slashes.`,
+    );
+  }
+  if (path.split("/").includes("..")) {
+    throw new Error(
+      `detectDynamicChangedPathOverlap: changed path '${path}' (id='${id}') uses parent traversal '..'.`,
+    );
+  }
+}
+
+function normalizeChangedFiles(
+  files: readonly string[],
+  id: string,
+): string[] {
+  if (!Array.isArray(files)) {
+    throw new Error(
+      `detectDynamicChangedPathOverlap: changedFiles (id='${id}') must be an array.`,
+    );
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const path of files) {
+    validateChangedPath(path, id);
+    if (!seen.has(path)) {
+      seen.add(path);
+      out.push(path);
+    }
+  }
+  return out;
+}
+
+function normalizeDynamicInput(
+  input: DynamicChangedPathInput,
+  role: string,
+): { id: string; changedFiles: string[] } {
+  validateDynamicId(input.id, role);
+  return {
+    id: input.id,
+    changedFiles: normalizeChangedFiles(input.changedFiles, input.id),
+  };
 }
 
 /**
@@ -436,5 +556,63 @@ export function detectOverlap(
       lowCount,
       recommendation: decideRecommendation(highCount, mediumCount),
     },
+  };
+}
+
+/**
+ * Runtime merge-train guard: compare concrete changed paths for the PR about to
+ * be merged against every remaining PR/worktree. Inputs should already be
+ * collected by the caller from merge-base-aware diffs; this helper stays pure
+ * and deterministic so it can be unit-tested without live git, GitHub, or tmux.
+ */
+export function detectDynamicChangedPathOverlap(
+  current: DynamicChangedPathInput,
+  remaining: readonly DynamicChangedPathInput[],
+): DynamicChangedPathOverlapReport {
+  const normalizedCurrent = normalizeDynamicInput(current, "current");
+  const normalizedRemaining = remaining.map((item, idx) =>
+    normalizeDynamicInput(item, `remaining[${idx}]`),
+  );
+
+  const seenIds = new Set<string>([normalizedCurrent.id]);
+  for (const item of normalizedRemaining) {
+    if (seenIds.has(item.id)) {
+      throw new Error(
+        `detectDynamicChangedPathOverlap: duplicate id '${item.id}' (current and remaining PR/worktree identifiers must be unique).`,
+      );
+    }
+    seenIds.add(item.id);
+  }
+
+  const currentFiles = normalizedCurrent.changedFiles;
+  const pairs: DynamicChangedPathOverlapPair[] = [];
+  const seenOverlappingFiles = new Set<string>();
+
+  for (const other of normalizedRemaining) {
+    if (currentFiles.length === 0 || other.changedFiles.length === 0) continue;
+    const otherSet = new Set(other.changedFiles);
+    const pairFiles = currentFiles.filter((file) => otherSet.has(file));
+    if (pairFiles.length === 0) continue;
+
+    for (const file of pairFiles) {
+      seenOverlappingFiles.add(file);
+    }
+
+    pairs.push({
+      currentId: normalizedCurrent.id,
+      otherId: other.id,
+      overlappingFiles: pairFiles,
+    });
+  }
+
+  const overlappingFiles = currentFiles.filter((file) =>
+    seenOverlappingFiles.has(file),
+  );
+
+  return {
+    currentId: normalizedCurrent.id,
+    blocking: pairs.length > 0,
+    pairs,
+    overlappingFiles,
   };
 }

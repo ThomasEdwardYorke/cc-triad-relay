@@ -201,6 +201,77 @@ describe("/harness-merge-train spec (commands/harness-merge-train.md)", () => {
   });
 
   // -----------------------------------------------------------------
+  // 4.5. Dynamic overlap recheck (M6.5)
+  // -----------------------------------------------------------------
+  describe("Dynamic overlap recheck (M6.5)", () => {
+    it("M6 後 / M7 前に dynamic overlap recheck phase が存在する", () => {
+      const m6Idx = content.search(/^#{2,4}\s*M6\b/m);
+      const recheckIdx = content.search(/^#{2,4}\s*M6\.5\b/m);
+      const m7Idx = content.search(/^#{2,4}\s*M7\b/m);
+
+      expect(m6Idx).toBeGreaterThanOrEqual(0);
+      expect(recheckIdx).toBeGreaterThan(m6Idx);
+      expect(m7Idx).toBeGreaterThan(recheckIdx);
+      expect(extractSection(content, recheckIdx)).toMatch(
+        /Dynamic\s+overlap\s+recheck|動的\s*overlap/i,
+      );
+    });
+
+    it("merge-base aware changed-path collection を明示する", () => {
+      const recheckIdx = content.search(/^#{2,4}\s*M6\.5\b/m);
+      expect(recheckIdx).toBeGreaterThanOrEqual(0);
+      const section = extractSection(content, recheckIdx);
+
+      expect(section).toMatch(/git\s+-C\s+"\$WORKTREE_DIR"\s+merge-base/);
+      expect(section).toMatch(/git\s+-C\s+"\$WORKTREE_DIR"\s+diff\s+--name-only\s+--no-renames/);
+      expect(section).toMatch(/git\s+-C\s+"\$REPO_ROOT"\s+diff\s+--name-only\s+--no-renames/);
+      expect(section).toMatch(/git\s+-C\s+"\$REPO_ROOT"\s+fetch\s+origin\s+"\$BASE_BRANCH"/);
+      expect(section).toMatch(/origin\/\$\{?BASE_BRANCH\}?/);
+    });
+
+    it("current PR の diff は PR worktree に固定し、coordinator HEAD を使わない", () => {
+      const recheckIdx = content.search(/^#{2,4}\s*M6\.5\b/m);
+      expect(recheckIdx).toBeGreaterThanOrEqual(0);
+      const section = extractSection(content, recheckIdx);
+
+      expect(section).toMatch(/WORKTREE_DIR=[\s\S]{0,240}?worktree\s+list\s+--porcelain/);
+      expect(section).toMatch(/git\s+-C\s+"\$WORKTREE_DIR"[\s\S]{0,120}?HEAD/);
+      expect(section).toMatch(/coordinator\s+checkout[\s\S]{0,120}?HEAD/i);
+    });
+
+    it("changed path list は TMPDIR fallback 付きの専用 temp dir に書く", () => {
+      const recheckIdx = content.search(/^#{2,4}\s*M6\.5\b/m);
+      expect(recheckIdx).toBeGreaterThanOrEqual(0);
+      const section = extractSection(content, recheckIdx);
+
+      expect(section).toMatch(/mktemp\s+-d\s+"\$\{TMPDIR:-\/tmp\}\/merge-train-overlap-\$PR\.XXXXXX"/);
+      expect(section).toMatch(/\$DYNAMIC_OVERLAP_TMP\/current-changed-files/);
+      expect(section).toMatch(/\$DYNAMIC_OVERLAP_TMP\/remaining-changed-files-<safe-slug>/);
+    });
+
+    it("rename source path を落とさないため --no-renames の理由を明示する", () => {
+      const recheckIdx = content.search(/^#{2,4}\s*M6\.5\b/m);
+      expect(recheckIdx).toBeGreaterThanOrEqual(0);
+      const section = extractSection(content, recheckIdx);
+
+      expect(section).toMatch(/--no-renames/);
+      expect(section).toMatch(/rename[\s\S]{0,160}?source\s+path|source\s+path[\s\S]{0,160}?rename/i);
+    });
+
+    it("overlap は blocking result として conflicting paths + remaining PR/worktree identifiers を返す", () => {
+      const recheckIdx = content.search(/^#{2,4}\s*M6\.5\b/m);
+      expect(recheckIdx).toBeGreaterThanOrEqual(0);
+      const section = extractSection(content, recheckIdx);
+
+      expect(section).toMatch(/detectDynamicChangedPathOverlap/);
+      expect(section).toMatch(/@cc-triad-relay\/core\/dist\/work\/worktree-overlap\.js/);
+      expect(section).toMatch(/conflicting\s+paths|overlappingFiles|競合.*path/i);
+      expect(section).toMatch(/remaining\s+(?:PR|worktree)|残(?:り|存).*PR/i);
+      expect(section).toMatch(/blocking|fail-?fast/i);
+    });
+  });
+
+  // -----------------------------------------------------------------
   // 5. fail-fast 契約
   // -----------------------------------------------------------------
   describe("fail-fast 契約", () => {
