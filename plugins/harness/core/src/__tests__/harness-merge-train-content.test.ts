@@ -245,6 +245,9 @@ describe("/harness-merge-train spec (commands/harness-merge-train.md)", () => {
       const section = extractSection(content, recheckIdx);
 
       expect(section).toMatch(/mktemp\s+-d\s+"\$\{TMPDIR:-\/tmp\}\/merge-train-overlap-\$PR\.XXXXXX"/);
+      expect(section).toMatch(/cleanup_dynamic_overlap_tmp\(\)/);
+      expect(section).toMatch(/rm\s+-rf\s+"\$DYNAMIC_OVERLAP_TMP"/);
+      expect(section).toMatch(/trap\s+cleanup_dynamic_overlap_tmp\s+EXIT/);
       expect(section).toMatch(/\$DYNAMIC_OVERLAP_TMP\/current-changed-files/);
       expect(section).toMatch(/\$DYNAMIC_OVERLAP_TMP\/remaining-changed-files-<safe-slug>/);
     });

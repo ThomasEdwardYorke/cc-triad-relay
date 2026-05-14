@@ -295,6 +295,11 @@ function normalizeDynamicInput(
   input: DynamicChangedPathInput,
   role: string,
 ): { id: string; changedFiles: string[] } {
+  if (typeof input !== "object" || input === null) {
+    throw new Error(
+      `detectDynamicChangedPathOverlap: ${role} must be an object with id and changedFiles.`,
+    );
+  }
   validateDynamicId(input.id, role);
   return {
     id: input.id,

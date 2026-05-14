@@ -383,6 +383,12 @@ static preflight を置き換えない。M0 は declarative な事前 gate、M6.
 # current PR/worktree: HEAD_BRANCH / BASE_BRANCH は M0 で解決済み
 REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel)}"
 DYNAMIC_OVERLAP_TMP=$(mktemp -d "${TMPDIR:-/tmp}/merge-train-overlap-$PR.XXXXXX")
+cleanup_dynamic_overlap_tmp() {
+  rm -rf "$DYNAMIC_OVERLAP_TMP"
+}
+trap cleanup_dynamic_overlap_tmp EXIT
+trap 'cleanup_dynamic_overlap_tmp; exit 130' INT
+trap 'cleanup_dynamic_overlap_tmp; exit 143' TERM
 git -C "$REPO_ROOT" fetch origin "$BASE_BRANCH"
 WORKTREE_DIR="${WORKTREE_DIR:-$(
   git -C "$REPO_ROOT" worktree list --porcelain | awk -v branch="$HEAD_BRANCH" '
@@ -442,6 +448,7 @@ conflicting paths:
   coordinator checkout の `HEAD` から changed path を計算しない。
 - path list の出力先は `mktemp -d "${TMPDIR:-/tmp}/..."` で作った専用 directory に
   固定し、`TMPDIR` 未設定時でも repository root や filesystem root に書かない。
+  作成した directory は `EXIT` / `INT` / `TERM` trap で削除する。
 - rename は source path を落とすと rename/rename conflict を見逃すため、
   changed path 収集は `--no-renames` を付けて source / destination の両方を
   path set に残す。

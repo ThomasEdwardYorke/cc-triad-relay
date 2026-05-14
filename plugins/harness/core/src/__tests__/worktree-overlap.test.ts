@@ -521,6 +521,13 @@ describe("detectDynamicChangedPathOverlap — merge-train runtime changed-path g
   it("id の重複と unsafe changed path は fail-fast で reject", () => {
     expect(() =>
       detectDynamicChangedPathOverlap(
+        null as unknown as DynamicChangedPathInput,
+        [],
+      ),
+    ).toThrow(/must be an object/i);
+
+    expect(() =>
+      detectDynamicChangedPathOverlap(
         { id: "current", changedFiles: ["src/a.ts"] },
         [{ id: "current", changedFiles: ["src/b.ts"] }],
       ),
@@ -539,5 +546,19 @@ describe("detectDynamicChangedPathOverlap — merge-train runtime changed-path g
         [],
       ),
     ).toThrow(/parent|traversal|\.\./i);
+
+    expect(() =>
+      detectDynamicChangedPathOverlap(
+        { id: "current", changedFiles: ["src\\win-path.ts"] },
+        [],
+      ),
+    ).toThrow(/backslash|POSIX/i);
+
+    expect(() =>
+      detectDynamicChangedPathOverlap(
+        { id: "current", changedFiles: ["./src/local.ts"] },
+        [],
+      ),
+    ).toThrow(/leading|\.\/|relative/i);
   });
 });
