@@ -371,6 +371,144 @@ merge 前の最終 adversarial review。critical 発見時は **必ず M3 (修�
 > **G7 skip は構造規律違反** (鉄則 7 AND 判定)。本 skill 内で skip 検出時は
 > ledger 自動追記 + fail-fast。
 
+### M6.5 — Dynamic overlap recheck (merge-base changed-path guard)
+
+Immediately after the M6 adversarial review is clean, and before the M7
+`gh pr merge --squash` command, re-fetch merge-base-aware changed paths for the
+current PR and every **remaining PR/worktree**, then re-evaluate exact path
+overlap. This does not replace the M0 static preflight: M0 is the declarative
+up-front gate, while M6.5 is the runtime guard immediately before merge.
+
+```bash
+# current PR/worktree: HEAD_BRANCH / BASE_BRANCH are resolved during M0
+REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel)}"
+if ! DYNAMIC_OVERLAP_TMP="$(mktemp -d "${TMPDIR:-/tmp}/merge-train-overlap-$PR.XXXXXX")"; then
+  echo "Failed to create temp dir for dynamic overlap recheck (TMPDIR=${TMPDIR:-/tmp}, PR=$PR)" >&2
+  exit 1
+fi
+if [ -z "$DYNAMIC_OVERLAP_TMP" ]; then
+  echo "Failed to create temp dir for dynamic overlap recheck: mktemp returned empty path (TMPDIR=${TMPDIR:-/tmp}, PR=$PR)" >&2
+  exit 1
+fi
+cleanup_dynamic_overlap_tmp() {
+  rm -rf "$DYNAMIC_OVERLAP_TMP"
+}
+fetch_dynamic_overlap_ref() {
+  local branch="$1"
+  local destination_ref="$2"
+  if ! git -C "$REPO_ROOT" fetch origin "+refs/heads/${branch}:${destination_ref}"; then
+    echo "Failed to refresh $branch into $destination_ref — dynamic overlap recheck failed" >&2
+    exit 1
+  fi
+}
+write_dynamic_changed_files() {
+  local repo_dir="$1"
+  local base_ref="$2"
+  local head_ref="$3"
+  local output_file="$4"
+  if ! git -C "$repo_dir" -c core.quotePath=false diff --name-only --no-renames "$base_ref"..."$head_ref" > "$output_file"; then
+    echo "Failed to collect changed paths for $head_ref — dynamic overlap recheck failed" >&2
+    exit 1
+  fi
+}
+trap cleanup_dynamic_overlap_tmp EXIT
+trap 'cleanup_dynamic_overlap_tmp; exit 130' INT
+trap 'cleanup_dynamic_overlap_tmp; exit 143' TERM
+BASE_REF="refs/remotes/origin/${BASE_BRANCH}"
+CURRENT_HEAD_REF="refs/remotes/origin/${HEAD_BRANCH}"
+fetch_dynamic_overlap_ref "$BASE_BRANCH" "$BASE_REF"
+fetch_dynamic_overlap_ref "$HEAD_BRANCH" "$CURRENT_HEAD_REF"
+WORKTREE_DIR="${WORKTREE_DIR:-$(
+  git -C "$REPO_ROOT" worktree list --porcelain | awk -v branch="$HEAD_BRANCH" '
+    /^worktree / { path = $2 }
+    $0 == "branch refs/heads/" branch { print path; exit }
+  '
+)}"
+[ -z "$WORKTREE_DIR" ] && { echo "Worktree for $HEAD_BRANCH not found — dynamic overlap recheck failed"; exit 1; }
+if ! CURRENT_BASE=$(git -C "$WORKTREE_DIR" merge-base "$BASE_REF" "$CURRENT_HEAD_REF"); then
+  echo "Failed to compute merge-base for $HEAD_BRANCH — dynamic overlap recheck failed" >&2
+  exit 1
+fi
+write_dynamic_changed_files "$WORKTREE_DIR" "$CURRENT_BASE" "$CURRENT_HEAD_REF" \
+  "$DYNAMIC_OVERLAP_TMP/current-changed-files"
+
+# remaining PR/worktree: collect changed paths from merge-base for each head branch
+for OTHER_HEAD_BRANCH in <remaining-head-branches>; do
+  OTHER_HEAD_REF="refs/remotes/origin/${OTHER_HEAD_BRANCH}"
+  fetch_dynamic_overlap_ref "$OTHER_HEAD_BRANCH" "$OTHER_HEAD_REF"
+  if ! OTHER_BASE=$(git -C "$REPO_ROOT" merge-base "$BASE_REF" "$OTHER_HEAD_REF"); then
+    echo "Failed to compute merge-base for $OTHER_HEAD_BRANCH — dynamic overlap recheck failed" >&2
+    exit 1
+  fi
+  write_dynamic_changed_files "$REPO_ROOT" "$OTHER_BASE" "$OTHER_HEAD_REF" \
+    "$DYNAMIC_OVERLAP_TMP/remaining-changed-files-<safe-slug>"
+done
+```
+
+Pass the collected path lists to the pure helper in
+`core/src/work/worktree-overlap.ts` as structured data, not as shell command
+strings:
+
+```ts
+import { detectDynamicChangedPathOverlap } from "@cc-triad-relay/core/dist/work/worktree-overlap.js";
+
+const report = detectDynamicChangedPathOverlap(
+  { id: `current:<head-branch>`, changedFiles: currentChangedFiles },
+  remainingItems.map((item) => ({
+    id: `remaining:${item.identifier}`,
+    changedFiles: item.changedFiles,
+  })),
+);
+```
+
+When `report.blocking === true`, **fail fast** and do not continue to M7. The
+blocking result output must include `currentId`, the remaining PR/worktree
+identifier (`otherId`), and `overlappingFiles` (conflicting paths):
+
+```text
+DYNAMIC_OVERLAP_BLOCKED
+current: <current-id>
+remaining: <remaining-id>
+conflicting paths:
+  <repo-relative-path>
+```
+
+**Rules**:
+- `detectDynamicChangedPathOverlap()` compares exact changed paths only. It does
+  not perform glob expansion, filesystem access, git access, GitHub access, or
+  tmux access.
+- The live command only collects changed paths. The pure helper makes the
+  blocking decision from structured data.
+- Base, current, and remaining head refs must be refreshed on every M6.5 run
+  with an explicit destination refspec
+  (`+refs/heads/<branch>:refs/remotes/origin/<branch>`) before computing
+  merge-base. Narrow / single-branch checkout flows must not rely only on
+  `FETCH_HEAD`.
+- Ref refresh, merge-base calculation, and changed-path collection all fail
+  fast. On failure, do not use a stale local ref or an empty changed path list,
+  and do not continue to M7.
+- Current changed paths must use the refreshed
+  `refs/remotes/origin/${HEAD_BRANCH}` as the diff target, not a stale local
+  `HEAD`.
+- The current PR diff must be pinned to the PR worktree with
+  `git -C "$WORKTREE_DIR"`. Do not compute changed paths from the coordinator
+  checkout `HEAD`.
+- Changed-path collection must set `-c core.quotePath=false` so escaped/quoted
+  path output is not passed to the helper. The helper continues to enforce
+  repository-relative POSIX path validation.
+- Path lists must be written only under a dedicated directory created with
+  `mktemp -d "${TMPDIR:-/tmp}/..."`; do not write to the repository root or the
+  filesystem root when `TMPDIR` is unset. Remove the created directory with
+  `EXIT` / `INT` / `TERM` traps.
+- Changed-path collection must use `--no-renames` because dropping the source
+  path can miss rename/rename conflicts. Keep both source and destination paths
+  in the path set.
+- Accept only repository-relative POSIX paths. Absolute paths, `..` parent
+  traversal, and Windows backslashes fail fast.
+- If dynamic overlap finds any blocking pair, do not touch the remaining PRs.
+  Stop the train and ask the user to choose the next action: change merge order,
+  split the PR, or re-run after rebase.
+
 ### M7 — Squash merge (commit hash 検証必須、empty で fail-fast)
 
 ```bash
