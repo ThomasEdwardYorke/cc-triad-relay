@@ -16,6 +16,7 @@ set -euo pipefail
 
 DRY_RUN=0
 GENERATED_BRANCH_RECORD_FILE="harness-generated-branch"
+GENERATED_SESSION_RECORD_FILE="harness-session-name"
 
 # --- Input validation (injection prevention) -------------------------------
 # Per-input charset enforcement for values that flow into `bash -c "$*"` (via
@@ -380,6 +381,8 @@ Subcommands:
            When no slug args are given, discovers slugs from tmux window names
            (excludes the coordinator window). When explicit slugs are given
            (test / operator override), uses those instead of tmux discovery.
+           In --dry-run cleanup / rollback mode, explicit slugs are required
+           because dry-run does not inspect live tmux / git state.
   status   Print tmux windows + per-worktree git log -1.
   attach   Attach to the tmux session and select a slug's window.
   verify   Re-run the skill-registry probe on a live session (operator-driven
@@ -863,11 +866,23 @@ resolve_claude_bin() {
   printf '%s' "${CLAUDE_BIN:-claude}"
 }
 
+generated_record_dir() {
+  local wt="$1"
+  git -C "$wt" rev-parse --git-dir 2>/dev/null
+}
+
 generated_branch_record_path() {
   local wt="$1"
-  local git_dir
-  git_dir=$(git -C "$wt" rev-parse --git-dir 2>/dev/null) || return 1
-  printf '%s/%s' "$git_dir" "$GENERATED_BRANCH_RECORD_FILE"
+  local record_dir
+  record_dir=$(generated_record_dir "$wt") || return 1
+  printf '%s/%s' "$record_dir" "$GENERATED_BRANCH_RECORD_FILE"
+}
+
+generated_session_record_path() {
+  local wt="$1"
+  local record_dir
+  record_dir=$(generated_record_dir "$wt") || return 1
+  printf '%s/%s' "$record_dir" "$GENERATED_SESSION_RECORD_FILE"
 }
 
 record_generated_branch_for_cleanup() {
@@ -886,10 +901,34 @@ record_generated_branch_for_cleanup() {
   printf '%s\n' "$branch" > "$record_path"
 }
 
+record_generated_session_for_cleanup() {
+  local wt="$1"
+  local session="$2"
+  if [[ $DRY_RUN -eq 1 ]]; then
+    emit "rollback_git_dir=\$(git -C '$wt' rev-parse --git-dir) && printf '%s\n' '$session' > \"\${rollback_git_dir}/$GENERATED_SESSION_RECORD_FILE\""
+    return 0
+  fi
+
+  local record_path
+  if ! record_path=$(generated_session_record_path "$wt"); then
+    echo "Error: cannot resolve git dir for rollback session record in '$wt'" >&2
+    return 1
+  fi
+  printf '%s\n' "$session" > "$record_path"
+}
+
 read_generated_branch_record_for_cleanup() {
   local wt="$1"
   local record_path
   record_path=$(generated_branch_record_path "$wt") || return 1
+  [[ -f "$record_path" ]] || return 1
+  head -n 1 "$record_path"
+}
+
+read_generated_session_record_for_cleanup() {
+  local wt="$1"
+  local record_path
+  record_path=$(generated_session_record_path "$wt") || return 1
   [[ -f "$record_path" ]] || return 1
   head -n 1 "$record_path"
 }
@@ -1002,6 +1041,7 @@ cmd_start() {
     branch="feature/${feat}-${slug}"
     emit "git worktree add '$wt' -b '$branch' '$feat'"
     record_generated_branch_for_cleanup "$wt" "$branch"
+    record_generated_session_for_cleanup "$wt" "$session"
     # Layer 3 — order matters: handoff doc copy must run before plugin install
     # (some consumers reference handoff path from a plugin postinstall hook in
     # theory), and plugin install must run before tmux spawns so the new REPL
@@ -1268,7 +1308,7 @@ cmd_cleanup() {
           base_abs="${parent_abs}/${prefix}"
         fi
       fi
-      local wt_line wt_path slug_from_path
+      local wt_line wt_path slug_from_path recorded_session
       while IFS= read -r wt_line; do
         [[ "$wt_line" =~ ^worktree[[:space:]]+(.+)$ ]] || continue
         wt_path="${BASH_REMATCH[1]}"
@@ -1280,6 +1320,11 @@ cmd_cleanup() {
           continue
         fi
         if [[ "$slug_from_path" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]; then
+          recorded_session=$(read_generated_session_record_for_cleanup "$wt_path" 2>/dev/null || true)
+          if [[ "$recorded_session" != "$session" ]]; then
+            echo "[cleanup] skip worktree '$wt_path' (session record mismatch: ${recorded_session:-none})" >&2
+            continue
+          fi
           slugs+=("$slug_from_path")
         else
           echo "[cleanup] skip unsafe worktree slug '$slug_from_path' from path '$wt_path'" >&2

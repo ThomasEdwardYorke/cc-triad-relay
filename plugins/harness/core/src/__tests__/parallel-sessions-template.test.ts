@@ -29,17 +29,26 @@ const __dirname = dirname(__filename);
 const PLUGIN_ROOT = resolve(__dirname, "../../..");
 const SCRIPT_PATH = resolve(PLUGIN_ROOT, "scripts/parallel-sessions-template.sh");
 const ROLLBACK_BRANCH_RECORD = "harness-generated-branch";
+const ROLLBACK_SESSION_RECORD = "harness-session-name";
 
 function rollbackTestSession(suffix: string): string {
   return `harness-rollback-test-${process.pid}-${suffix}`;
 }
 
-function writeRollbackBranchRecord(worktree: string, branch: string): void {
+function writeRollbackRecord(worktree: string, fileName: string, value: string): void {
   const gitDir = spawnSync("git", ["-C", worktree, "rev-parse", "--git-dir"], {
     encoding: "utf-8",
   });
   expect(gitDir.status).toBe(0);
-  writeFileSync(join(resolve(worktree, gitDir.stdout.trim()), ROLLBACK_BRANCH_RECORD), `${branch}\n`);
+  writeFileSync(join(resolve(worktree, gitDir.stdout.trim()), fileName), `${value}\n`);
+}
+
+function writeRollbackBranchRecord(worktree: string, branch: string): void {
+  writeRollbackRecord(worktree, ROLLBACK_BRANCH_RECORD, branch);
+}
+
+function writeRollbackSessionRecord(worktree: string, session: string): void {
+  writeRollbackRecord(worktree, ROLLBACK_SESSION_RECORD, session);
 }
 
 function runScript(
@@ -155,6 +164,7 @@ describe("parallel-sessions-template.sh: --dry-run start", () => {
     const r = runScript(["--dry-run", "start", "main", "alpha"]);
     expect(r.status).toBe(0);
     expect(r.stdout).toMatch(new RegExp(ROLLBACK_BRANCH_RECORD));
+    expect(r.stdout).toMatch(new RegExp(ROLLBACK_SESSION_RECORD));
     expect(r.stdout).toMatch(/feature\/main-alpha/);
   });
 
@@ -623,6 +633,7 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
           cwd: sandbox,
         });
         writeRollbackBranchRecord(generatedWorktree, "feature/demo-alpha");
+        writeRollbackSessionRecord(generatedWorktree, session);
         spawnSync("git", ["worktree", "add", "-q", manualWorktree, "-b", "feature/manual-beta"], {
           cwd: sandbox,
         });
@@ -685,6 +696,7 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
       const sandbox = mkdtempSync(join(tmpdir(), "harness-rollback-fallback-"));
       const session = rollbackTestSession("fallback");
       const worktree = join(tmpdir(), `${basename(sandbox)}-wt-alpha`);
+      const foreignWorktree = join(tmpdir(), `${basename(sandbox)}-wt-beta`);
       try {
         spawnSync("git", ["init", "-q"], { cwd: sandbox });
         spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: sandbox });
@@ -696,6 +708,12 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
           cwd: sandbox,
         });
         writeRollbackBranchRecord(worktree, "feature/main-alpha");
+        writeRollbackSessionRecord(worktree, session);
+        spawnSync("git", ["worktree", "add", "-q", foreignWorktree, "-b", "feature/main-beta"], {
+          cwd: sandbox,
+        });
+        writeRollbackBranchRecord(foreignWorktree, "feature/main-beta");
+        writeRollbackSessionRecord(foreignWorktree, rollbackTestSession("other"));
 
         const r = spawnSync("bash", [SCRIPT_PATH, "stop", "--rollback", session], {
           cwd: sandbox,
@@ -708,15 +726,20 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
         });
         expect(r.status).toBe(0);
         expect(r.stderr).toMatch(/falling back to git worktree list/i);
+        expect(r.stderr).toMatch(/session record mismatch/i);
         expect(existsSync(worktree)).toBe(false);
+        expect(existsSync(foreignWorktree)).toBe(true);
         const branches = spawnSync("git", ["branch", "--list"], {
           cwd: sandbox,
           encoding: "utf-8",
         });
         expect(branches.stdout).not.toMatch(/feature\/main-alpha/);
+        expect(branches.stdout).toMatch(/feature\/main-beta/);
       } finally {
         spawnSync("git", ["worktree", "remove", worktree, "--force"], { cwd: sandbox });
+        spawnSync("git", ["worktree", "remove", foreignWorktree, "--force"], { cwd: sandbox });
         rmSync(worktree, { recursive: true, force: true });
+        rmSync(foreignWorktree, { recursive: true, force: true });
         rmSync(sandbox, { recursive: true, force: true });
       }
     },
