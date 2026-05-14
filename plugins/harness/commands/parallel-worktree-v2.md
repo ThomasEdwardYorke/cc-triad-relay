@@ -168,7 +168,8 @@ before exact window names.
 ```text
 /parallel-worktree-v2 status            # phase / latest commit / status per window
 /parallel-worktree-v2 attach <slug>     # tmux attach to the window for <slug>
-/parallel-worktree-v2 stop [--rollback] [<session>] [<slug>...] # stop sessions; --rollback also removes generated worktrees + branches
+/parallel-worktree-v2 stop [<session>] # stop tmux only
+/parallel-worktree-v2 stop --rollback [<session>] [<slug>...] # also remove generated worktrees + branches
 /parallel-worktree-v2 verify [<slug>...] # re-run skill-registry probe + escalate
 ```
 

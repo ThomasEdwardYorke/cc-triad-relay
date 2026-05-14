@@ -564,10 +564,18 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
     expect(r.stdout).not.toMatch(/worktree\s+remove|branch\s+-D/);
   });
 
+  it("stop without --rollback rejects extra positional arguments", () => {
+    const r = runScript(["--dry-run", "stop", "harness-parallel", "alpha"]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/at most one <session_name>|--rollback/i);
+    expect(r.stdout).not.toMatch(/kill-session|worktree\s+remove|branch\s+-D/);
+  });
+
   it("usage documents stop --rollback as explicit destructive rollback intent", () => {
     const r = runScript(["--help"]);
     expect(r.status).toBe(0);
-    expect(r.stdout).toMatch(/stop\s+\[--rollback\]/);
+    expect(r.stdout).toMatch(/stop\s+\[<session_name>\]/);
+    expect(r.stdout).toMatch(/stop\s+--rollback\s+\[<session_name>\]/);
     expect(r.stdout).toMatch(/rollback/i);
     expect(r.stdout).toMatch(/branch cleanup|generated branch|git branch/i);
   });

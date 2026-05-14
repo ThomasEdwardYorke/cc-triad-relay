@@ -347,7 +347,8 @@ parallel-sessions-template.sh — tmux-based parallel-session launcher
 
 Usage:
   parallel-sessions-template.sh [--dry-run] start <feature_branch> <slug1> [slug2 ...]
-  parallel-sessions-template.sh [--dry-run] stop    [--rollback] [<session_name>] [<slug1> ...]
+  parallel-sessions-template.sh [--dry-run] stop    [<session_name>]
+  parallel-sessions-template.sh [--dry-run] stop    --rollback [<session_name>] [<slug1> ...]
   parallel-sessions-template.sh [--dry-run] cleanup [<session_name>] [<slug1> ...]
   parallel-sessions-template.sh [--dry-run] status  [<session_name>]
   parallel-sessions-template.sh [--dry-run] attach  <slug> [<session_name>]
@@ -1232,6 +1233,11 @@ cmd_stop() {
     shift
     cmd_cleanup "$@"
     return 0
+  fi
+  if [[ $# -gt 1 ]]; then
+    echo "Error: stop accepts at most one <session_name> unless --rollback is specified" >&2
+    usage >&2
+    exit 2
   fi
   local session="${1:-$(resolve_session_name)}"
   validate_tmux_session_name "$session"
