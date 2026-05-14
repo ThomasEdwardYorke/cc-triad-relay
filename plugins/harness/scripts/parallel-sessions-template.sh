@@ -1272,9 +1272,17 @@ cmd_cleanup() {
 
   local slugs=()
   if [[ ${#explicit_slugs[@]} -gt 0 ]]; then
-    local s
+    local s wt recorded_session
     for s in "${explicit_slugs[@]}"; do
       validate_slug "$s"
+      wt="${parent}/${prefix}${s}"
+      if [[ $DRY_RUN -eq 0 && -d "$wt" ]]; then
+        recorded_session=$(read_generated_session_record_for_cleanup "$wt" 2>/dev/null || true)
+        if [[ "$recorded_session" != "$session" ]]; then
+          echo "[cleanup] skip worktree '$wt' (session record mismatch: ${recorded_session:-none})" >&2
+          continue
+        fi
+      fi
       slugs+=("$s")
     done
   elif [[ $DRY_RUN -eq 0 ]]; then

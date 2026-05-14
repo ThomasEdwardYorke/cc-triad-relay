@@ -676,7 +676,8 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
           },
         );
         expect(manual.status).toBe(0);
-        expect(manual.stderr).toMatch(/skip branch delete.*record/i);
+        expect(manual.stderr).toMatch(/session record mismatch/i);
+        expect(existsSync(manualWorktree)).toBe(true);
         const afterManual = spawnSync("git", ["branch", "--list"], {
           cwd: sandbox,
           encoding: "utf-8",
@@ -685,6 +686,51 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
       } finally {
         spawnSync("git", ["worktree", "remove", generatedWorktree, "--force"], { cwd: sandbox });
         spawnSync("git", ["worktree", "remove", manualWorktree, "--force"], { cwd: sandbox });
+        rmSync(sandbox, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "stop --rollback skips explicit slug worktrees with a mismatched session record",
+    () => {
+      const sandbox = mkdtempSync(join(tmpdir(), "harness-rollback-explicit-"));
+      const session = rollbackTestSession("explicit");
+      const worktree = join(sandbox, "proj-wt-alpha");
+      try {
+        spawnSync("git", ["init", "-q"], { cwd: sandbox });
+        spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: sandbox });
+        spawnSync("git", ["config", "user.name", "Harness Test"], { cwd: sandbox });
+        writeFileSync(join(sandbox, "README.md"), "base\n");
+        spawnSync("git", ["add", "README.md"], { cwd: sandbox });
+        spawnSync("git", ["commit", "-q", "-m", "init"], { cwd: sandbox });
+        spawnSync("git", ["worktree", "add", "-q", worktree, "-b", "feature/demo-alpha"], {
+          cwd: sandbox,
+        });
+        writeRollbackBranchRecord(worktree, "feature/demo-alpha");
+        writeRollbackSessionRecord(worktree, rollbackTestSession("other"));
+
+        const r = spawnSync("bash", [SCRIPT_PATH, "stop", "--rollback", session, "alpha"], {
+          cwd: sandbox,
+          encoding: "utf-8",
+          env: {
+            PATH: process.env.PATH ?? "",
+            LC_ALL: "C",
+            LANG: "C",
+            WORKTREE_PARENT_DIR: sandbox,
+            WORKTREE_PREFIX: "proj-wt-",
+          },
+        });
+        expect(r.status).toBe(0);
+        expect(r.stderr).toMatch(/session record mismatch/i);
+        expect(existsSync(worktree)).toBe(true);
+        const branches = spawnSync("git", ["branch", "--list"], {
+          cwd: sandbox,
+          encoding: "utf-8",
+        });
+        expect(branches.stdout).toMatch(/feature\/demo-alpha/);
+      } finally {
+        spawnSync("git", ["worktree", "remove", worktree, "--force"], { cwd: sandbox });
         rmSync(sandbox, { recursive: true, force: true });
       }
     },

@@ -184,6 +184,9 @@ configured prefix and carry the same recorded session marker. Run
 `--dry-run stop --rollback <session> <slug...>` first when validating cleanup
 scope; dry-run requires explicit slugs and does not inspect live tmux / git
 state.
+Explicit slug cleanup is also session-scoped: if a matching worktree carries a
+different or missing session marker, it is skipped, and explicit slugs with no
+matching worktree are a safe no-op.
 
 The `verify` subcommand re-runs the harness skill-registry probe against a
 running tmux session and re-injects the 8-field BLOCKED escalation prompt
