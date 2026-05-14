@@ -176,7 +176,8 @@ Default `stop` is intentionally tmux-only (`tmux kill-session`) for backward
 compatibility. `stop --rollback` is the explicit destructive recovery path: it
 delegates to `parallel-sessions-template.sh stop --rollback`, captures each
 worktree's checked-out branch before `git worktree remove --force`, deletes only
-generated branches matching `feature/*-<slug>`, and then kills the tmux session.
+branches that were recorded by `start` and still match `feature/*-<slug>`, and
+then kills the tmux session.
 Pass explicit slug overrides when the tmux session is already gone; otherwise the
 script can discover slugs from tmux windows or from worktree paths that match the
 configured prefix. Run `--dry-run stop --rollback <session> <slug...>` first
@@ -418,7 +419,7 @@ The merge train:
 5. tears the tmux session down and removes worktrees once every PR has
    landed (`parallel-sessions-template.sh stop --rollback`, which keeps
    default `stop` tmux-only but removes generated worktrees and generated
-   `feature/*-<slug>` branches when rollback is explicitly requested).
+   recorded `feature/*-<slug>` branches when rollback is explicitly requested).
 
 ---
 
@@ -430,7 +431,7 @@ The merge train:
 | 30 min without parsed stream-json events or new commits in a running window | session-manager `FAIL-idle` | operator kills the window (`tmux kill-window`), then resumes manually with `claude -r <session-id>` after fixing the underlying cause |
 | `claude-oneshot` stream-json reports `subtype: "error_max_turns"` | jsonl parsed by session-manager | raise budget, retry; consider splitting the sub-task into smaller acceptance criteria |
 | `claude-oneshot` stream-json reports `subtype: "error_during_execution"` | jsonl parsed by session-manager | inspect crash log, fix bug, retry |
-| tmux session disappears (host reboot etc.) | session lookup fails | use `--dry-run stop --rollback <session> <slug...>` to preview explicit cleanup, then `stop --rollback <session> <slug...>` to remove generated worktrees / generated `feature/*-<slug>` branches; or resume each branch manually |
+| tmux session disappears (host reboot etc.) | session lookup fails | use `--dry-run stop --rollback <session> <slug...>` to preview explicit cleanup, then `stop --rollback <session> <slug...>` to remove generated worktrees / recorded generated `feature/*-<slug>` branches; or resume each branch manually |
 
 Automatic restart is **disabled by default** — autonomous restarts of
 LLM-driven tasks require explicit operator confirmation.

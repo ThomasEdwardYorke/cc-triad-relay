@@ -28,9 +28,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PLUGIN_ROOT = resolve(__dirname, "../../..");
 const SCRIPT_PATH = resolve(PLUGIN_ROOT, "scripts/parallel-sessions-template.sh");
+const ROLLBACK_BRANCH_RECORD = "harness-generated-branch";
 
 function rollbackTestSession(suffix: string): string {
   return `harness-rollback-test-${process.pid}-${suffix}`;
+}
+
+function writeRollbackBranchRecord(worktree: string, branch: string): void {
+  const gitDir = spawnSync("git", ["-C", worktree, "rev-parse", "--git-dir"], {
+    encoding: "utf-8",
+  });
+  expect(gitDir.status).toBe(0);
+  writeFileSync(join(resolve(worktree, gitDir.stdout.trim()), ROLLBACK_BRANCH_RECORD), `${branch}\n`);
 }
 
 function runScript(
@@ -140,6 +149,13 @@ describe("parallel-sessions-template.sh: --dry-run start", () => {
     const r = runScript(["--dry-run", "start", "main", "alpha"]);
     expect(r.status).toBe(0);
     expect(r.stdout).toMatch(/claude/i);
+  });
+
+  it("dry-run start records generated branches for rollback cleanup", () => {
+    const r = runScript(["--dry-run", "start", "main", "alpha"]);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(new RegExp(ROLLBACK_BRANCH_RECORD));
+    expect(r.stdout).toMatch(/feature\/main-alpha/);
   });
 
   it("dry-run does NOT execute tmux / git worktree (no side effects)", () => {
@@ -557,6 +573,7 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
     expect(r.status).toBe(0);
     expect(r.stdout).toMatch(/\/tmp\/harness-rollback\/proj-wt-api/);
     expect(r.stdout).toMatch(/\/tmp\/harness-rollback\/proj-wt-worker/);
+    expect(r.stdout).toMatch(new RegExp(ROLLBACK_BRANCH_RECORD));
     expect(r.stdout).toMatch(/git -C '.+proj-wt-api' branch --show-current/);
     expect(r.stdout).toMatch(/git worktree remove '.+proj-wt-api' --force/);
     expect(r.stdout).toMatch(/git branch -D -- "\$rollback_branch"/);
@@ -605,7 +622,8 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
         spawnSync("git", ["worktree", "add", "-q", generatedWorktree, "-b", "feature/demo-alpha"], {
           cwd: sandbox,
         });
-        spawnSync("git", ["worktree", "add", "-q", manualWorktree, "-b", "feature/manual-save"], {
+        writeRollbackBranchRecord(generatedWorktree, "feature/demo-alpha");
+        spawnSync("git", ["worktree", "add", "-q", manualWorktree, "-b", "feature/manual-beta"], {
           cwd: sandbox,
         });
 
@@ -647,12 +665,12 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
           },
         );
         expect(manual.status).toBe(0);
-        expect(manual.stderr).toMatch(/skip branch delete.*slug/i);
+        expect(manual.stderr).toMatch(/skip branch delete.*record/i);
         const afterManual = spawnSync("git", ["branch", "--list"], {
           cwd: sandbox,
           encoding: "utf-8",
         });
-        expect(afterManual.stdout).toMatch(/feature\/manual-save/);
+        expect(afterManual.stdout).toMatch(/feature\/manual-beta/);
       } finally {
         spawnSync("git", ["worktree", "remove", generatedWorktree, "--force"], { cwd: sandbox });
         spawnSync("git", ["worktree", "remove", manualWorktree, "--force"], { cwd: sandbox });
@@ -677,6 +695,7 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
         spawnSync("git", ["worktree", "add", "-q", worktree, "-b", "feature/main-alpha"], {
           cwd: sandbox,
         });
+        writeRollbackBranchRecord(worktree, "feature/main-alpha");
 
         const r = spawnSync("bash", [SCRIPT_PATH, "stop", "--rollback", session], {
           cwd: sandbox,
@@ -699,6 +718,44 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
         spawnSync("git", ["worktree", "remove", worktree, "--force"], { cwd: sandbox });
         rmSync(worktree, { recursive: true, force: true });
         rmSync(sandbox, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "stop --rollback validates tmux-discovered window names before cleanup",
+    () => {
+      const binDir = mkdtempSync(join(tmpdir(), "harness-tmux-"));
+      const parentDir = mkdtempSync(join(tmpdir(), "harness-tmux-parent-"));
+      try {
+        writeFileSync(
+          join(binDir, "tmux"),
+          [
+            "#!/usr/bin/env bash",
+            "if [[ \"$1\" == \"list-windows\" ]]; then",
+            "  printf '%s\\n' coordinator alpha api.v2 'bad;rm'",
+            "  exit 0",
+            "fi",
+            "exit 0",
+            "",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+
+        const r = runScript(["stop", "--rollback", rollbackTestSession("tmux-slugs")], {
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          WORKTREE_PARENT_DIR: parentDir,
+          WORKTREE_PREFIX: "tmux-wt-",
+        });
+        expect(r.status).toBe(0);
+        expect(r.stderr).toMatch(/skip unsafe tmux window name 'api\.v2'/);
+        expect(r.stderr).toMatch(/skip unsafe tmux window name 'bad;rm'/);
+        expect(r.stderr).toMatch(/worktree .*tmux-wt-alpha.*missing.*skip/i);
+        expect(r.stdout).toMatch(/slugs: alpha/);
+        expect(r.stdout).not.toMatch(/api\.v2|bad;rm/);
+      } finally {
+        rmSync(binDir, { recursive: true, force: true });
+        rmSync(parentDir, { recursive: true, force: true });
       }
     },
   );
