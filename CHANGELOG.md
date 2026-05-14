@@ -7,7 +7,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **`/harness-merge-train` M6.5 Dynamic overlap recheck** — adds a merge-base changed-path guard immediately before squash merge so the current PR is compared against remaining PR/worktree path sets with `detectDynamicChangedPathOverlap()`. The live collection refreshes base/current/remaining refs with explicit destination refspecs, disables quoted path output, preserves rename source paths with `--no-renames`, and fail-fast blocks M7 when refreshed exact-path overlap is detected.
+- **`/harness-merge-train` M6.5 Dynamic overlap recheck** — adds a merge-base changed-path guard immediately before squash merge so the current PR is compared against remaining PR/worktree path sets with `detectDynamicChangedPathOverlap()`. The live collection refreshes base/current/remaining refs with explicit destination refspecs, writes path lists to a dedicated tmp output directory with `${TMPDIR:-/tmp}` fallback, disables quoted path output, preserves rename source paths with `--no-renames`, and fail-fast blocks M7 when refreshed exact-path overlap is detected.
 - **`session-manager` idle pane label helpers** — exported `renderIdlePaneTitle()` and `planIdlePaneLabels()` so tmux wrappers can mark stale worker panes as `<slug>-IDLE-<min>m` from the same deterministic session summaries that drive the dashboard. The helper returns structured pane targets/titles instead of shell command strings, and `parallel-sessions-template.sh label-panes` applies those labels through a dry-run-testable `tmux select-pane -T` boundary while keeping dashboard idle status canonical and preserving stable window names for attach / verify / cleanup.
 
 ### Fixed
