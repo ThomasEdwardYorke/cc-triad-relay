@@ -345,7 +345,7 @@ parallel-sessions-template.sh — tmux-based parallel-session launcher
 
 Usage:
   parallel-sessions-template.sh [--dry-run] start <feature_branch> <slug1> [slug2 ...]
-  parallel-sessions-template.sh [--dry-run] stop    [<session_name>]
+  parallel-sessions-template.sh [--dry-run] stop    [--rollback] [<session_name>] [<slug1> ...]
   parallel-sessions-template.sh [--dry-run] cleanup [<session_name>] [<slug1> ...]
   parallel-sessions-template.sh [--dry-run] status  [<session_name>]
   parallel-sessions-template.sh [--dry-run] attach  <slug> [<session_name>]
@@ -367,11 +367,18 @@ Subcommands:
            incomplete (overlay-load race guard). Disable per-session with
            CLAUDE_OVERLAY_LOAD_VERIFY=0.
   stop     Kill the tmux session (no worktree cleanup, no plugin uninstall).
+           With --rollback, explicitly delegates to cleanup: stop the tmux
+           session, remove generated worktrees, and delete generated
+           feature/*-<slug>
+           branches discovered from each worktree before removal. This is a
+           destructive recovery path and requires the operator to pass
+           --rollback. In dry-run rollback mode, pass explicit slugs because
+           dry-run does not inspect live tmux / git state.
   cleanup  Per-slug `claude plugin uninstall --scope=project -y` + `git worktree
-           remove --force` + tmux kill-session. When no slug args are given,
-           discovers slugs from tmux window names (excludes the coordinator
-           window). When explicit slugs are given (test / operator override),
-           uses those instead of tmux discovery.
+           remove --force` + generated branch cleanup + tmux kill-session.
+           When no slug args are given, discovers slugs from tmux window names
+           (excludes the coordinator window). When explicit slugs are given
+           (test / operator override), uses those instead of tmux discovery.
   status   Print tmux windows + per-worktree git log -1.
   attach   Attach to the tmux session and select a slug's window.
   verify   Re-run the skill-registry probe on a live session (operator-driven
@@ -855,6 +862,17 @@ resolve_claude_bin() {
   printf '%s' "${CLAUDE_BIN:-claude}"
 }
 
+is_safe_generated_branch_for_cleanup() {
+  local val="$1"
+  local slug="$2"
+  [[ "$val" == feature/* ]] || return 1
+  [[ "$val" == *-"$slug" ]] || return 1
+  [[ "$val" =~ ^[a-zA-Z0-9._/-]+$ ]] || return 1
+  [[ "$val" != *..* ]] || return 1
+  [[ "$val" != -* ]] || return 1
+  return 0
+}
+
 resolve_tmux_env_args() {
   # Build `-e KEY=VAL` args for `tmux new-session` so env vars the per-window
   # claude needs are forwarded into the new tmux session. Without this, tmux
@@ -1086,7 +1104,51 @@ cmd_verify() {
   echo "verify: all ${#slugs[@]} slug(s) OK"
 }
 
+emit_rollback_worktree_cleanup() {
+  # Remove one generated worktree and then delete the generated local branch
+  # that was checked out inside it. The branch is captured before
+  # `git worktree remove` because Git cannot report the checked-out branch
+  # from a path after the worktree is gone.
+  #
+  # Branch deletion is intentionally restricted to `feature/*-<slug>`: this
+  # template creates `feature/<feature_branch>-<slug>` branches, and rollback
+  # must never infer that an arbitrary manually-created feature branch is safe
+  # to delete just because it happened to be checked out in the worktree.
+  # `git branch -D -- "$branch"` keeps a branch value from being parsed as an
+  # option even though validate_branch_name already rejects leading dashes.
+  local wt="$1"
+  local slug="$2"
+  if [[ $DRY_RUN -eq 1 ]]; then
+    emit "rollback_branch=\$(git -C '$wt' branch --show-current 2>/dev/null || true); if [[ -d '$wt' ]]; then git worktree remove '$wt' --force; if [[ -n \"\$rollback_branch\" && \"\$rollback_branch\" == feature/* && \"\$rollback_branch\" == *-'$slug' ]]; then git branch -D -- \"\$rollback_branch\"; else echo \"[cleanup] skip branch delete for '$wt' (branch not generated feature/*-<slug>: \${rollback_branch:-none})\" >&2; fi; else echo \"[cleanup] worktree '$wt' missing (skip)\" >&2; fi"
+    return 0
+  fi
+
+  if [[ ! -d "$wt" ]]; then
+    echo "[cleanup] worktree '$wt' missing (skip)" >&2
+    return 0
+  fi
+
+  local rollback_branch=""
+  rollback_branch=$(git -C "$wt" branch --show-current 2>/dev/null || true)
+  emit "git worktree remove '$wt' --force"
+
+  if [[ -z "$rollback_branch" ]]; then
+    echo "[cleanup] skip branch delete for '$wt' (branch not found)" >&2
+    return 0
+  fi
+  if ! is_safe_generated_branch_for_cleanup "$rollback_branch" "$slug"; then
+    echo "[cleanup] skip branch delete for '$wt' (branch not generated safe feature/*-<slug> for slug '$slug': $rollback_branch)" >&2
+    return 0
+  fi
+  emit "git branch -D -- '$rollback_branch'"
+}
+
 cmd_stop() {
+  if [[ "${1:-}" == "--rollback" ]]; then
+    shift
+    cmd_cleanup "$@"
+    return 0
+  fi
   local session="${1:-$(resolve_session_name)}"
   validate_tmux_session_name "$session"
   emit "tmux kill-session -t '$session'"
@@ -1094,9 +1156,11 @@ cmd_stop() {
 
 cmd_cleanup() {
   # Symmetric counterpart to cmd_start: per-slug `claude plugin uninstall
-  # --scope=project -y` + `git worktree remove --force` + final tmux
-  # kill-session. Kept separate from cmd_stop so the existing tmux-kill-only
-  # contract (used by older callers and CI smoke tests) is unchanged.
+  # --scope=project -y` + `git worktree remove --force` + generated branch
+  # cleanup + final tmux kill-session. Kept separate from default cmd_stop so
+  # the existing tmux-kill-only contract (used by older callers and CI smoke
+  # tests) is unchanged unless the operator explicitly passes `stop --rollback`
+  # or calls `cleanup`.
   #
   # Slug discovery:
   #   - With explicit slug args (`cleanup <session> <slug1> [slug2 ...]`),
@@ -1113,6 +1177,10 @@ cmd_cleanup() {
   validate_tmux_session_name "$session"
   shift || true
   local explicit_slugs=("$@")
+  if [[ $DRY_RUN -eq 1 && ${#explicit_slugs[@]} -eq 0 ]]; then
+    echo "Error: dry-run rollback cleanup requires explicit slugs; dry-run does not inspect live tmux / git state" >&2
+    exit 2
+  fi
 
   local parent prefix
   parent="$(resolve_worktree_parent_dir)"
@@ -1145,15 +1213,28 @@ cmd_cleanup() {
     if [[ ${#slugs[@]} -eq 0 ]]; then
       echo "[cleanup] tmux session '$session' unreachable; falling back to git worktree list" >&2
       local base="${parent}/${prefix}"
+      local base_abs="$base"
+      if [[ "$parent" != /* ]]; then
+        local parent_abs
+        if parent_abs=$(cd "$parent" 2>/dev/null && pwd -P); then
+          base_abs="${parent_abs}/${prefix}"
+        fi
+      fi
       local wt_line wt_path slug_from_path
       while IFS= read -r wt_line; do
         [[ "$wt_line" =~ ^worktree[[:space:]]+(.+)$ ]] || continue
         wt_path="${BASH_REMATCH[1]}"
-        if [[ "$wt_path" == "$base"* ]]; then
+        if [[ "$wt_path" == "$base_abs"* ]]; then
+          slug_from_path="${wt_path#"$base_abs"}"
+        elif [[ "$wt_path" == "$base"* ]]; then
           slug_from_path="${wt_path#"$base"}"
-          if [[ "$slug_from_path" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-            slugs+=("$slug_from_path")
-          fi
+        else
+          continue
+        fi
+        if [[ "$slug_from_path" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]; then
+          slugs+=("$slug_from_path")
+        else
+          echo "[cleanup] skip unsafe worktree slug '$slug_from_path' from path '$wt_path'" >&2
         fi
       done < <(git worktree list --porcelain 2>/dev/null || true)
     fi
@@ -1181,7 +1262,7 @@ cmd_cleanup() {
         fi
       done <<< "$plugins"
     fi
-    emit "git worktree remove '$wt' --force"
+    emit_rollback_worktree_cleanup "$wt" "$slug"
   done
 
   emit "tmux kill-session -t '$session' 2>/dev/null || true"

@@ -168,9 +168,20 @@ before exact window names.
 ```text
 /parallel-worktree-v2 status            # phase / latest commit / status per window
 /parallel-worktree-v2 attach <slug>     # tmux attach to the window for <slug>
-/parallel-worktree-v2 stop [--rollback] # stop all sessions; --rollback also removes worktrees
+/parallel-worktree-v2 stop [--rollback] [<session>] [<slug>...] # stop sessions; --rollback also removes generated worktrees + branches
 /parallel-worktree-v2 verify [<slug>...] # re-run skill-registry probe + escalate
 ```
+
+Default `stop` is intentionally tmux-only (`tmux kill-session`) for backward
+compatibility. `stop --rollback` is the explicit destructive recovery path: it
+delegates to `parallel-sessions-template.sh stop --rollback`, captures each
+worktree's checked-out branch before `git worktree remove --force`, deletes only
+generated branches matching `feature/*-<slug>`, and then kills the tmux session.
+Pass explicit slug overrides when the tmux session is already gone; otherwise the
+script can discover slugs from tmux windows or from worktree paths that match the
+configured prefix. Run `--dry-run stop --rollback <session> <slug...>` first
+when validating cleanup scope; dry-run requires explicit slugs and does not
+inspect live tmux / git state.
 
 The `verify` subcommand re-runs the harness skill-registry probe against a
 running tmux session and re-injects the 8-field BLOCKED escalation prompt
@@ -405,7 +416,9 @@ The merge train:
 4. squash-merges PRs in sequence; the coordinator resolves rebase
    conflicts when they appear,
 5. tears the tmux session down and removes worktrees once every PR has
-   landed (`tmux kill-session` + `git worktree remove` + `git branch -d`).
+   landed (`parallel-sessions-template.sh stop --rollback`, which keeps
+   default `stop` tmux-only but removes generated worktrees and generated
+   `feature/*-<slug>` branches when rollback is explicitly requested).
 
 ---
 
@@ -417,7 +430,7 @@ The merge train:
 | 30 min without parsed stream-json events or new commits in a running window | session-manager `FAIL-idle` | operator kills the window (`tmux kill-window`), then resumes manually with `claude -r <session-id>` after fixing the underlying cause |
 | `claude-oneshot` stream-json reports `subtype: "error_max_turns"` | jsonl parsed by session-manager | raise budget, retry; consider splitting the sub-task into smaller acceptance criteria |
 | `claude-oneshot` stream-json reports `subtype: "error_during_execution"` | jsonl parsed by session-manager | inspect crash log, fix bug, retry |
-| tmux session disappears (host reboot etc.) | session lookup fails | use `--rollback` to remove worktrees, or resume each branch manually |
+| tmux session disappears (host reboot etc.) | session lookup fails | use `--dry-run stop --rollback <session> <slug...>` to preview explicit cleanup, then `stop --rollback <session> <slug...>` to remove generated worktrees / generated `feature/*-<slug>` branches; or resume each branch manually |
 
 Automatic restart is **disabled by default** — autonomous restarts of
 LLM-driven tasks require explicit operator confirmation.

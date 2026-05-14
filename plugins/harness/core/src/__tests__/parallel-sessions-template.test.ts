@@ -19,14 +19,19 @@
 
 import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PLUGIN_ROOT = resolve(__dirname, "../../..");
 const SCRIPT_PATH = resolve(PLUGIN_ROOT, "scripts/parallel-sessions-template.sh");
+
+function rollbackTestSession(suffix: string): string {
+  return `harness-rollback-test-${process.pid}-${suffix}`;
+}
 
 function runScript(
   args: string[] = [],
@@ -530,7 +535,173 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
     const r = runScript(["--dry-run", "stop"]);
     expect(r.status).toBe(0);
     expect(r.stdout).toMatch(/kill-session|tmux/i);
+    expect(r.stdout).not.toMatch(/worktree\s+remove|branch\s+-D/);
   });
+
+  it("usage documents stop --rollback as explicit destructive rollback intent", () => {
+    const r = runScript(["--help"]);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/stop\s+\[--rollback\]/);
+    expect(r.stdout).toMatch(/rollback/i);
+    expect(r.stdout).toMatch(/branch cleanup|generated branch|git branch/i);
+  });
+
+  it("dry-run stop --rollback plans tmux stop, worktree removal, and generated branch cleanup", () => {
+    const r = runScript(
+      ["--dry-run", "stop", "--rollback", "harness-parallel", "api", "worker"],
+      {
+        WORKTREE_PARENT_DIR: "/tmp/harness-rollback",
+        WORKTREE_PREFIX: "proj-wt-",
+      },
+    );
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/\/tmp\/harness-rollback\/proj-wt-api/);
+    expect(r.stdout).toMatch(/\/tmp\/harness-rollback\/proj-wt-worker/);
+    expect(r.stdout).toMatch(/git -C '.+proj-wt-api' branch --show-current/);
+    expect(r.stdout).toMatch(/git worktree remove '.+proj-wt-api' --force/);
+    expect(r.stdout).toMatch(/git branch -D -- "\$rollback_branch"/);
+    expect(r.stdout).toMatch(/tmux kill-session -t 'harness-parallel'/);
+  });
+
+  it("dry-run stop --rollback requires explicit slugs so preview scope is not under-reported", () => {
+    const r = runScript(["--dry-run", "stop", "--rollback", "harness-parallel"]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/dry-run rollback cleanup requires explicit slugs/i);
+    expect(r.stdout).not.toMatch(/no slugs discovered|worktree remove|branch -D|kill-session/);
+  });
+
+  it("stop --rollback validates explicit slug overrides before emitting commands", () => {
+    const r = runScript(["--dry-run", "stop", "--rollback", "harness-parallel", "api.v2"]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/slug|invalid characters|Error/i);
+    expect(r.stdout).not.toMatch(/worktree remove|branch -D|kill-session/);
+  });
+
+  it("stop --rollback treats missing explicit worktrees as no-op cleanup", () => {
+    const missingParent = `/tmp/harness-rollback-missing-${process.pid}`;
+    const r = runScript(["stop", "--rollback", rollbackTestSession("missing"), "ghost"], {
+      WORKTREE_PARENT_DIR: missingParent,
+      WORKTREE_PREFIX: "missing-wt-",
+    });
+    expect(r.status).toBe(0);
+    expect(r.stderr).toMatch(/worktree .*missing.*skip/i);
+    expect(r.stdout).toMatch(/Cleanup complete/);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "stop --rollback deletes only generated feature branches that end with the slug",
+    () => {
+      const sandbox = mkdtempSync(join(tmpdir(), "harness-rollback-"));
+      const session = rollbackTestSession("branches");
+      const generatedWorktree = join(sandbox, "proj-wt-alpha");
+      const manualWorktree = join(sandbox, "proj-wt-beta");
+      try {
+        spawnSync("git", ["init", "-q"], { cwd: sandbox });
+        spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: sandbox });
+        spawnSync("git", ["config", "user.name", "Harness Test"], { cwd: sandbox });
+        writeFileSync(join(sandbox, "README.md"), "base\n");
+        spawnSync("git", ["add", "README.md"], { cwd: sandbox });
+        spawnSync("git", ["commit", "-q", "-m", "init"], { cwd: sandbox });
+        spawnSync("git", ["worktree", "add", "-q", generatedWorktree, "-b", "feature/demo-alpha"], {
+          cwd: sandbox,
+        });
+        spawnSync("git", ["worktree", "add", "-q", manualWorktree, "-b", "feature/manual-save"], {
+          cwd: sandbox,
+        });
+
+        const generated = spawnSync(
+          "bash",
+          [SCRIPT_PATH, "stop", "--rollback", session, "alpha"],
+          {
+            cwd: sandbox,
+            encoding: "utf-8",
+            env: {
+              PATH: process.env.PATH ?? "",
+              LC_ALL: "C",
+              LANG: "C",
+              WORKTREE_PARENT_DIR: sandbox,
+              WORKTREE_PREFIX: "proj-wt-",
+            },
+          },
+        );
+        expect(generated.status).toBe(0);
+        const afterGenerated = spawnSync("git", ["branch", "--list"], {
+          cwd: sandbox,
+          encoding: "utf-8",
+        });
+        expect(afterGenerated.stdout).not.toMatch(/feature\/demo-alpha/);
+
+        const manual = spawnSync(
+          "bash",
+          [SCRIPT_PATH, "stop", "--rollback", session, "beta"],
+          {
+            cwd: sandbox,
+            encoding: "utf-8",
+            env: {
+              PATH: process.env.PATH ?? "",
+              LC_ALL: "C",
+              LANG: "C",
+              WORKTREE_PARENT_DIR: sandbox,
+              WORKTREE_PREFIX: "proj-wt-",
+            },
+          },
+        );
+        expect(manual.status).toBe(0);
+        expect(manual.stderr).toMatch(/skip branch delete.*slug/i);
+        const afterManual = spawnSync("git", ["branch", "--list"], {
+          cwd: sandbox,
+          encoding: "utf-8",
+        });
+        expect(afterManual.stdout).toMatch(/feature\/manual-save/);
+      } finally {
+        spawnSync("git", ["worktree", "remove", generatedWorktree, "--force"], { cwd: sandbox });
+        spawnSync("git", ["worktree", "remove", manualWorktree, "--force"], { cwd: sandbox });
+        rmSync(sandbox, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "stop --rollback falls back to git worktree list when tmux is gone and parent is relative",
+    () => {
+      const sandbox = mkdtempSync(join(tmpdir(), "harness-rollback-fallback-"));
+      const session = rollbackTestSession("fallback");
+      const worktree = join(tmpdir(), `${basename(sandbox)}-wt-alpha`);
+      try {
+        spawnSync("git", ["init", "-q"], { cwd: sandbox });
+        spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: sandbox });
+        spawnSync("git", ["config", "user.name", "Harness Test"], { cwd: sandbox });
+        writeFileSync(join(sandbox, "README.md"), "base\n");
+        spawnSync("git", ["add", "README.md"], { cwd: sandbox });
+        spawnSync("git", ["commit", "-q", "-m", "init"], { cwd: sandbox });
+        spawnSync("git", ["worktree", "add", "-q", worktree, "-b", "feature/main-alpha"], {
+          cwd: sandbox,
+        });
+
+        const r = spawnSync("bash", [SCRIPT_PATH, "stop", "--rollback", session], {
+          cwd: sandbox,
+          encoding: "utf-8",
+          env: {
+            PATH: process.env.PATH ?? "",
+            LC_ALL: "C",
+            LANG: "C",
+          },
+        });
+        expect(r.status).toBe(0);
+        expect(r.stderr).toMatch(/falling back to git worktree list/i);
+        expect(existsSync(worktree)).toBe(false);
+        const branches = spawnSync("git", ["branch", "--list"], {
+          cwd: sandbox,
+          encoding: "utf-8",
+        });
+        expect(branches.stdout).not.toMatch(/feature\/main-alpha/);
+      } finally {
+        spawnSync("git", ["worktree", "remove", worktree, "--force"], { cwd: sandbox });
+        rmSync(worktree, { recursive: true, force: true });
+        rmSync(sandbox, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("dry-run status prints list-windows command", () => {
     const r = runScript(["--dry-run", "status"]);
