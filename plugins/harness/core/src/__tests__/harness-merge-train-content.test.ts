@@ -223,20 +223,65 @@ describe("/harness-merge-train spec (commands/harness-merge-train.md)", () => {
       const section = extractSection(content, recheckIdx);
 
       expect(section).toMatch(/git\s+-C\s+"\$WORKTREE_DIR"\s+merge-base/);
-      expect(section).toMatch(/git\s+-C\s+"\$WORKTREE_DIR"\s+diff\s+--name-only\s+--no-renames/);
-      expect(section).toMatch(/git\s+-C\s+"\$REPO_ROOT"\s+diff\s+--name-only\s+--no-renames/);
-      expect(section).toMatch(/git\s+-C\s+"\$REPO_ROOT"\s+fetch\s+origin\s+"\$BASE_BRANCH"/);
-      expect(section).toMatch(/origin\/\$\{?BASE_BRANCH\}?/);
+      expect(section).toMatch(
+        /git\s+-C\s+"\$repo_dir"\s+-c\s+core\.quotePath=false\s+diff\s+--name-only\s+--no-renames/,
+      );
+      expect(section).toMatch(
+        /write_dynamic_changed_files\s+"\$WORKTREE_DIR"\s+"\$CURRENT_BASE"\s+"\$CURRENT_HEAD_REF"/,
+      );
+      expect(section).toMatch(/BASE_REF="refs\/remotes\/origin\/\$\{BASE_BRANCH\}"/);
+      expect(section).toMatch(/CURRENT_HEAD_REF="refs\/remotes\/origin\/\$\{HEAD_BRANCH\}"/);
+      expect(section).toMatch(/fetch_dynamic_overlap_ref\(\)/);
+      expect(section).toContain(
+        'git -C "$REPO_ROOT" fetch origin "+refs/heads/${branch}:${destination_ref}"',
+      );
+      expect(section).toContain('fetch_dynamic_overlap_ref "$BASE_BRANCH" "$BASE_REF"');
+      expect(section).toContain(
+        'fetch_dynamic_overlap_ref "$HEAD_BRANCH" "$CURRENT_HEAD_REF"',
+      );
+      expect(section).toContain(
+        'fetch_dynamic_overlap_ref "$OTHER_HEAD_BRANCH" "$OTHER_HEAD_REF"',
+      );
+      expect(section).toMatch(/\$CURRENT_HEAD_REF/);
+      expect(section).toMatch(/\$BASE_REF/);
     });
 
-    it("current PR の diff は PR worktree に固定し、coordinator HEAD を使わない", () => {
+    it("current PR の diff は PR worktree と最新 remote head に固定し、coordinator HEAD を使わない", () => {
       const recheckIdx = content.search(/^#{2,4}\s*M6\.5\b/m);
       expect(recheckIdx).toBeGreaterThanOrEqual(0);
       const section = extractSection(content, recheckIdx);
 
       expect(section).toMatch(/WORKTREE_DIR=[\s\S]{0,240}?worktree\s+list\s+--porcelain/);
-      expect(section).toMatch(/git\s+-C\s+"\$WORKTREE_DIR"[\s\S]{0,120}?HEAD/);
+      expect(section).toMatch(/git\s+-C\s+"\$WORKTREE_DIR"[\s\S]{0,180}?\$CURRENT_HEAD_REF/);
+      expect(section).toMatch(/refs\/remotes\/origin\/\$\{HEAD_BRANCH\}/);
+      expect(section).toMatch(/stale\s+な\s+local\s+`HEAD`/);
       expect(section).toMatch(/coordinator\s+checkout[\s\S]{0,120}?HEAD/i);
+    });
+
+    it("narrow checkout でも remote-tracking ref が更新される explicit refspec を使う", () => {
+      const recheckIdx = content.search(/^#{2,4}\s*M6\.5\b/m);
+      expect(recheckIdx).toBeGreaterThanOrEqual(0);
+      const section = extractSection(content, recheckIdx);
+
+      expect(section).toMatch(/explicit\s+destination\s+refspec/);
+      expect(section).toMatch(/\+refs\/heads\/<branch>:refs\/remotes\/origin\/<branch>/);
+      expect(section).toMatch(/narrow\s+\/\s+single-branch\s+checkout/);
+      expect(section).toMatch(/FETCH_HEAD/);
+    });
+
+    it("ref refresh / merge-base / diff collection 失敗時は stale data を使わず fail-fast する", () => {
+      const recheckIdx = content.search(/^#{2,4}\s*M6\.5\b/m);
+      expect(recheckIdx).toBeGreaterThanOrEqual(0);
+      const section = extractSection(content, recheckIdx);
+
+      expect(section).toMatch(/if\s+!\s+git\s+-C\s+"\$REPO_ROOT"\s+fetch\s+origin/);
+      expect(section).toMatch(/if\s+!\s+CURRENT_BASE=\$\(git\s+-C\s+"\$WORKTREE_DIR"\s+merge-base/);
+      expect(section).toMatch(/if\s+!\s+OTHER_BASE=\$\(git\s+-C\s+"\$REPO_ROOT"\s+merge-base/);
+      expect(section).toMatch(
+        /if\s+!\s+git\s+-C\s+"\$repo_dir"[\s\S]{0,120}?>\s+"\$output_file";\s+then/,
+      );
+      expect(section).toMatch(/stale\s+local\s+ref|空の\s+changed\s+path\s+list/);
+      expect(section).toMatch(/M7\s+へ進まない/);
     });
 
     it("changed path list は TMPDIR fallback 付きの専用 temp dir に書く", () => {
@@ -250,6 +295,17 @@ describe("/harness-merge-train spec (commands/harness-merge-train.md)", () => {
       expect(section).toMatch(/trap\s+cleanup_dynamic_overlap_tmp\s+EXIT/);
       expect(section).toMatch(/\$DYNAMIC_OVERLAP_TMP\/current-changed-files/);
       expect(section).toMatch(/\$DYNAMIC_OVERLAP_TMP\/remaining-changed-files-<safe-slug>/);
+    });
+
+    it("changed path list は quotePath を無効化して escaped path output を避ける", () => {
+      const recheckIdx = content.search(/^#{2,4}\s*M6\.5\b/m);
+      expect(recheckIdx).toBeGreaterThanOrEqual(0);
+      const section = extractSection(content, recheckIdx);
+
+      const quotePathMentions = section.match(/core\.quotePath=false/g) ?? [];
+      expect(quotePathMentions.length).toBeGreaterThanOrEqual(2);
+      expect(section).toMatch(/escaped\/quoted\s+path\s+output/);
+      expect(section).toMatch(/repository-relative\s+POSIX\s+path\s+validation/);
     });
 
     it("rename source path を落とさないため --no-renames の理由を明示する", () => {

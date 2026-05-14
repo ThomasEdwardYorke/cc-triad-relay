@@ -386,10 +386,31 @@ DYNAMIC_OVERLAP_TMP=$(mktemp -d "${TMPDIR:-/tmp}/merge-train-overlap-$PR.XXXXXX"
 cleanup_dynamic_overlap_tmp() {
   rm -rf "$DYNAMIC_OVERLAP_TMP"
 }
+fetch_dynamic_overlap_ref() {
+  local branch="$1"
+  local destination_ref="$2"
+  if ! git -C "$REPO_ROOT" fetch origin "+refs/heads/${branch}:${destination_ref}"; then
+    echo "Failed to refresh $branch into $destination_ref — dynamic overlap recheck failed" >&2
+    exit 1
+  fi
+}
+write_dynamic_changed_files() {
+  local repo_dir="$1"
+  local base_ref="$2"
+  local head_ref="$3"
+  local output_file="$4"
+  if ! git -C "$repo_dir" -c core.quotePath=false diff --name-only --no-renames "$base_ref"..."$head_ref" > "$output_file"; then
+    echo "Failed to collect changed paths for $head_ref — dynamic overlap recheck failed" >&2
+    exit 1
+  fi
+}
 trap cleanup_dynamic_overlap_tmp EXIT
 trap 'cleanup_dynamic_overlap_tmp; exit 130' INT
 trap 'cleanup_dynamic_overlap_tmp; exit 143' TERM
-git -C "$REPO_ROOT" fetch origin "$BASE_BRANCH"
+BASE_REF="refs/remotes/origin/${BASE_BRANCH}"
+CURRENT_HEAD_REF="refs/remotes/origin/${HEAD_BRANCH}"
+fetch_dynamic_overlap_ref "$BASE_BRANCH" "$BASE_REF"
+fetch_dynamic_overlap_ref "$HEAD_BRANCH" "$CURRENT_HEAD_REF"
 WORKTREE_DIR="${WORKTREE_DIR:-$(
   git -C "$REPO_ROOT" worktree list --porcelain | awk -v branch="$HEAD_BRANCH" '
     /^worktree / { path = $2 }
@@ -397,16 +418,23 @@ WORKTREE_DIR="${WORKTREE_DIR:-$(
   '
 )}"
 [ -z "$WORKTREE_DIR" ] && { echo "Worktree for $HEAD_BRANCH not found — dynamic overlap recheck failed"; exit 1; }
-CURRENT_BASE=$(git -C "$WORKTREE_DIR" merge-base "origin/${BASE_BRANCH}" HEAD)
-git -C "$WORKTREE_DIR" diff --name-only --no-renames "$CURRENT_BASE"...HEAD \
-  > "$DYNAMIC_OVERLAP_TMP/current-changed-files"
+if ! CURRENT_BASE=$(git -C "$WORKTREE_DIR" merge-base "$BASE_REF" "$CURRENT_HEAD_REF"); then
+  echo "Failed to compute merge-base for $HEAD_BRANCH — dynamic overlap recheck failed" >&2
+  exit 1
+fi
+write_dynamic_changed_files "$WORKTREE_DIR" "$CURRENT_BASE" "$CURRENT_HEAD_REF" \
+  "$DYNAMIC_OVERLAP_TMP/current-changed-files"
 
 # remaining PR/worktree: 残り head branch ごとに merge-base から changed path を取得
 for OTHER_HEAD_BRANCH in <remaining-head-branches>; do
-  git -C "$REPO_ROOT" fetch origin "$OTHER_HEAD_BRANCH"
-  OTHER_BASE=$(git -C "$REPO_ROOT" merge-base "origin/${BASE_BRANCH}" "origin/${OTHER_HEAD_BRANCH}")
-  git -C "$REPO_ROOT" diff --name-only --no-renames "$OTHER_BASE"..."origin/${OTHER_HEAD_BRANCH}" \
-    > "$DYNAMIC_OVERLAP_TMP/remaining-changed-files-<safe-slug>"
+  OTHER_HEAD_REF="refs/remotes/origin/${OTHER_HEAD_BRANCH}"
+  fetch_dynamic_overlap_ref "$OTHER_HEAD_BRANCH" "$OTHER_HEAD_REF"
+  if ! OTHER_BASE=$(git -C "$REPO_ROOT" merge-base "$BASE_REF" "$OTHER_HEAD_REF"); then
+    echo "Failed to compute merge-base for $OTHER_HEAD_BRANCH — dynamic overlap recheck failed" >&2
+    exit 1
+  fi
+  write_dynamic_changed_files "$REPO_ROOT" "$OTHER_BASE" "$OTHER_HEAD_REF" \
+    "$DYNAMIC_OVERLAP_TMP/remaining-changed-files-<safe-slug>"
 done
 ```
 
@@ -442,10 +470,18 @@ conflicting paths:
   expansion / fs access / git / GitHub / tmux access は行わない。
 - live command は changed path の収集のみ担当し、blocking 判定は pure helper が
   structured data から決定する。
-- base ref は各 M6.5 実行時に `git -C "$REPO_ROOT" fetch origin "$BASE_BRANCH"` で
-  refresh してから merge-base を計算する。
+- base / current / remaining head refs は各 M6.5 実行時に explicit destination
+  refspec (`+refs/heads/<branch>:refs/remotes/origin/<branch>`) で refresh してから
+  merge-base を計算する。narrow / single-branch checkout でも `FETCH_HEAD` だけに
+  留めない。
+- ref refresh / merge-base / changed path collection はすべて fail-fast。失敗時は
+  stale local ref や空の changed path list を使わず、M7 へ進まない。
+- current changed path は stale な local `HEAD` ではなく、refresh 済みの
+  `refs/remotes/origin/${HEAD_BRANCH}` を diff target にする。
 - current PR の diff は必ず `git -C "$WORKTREE_DIR"` で PR worktree に固定する。
   coordinator checkout の `HEAD` から changed path を計算しない。
+- changed path 収集は `-c core.quotePath=false` を明示し、escaped/quoted path output を
+  helper に渡さない。helper 側では repository-relative POSIX path validation を継続する。
 - path list の出力先は `mktemp -d "${TMPDIR:-/tmp}/..."` で作った専用 directory に
   固定し、`TMPDIR` 未設定時でも repository root や filesystem root に書かない。
   作成した directory は `EXIT` / `INT` / `TERM` trap で削除する。
