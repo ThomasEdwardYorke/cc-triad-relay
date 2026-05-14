@@ -120,7 +120,7 @@ function validateDynamicId(id, role) {
     if (id !== id.trim()) {
         throw new Error(`detectDynamicChangedPathOverlap: ${role} id '${id}' has leading/trailing whitespace.`);
     }
-    if (/[\0\r\n]/.test(id)) {
+    if (/[\x00-\x1F\x7F]/.test(id)) {
         throw new Error(`detectDynamicChangedPathOverlap: ${role} id '${id}' contains a control character.`);
     }
 }
@@ -131,7 +131,7 @@ function validateChangedPath(path, id) {
     if (path !== path.trim()) {
         throw new Error(`detectDynamicChangedPathOverlap: changed path '${path}' (id='${id}') has leading/trailing whitespace.`);
     }
-    if (/[\0\r\n]/.test(path)) {
+    if (/[\x00-\x1F\x7F]/.test(path)) {
         throw new Error(`detectDynamicChangedPathOverlap: changed path '${path}' (id='${id}') contains a control character.`);
     }
     if (path.includes("\\")) {

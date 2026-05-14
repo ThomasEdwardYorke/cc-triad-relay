@@ -568,5 +568,19 @@ describe("detectDynamicChangedPathOverlap — merge-train runtime changed-path g
         [],
       ),
     ).toThrow(/leading|\.\/|relative/i);
+
+    expect(() =>
+      detectDynamicChangedPathOverlap(
+        { id: "current\tid", changedFiles: ["src/a.ts"] },
+        [],
+      ),
+    ).toThrow(/control character/i);
+
+    expect(() =>
+      detectDynamicChangedPathOverlap(
+        { id: "current", changedFiles: ["src/\tbad.ts"] },
+        [],
+      ),
+    ).toThrow(/control character/i);
   });
 });

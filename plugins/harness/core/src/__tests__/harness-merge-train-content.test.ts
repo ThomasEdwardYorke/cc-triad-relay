@@ -254,7 +254,7 @@ describe("/harness-merge-train spec (commands/harness-merge-train.md)", () => {
       expect(section).toMatch(/WORKTREE_DIR=[\s\S]{0,240}?worktree\s+list\s+--porcelain/);
       expect(section).toMatch(/git\s+-C\s+"\$WORKTREE_DIR"[\s\S]{0,180}?\$CURRENT_HEAD_REF/);
       expect(section).toMatch(/refs\/remotes\/origin\/\$\{HEAD_BRANCH\}/);
-      expect(section).toMatch(/stale\s+な\s+local\s+`HEAD`/);
+      expect(section).toMatch(/stale\s+local\s+`HEAD`/);
       expect(section).toMatch(/coordinator\s+checkout[\s\S]{0,120}?HEAD/i);
     });
 
@@ -265,7 +265,7 @@ describe("/harness-merge-train spec (commands/harness-merge-train.md)", () => {
 
       expect(section).toMatch(/explicit\s+destination\s+refspec/);
       expect(section).toMatch(/\+refs\/heads\/<branch>:refs\/remotes\/origin\/<branch>/);
-      expect(section).toMatch(/narrow\s+\/\s+single-branch\s+checkout/);
+      expect(section).toMatch(/Narrow\s+\/\s+single-branch\s+checkout/i);
       expect(section).toMatch(/FETCH_HEAD/);
     });
 
@@ -280,8 +280,8 @@ describe("/harness-merge-train spec (commands/harness-merge-train.md)", () => {
       expect(section).toMatch(
         /if\s+!\s+git\s+-C\s+"\$repo_dir"[\s\S]{0,120}?>\s+"\$output_file";\s+then/,
       );
-      expect(section).toMatch(/stale\s+local\s+ref|空の\s+changed\s+path\s+list/);
-      expect(section).toMatch(/M7\s+へ進まない/);
+      expect(section).toMatch(/stale\s+local\s+ref|empty\s+changed\s+path\s+list/);
+      expect(section).toMatch(/do\s+not\s+continue\s+to\s+M7/i);
     });
 
     it("changed path list は TMPDIR fallback 付きの専用 temp dir に書く", () => {
