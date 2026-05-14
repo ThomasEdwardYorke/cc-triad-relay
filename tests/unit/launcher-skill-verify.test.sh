@@ -116,7 +116,7 @@ out=$(check_skill_registry_in_output \
 /harness:codex-team
 /harness:session-handoff
 other content" \
-  "harness:tdd-implement harness:codex-sync harness:pseudo-coderabbit-loop harness:coderabbit-review harness:codex-team harness:session-handoff" 2>&1) || rc=$?
+  "harness:tdd-implement harness:codex-sync harness:pseudo-coderabbit-loop harness:coderabbit-review harness:codex-team harness:session-handoff" 2>&1) && rc=0 || rc=$?
 rc="${rc:-0}"
 assert_rc "1a all skills present → rc=0" "0" "$rc"
 unset rc
