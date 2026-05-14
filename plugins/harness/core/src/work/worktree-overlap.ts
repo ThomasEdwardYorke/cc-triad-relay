@@ -574,6 +574,11 @@ export function detectDynamicChangedPathOverlap(
   current: DynamicChangedPathInput,
   remaining: readonly DynamicChangedPathInput[],
 ): DynamicChangedPathOverlapReport {
+  if (!Array.isArray(remaining)) {
+    throw new Error(
+      "detectDynamicChangedPathOverlap: remaining must be an array.",
+    );
+  }
   const normalizedCurrent = normalizeDynamicInput(current, "current");
   const normalizedRemaining = remaining.map((item, idx) =>
     normalizeDynamicInput(item, `remaining[${idx}]`),

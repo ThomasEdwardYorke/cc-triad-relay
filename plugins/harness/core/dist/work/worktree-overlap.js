@@ -410,6 +410,9 @@ export function detectOverlap(subTasks) {
  * and deterministic so it can be unit-tested without live git, GitHub, or tmux.
  */
 export function detectDynamicChangedPathOverlap(current, remaining) {
+    if (!Array.isArray(remaining)) {
+        throw new Error("detectDynamicChangedPathOverlap: remaining must be an array.");
+    }
     const normalizedCurrent = normalizeDynamicInput(current, "current");
     const normalizedRemaining = remaining.map((item, idx) => normalizeDynamicInput(item, `remaining[${idx}]`));
     const seenIds = new Set([normalizedCurrent.id]);

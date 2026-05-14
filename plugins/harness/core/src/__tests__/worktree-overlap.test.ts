@@ -22,6 +22,7 @@ import { describe, it, expect } from "vitest";
 import {
   detectDynamicChangedPathOverlap,
   detectOverlap,
+  type DynamicChangedPathInput,
   type DynamicChangedPathOverlapReport,
   type SubTaskOverlapInput,
   type OverlapReport,
@@ -525,6 +526,13 @@ describe("detectDynamicChangedPathOverlap — merge-train runtime changed-path g
         [],
       ),
     ).toThrow(/must be an object/i);
+
+    expect(() =>
+      detectDynamicChangedPathOverlap(
+        { id: "current", changedFiles: [] },
+        null as unknown as DynamicChangedPathInput[],
+      ),
+    ).toThrow(/remaining.*array/i);
 
     expect(() =>
       detectDynamicChangedPathOverlap(
