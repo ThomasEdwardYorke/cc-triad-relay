@@ -382,7 +382,14 @@ static preflight を置き換えない。M0 は declarative な事前 gate、M6.
 ```bash
 # current PR/worktree: HEAD_BRANCH / BASE_BRANCH は M0 で解決済み
 REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel)}"
-DYNAMIC_OVERLAP_TMP=$(mktemp -d "${TMPDIR:-/tmp}/merge-train-overlap-$PR.XXXXXX")
+if ! DYNAMIC_OVERLAP_TMP="$(mktemp -d "${TMPDIR:-/tmp}/merge-train-overlap-$PR.XXXXXX")"; then
+  echo "Failed to create temp dir for dynamic overlap recheck (TMPDIR=${TMPDIR:-/tmp}, PR=$PR)" >&2
+  exit 1
+fi
+if [ -z "$DYNAMIC_OVERLAP_TMP" ]; then
+  echo "Failed to create temp dir for dynamic overlap recheck: mktemp returned empty path (TMPDIR=${TMPDIR:-/tmp}, PR=$PR)" >&2
+  exit 1
+fi
 cleanup_dynamic_overlap_tmp() {
   rm -rf "$DYNAMIC_OVERLAP_TMP"
 }

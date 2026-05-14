@@ -290,6 +290,10 @@ describe("/harness-merge-train spec (commands/harness-merge-train.md)", () => {
       const section = extractSection(content, recheckIdx);
 
       expect(section).toMatch(/mktemp\s+-d\s+"\$\{TMPDIR:-\/tmp\}\/merge-train-overlap-\$PR\.XXXXXX"/);
+      expect(section).toMatch(/if\s+!\s+DYNAMIC_OVERLAP_TMP="\$\(mktemp\s+-d/);
+      expect(section).toMatch(/\[\s+-z\s+"\$DYNAMIC_OVERLAP_TMP"\s+\]/);
+      expect(section).toMatch(/Failed to create temp dir for dynamic overlap recheck[\s\S]{0,120}TMPDIR=/);
+      expect(section).toMatch(/PR=\$PR/);
       expect(section).toMatch(/cleanup_dynamic_overlap_tmp\(\)/);
       expect(section).toMatch(/rm\s+-rf\s+"\$DYNAMIC_OVERLAP_TMP"/);
       expect(section).toMatch(/trap\s+cleanup_dynamic_overlap_tmp\s+EXIT/);
