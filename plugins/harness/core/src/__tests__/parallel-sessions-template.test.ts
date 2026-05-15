@@ -859,7 +859,9 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
   it("dry-run attach prints concise tmux operator help", () => {
     const r = runScript(["--dry-run", "attach", "frontend", "review_session"]);
     expect(r.status).toBe(0);
-    expect(r.stderr).toMatch(/tmux quickref|Ctrl-b d|list-windows/i);
+    expect(r.stderr).toMatch(/tmux quickref/i);
+    expect(r.stderr).toMatch(/Ctrl-b d/i);
+    expect(r.stderr).toMatch(/list-windows/i);
     expect(r.stderr).toMatch(/review_session/);
     expect(r.stderr).toMatch(/parallel-worktree-v2 attach <slug>/);
     expect(r.stderr).not.toContain("docs/operator/tmux-quickref.md");
