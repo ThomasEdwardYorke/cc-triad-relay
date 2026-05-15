@@ -173,6 +173,12 @@ before exact window names.
 /parallel-worktree-v2 verify [<slug>...] # re-run skill-registry probe + escalate
 ```
 
+Use `status` to list worker windows and their latest known state before
+attaching. Use `attach <slug>` to focus one worker; the operator tmux quickref
+for detach, window listing, pane capture, verify, stop, and rollback preview is
+shipped at `plugins/harness/docs/operator/tmux-quickref.md` in this repository
+and `docs/operator/tmux-quickref.md` under the installed harness plugin root.
+
 Default `stop` is intentionally tmux-only (`tmux kill-session`) for backward
 compatibility. `stop --rollback` is the explicit destructive recovery path: it
 delegates to `parallel-sessions-template.sh stop --rollback`, captures each

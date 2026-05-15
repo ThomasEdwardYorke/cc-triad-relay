@@ -5367,6 +5367,25 @@ describe("commands/parallel-worktree-v2.md — Model B v2 skill anchors", () => 
       expect(hint).toMatch(/spec|tmux|dry-run|attach|status|stop|profile/i);
     }
   });
+
+  it("operator tmux quickref is shipped and linked from attach/status guidance", () => {
+    const rootQuickrefPath = "docs/operator/tmux-quickref.md";
+    const shippedQuickrefPath = "plugins/harness/docs/operator/tmux-quickref.md";
+    expect(existsSync(resolve(REPO_ROOT, rootQuickrefPath))).toBe(true);
+    expect(existsSync(resolve(REPO_ROOT, shippedQuickrefPath))).toBe(true);
+    const quickref = readRepoFile(shippedQuickrefPath);
+    expect(readRepoFile(rootQuickrefPath)).toBe(quickref);
+    expect(quickref).toMatch(/tmux/i);
+    expect(quickref).toMatch(/parallel-worktree-v2 attach <slug>/);
+    expect(quickref).toMatch(/Ctrl-b d/);
+    expect(quickref).toMatch(/TMUX_SESSION_NAME/);
+    expect(quickref).toMatch(/tmux list-windows -t <session>/);
+    expect(quickref).not.toMatch(/tmux list-windows -t harness-parallel/);
+    expect(skill).toMatch(new RegExp(escapeRegex(shippedQuickrefPath)));
+    expect(skill).toMatch(/installed harness plugin root/i);
+    expect(skill).toMatch(/attach <slug>[\s\S]{0,300}quickref/i);
+    expect(skill).toMatch(/status[\s\S]{0,300}quickref/i);
+  });
 });
 
 describe("commands/parallel-worktree.md — v1 migration notice (time-stable, no rollout/tracker leaks)", () => {

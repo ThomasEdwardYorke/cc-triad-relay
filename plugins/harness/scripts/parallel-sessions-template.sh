@@ -448,6 +448,18 @@ Each slug becomes:
 USAGE
 }
 
+print_attach_operator_help() {
+  local session="$1"
+  local slug="$2"
+  {
+    echo "[tmux quickref] /parallel-worktree-v2 attach <slug> selects worker '$slug' in session '$session'."
+    echo "[tmux quickref] Detach without stopping work: Ctrl-b d"
+    echo "[tmux quickref] List windows: tmux list-windows -t '$session'"
+    echo "[tmux quickref] Capture pane: tmux capture-pane -p -t '$session:$slug.0'"
+    echo "[tmux quickref] Re-check after attach: /parallel-worktree-v2 verify <slug>"
+  } >&2
+}
+
 emit() {
   # Print + execute (or print only when --dry-run).
   # Args are joined with single spaces; embedded quoting is the caller's
@@ -1425,6 +1437,7 @@ cmd_attach() {
   validate_slug "$slug"
   local session="${2:-$(resolve_session_name)}"
   validate_tmux_session_name "$session"
+  print_attach_operator_help "$session" "$slug"
   # `tmux attach` blocks until the user detaches, so chaining
   # `tmux attach ... \; select-window ...` would only run select-window
   # after the user exits. Use `select-window` first (or `switch-client`
