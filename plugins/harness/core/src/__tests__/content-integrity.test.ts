@@ -5386,6 +5386,14 @@ describe("commands/parallel-worktree-v2.md — Model B v2 skill anchors", () => 
     expect(skill).toMatch(/attach <slug>[\s\S]{0,300}quickref/i);
     expect(skill).toMatch(/status[\s\S]{0,300}quickref/i);
   });
+
+  it("documents deterministic session-manager watch refresh guidance", () => {
+    expect(skill).toMatch(/harness session-manager watch/);
+    expect(skill).toMatch(/--interval-seconds/);
+    expect(skill).toMatch(/WORKTREE_PARENT_DIR="\$\{WORKTREE_PARENT_DIR:-\.\.\}"/);
+    expect(skill).toMatch(/WORKTREE_PREFIX="\$\{WORKTREE_PREFIX:-\$\(basename "\$PWD"\)-wt-\}"/);
+    expect(skill).toMatch(/without live tmux|no live tmux|does not require live tmux/i);
+  });
 });
 
 describe("commands/parallel-worktree.md — v1 migration notice (time-stable, no rollout/tracker leaks)", () => {
