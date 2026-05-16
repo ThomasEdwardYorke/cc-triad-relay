@@ -16,12 +16,29 @@ const REPO_ROOT = resolve(CLAUDE_PLUGIN_ROOT, "../..");
 const CODEX_PLUGIN_ROOT = resolve(REPO_ROOT, "plugins/codex-harness");
 
 const EXPECTED_CODEX_SKILLS = [
+  "clarify",
+  "harness-plan",
   "harness-work",
+  "harness-review",
+  "harness-setup",
   "tdd-implement",
   "session-handoff",
+  "context-audit",
   "coderabbit-review",
   "pseudo-coderabbit-loop",
   "new-feature-branch",
+  "branch-merge",
+  "harness-release",
+  "harness-merge-train",
+  "harness-self-improve",
+  "parallel-worktree",
+  "codex-team",
+] as const;
+
+const TDD_GATED_CODEX_SKILLS = [
+  "harness-work",
+  "tdd-implement",
+  "pseudo-coderabbit-loop",
   "branch-merge",
   "harness-release",
   "harness-merge-train",
@@ -31,6 +48,7 @@ const EXPECTED_CODEX_SKILLS = [
 
 const SECOND_OPINION_CODEX_SKILLS = [
   "harness-work",
+  "harness-review",
   "tdd-implement",
   "coderabbit-review",
   "pseudo-coderabbit-loop",
@@ -51,6 +69,11 @@ const BRANCH_RELEASE_CODEX_SKILLS = [
 const PARALLEL_CODEX_SKILLS = [
   "parallel-worktree",
   "codex-team",
+] as const;
+
+const CLAUDE_ONLY_NON_EQUIVALENTS = [
+  "claude-oneshot",
+  "parallel-worktree-v2",
 ] as const;
 
 function repoPath(path: string): string {
@@ -152,7 +175,7 @@ describe("Codex plugin platform surface", () => {
     expect(manifest).not.toHaveProperty("agents");
   });
 
-  it("exposes the first Codex-native skill entrypoints", () => {
+  it("exposes the Codex-native skill entrypoints", () => {
     for (const skillName of EXPECTED_CODEX_SKILLS) {
       const skillPath = `plugins/codex-harness/skills/${skillName}/SKILL.md`;
       const content = readRepoFile(skillPath);
@@ -165,9 +188,70 @@ describe("Codex plugin platform surface", () => {
       expect(content).toContain("## Codex-Native Gates");
       expect(content).toContain("Repository and branch gate");
       expect(content).toContain("Local-only boundary gate");
+      expect(content).not.toContain("allowed-tools");
+      expect(content).not.toContain("disable-model-invocation");
+      expect(content).not.toContain("argument-hint");
+      expect(content).not.toContain("description-ja");
+    }
+  });
+
+  it("keeps TDD wording on Codex skills that can change implementation state", () => {
+    for (const skillName of TDD_GATED_CODEX_SKILLS) {
+      const skillPath = `plugins/codex-harness/skills/${skillName}/SKILL.md`;
+      const content = readRepoFile(skillPath);
+
       expect(content).toContain("RED");
       expect(content).toContain("GREEN");
       expect(content).toMatch(/local review/i);
+    }
+  });
+
+  it("adds Codex-native planning, review, setup, context, and self-improvement parity skills", () => {
+    const expectations: Record<string, string[]> = {
+      "clarify": [
+        "Decision boundary gate",
+        "Question cadence gate",
+        "No-code gate",
+        "depth-first",
+      ],
+      "harness-plan": [
+        "Plan source-of-truth gate",
+        "Task split gate",
+        "Acceptance criteria gate",
+        "handoff",
+      ],
+      "harness-review": [
+        "Read-only review gate",
+        "Finding severity gate",
+        "No-patch gate",
+        "file/line",
+      ],
+      "harness-setup": [
+        "Setup boundary gate",
+        "Configuration template gate",
+        "Verification gate",
+        "harness.config.json",
+      ],
+      "context-audit": [
+        "Context source gate",
+        "Budget and discoverability gate",
+        "Actionable report gate",
+        "MCP",
+      ],
+      "harness-self-improve": [
+        "Archive mining gate",
+        "Proposal boundary gate",
+        "Backlog update gate",
+        "session-handoff archive",
+      ],
+    };
+
+    for (const [skillName, requiredPhrases] of Object.entries(expectations)) {
+      const skillPath = `plugins/codex-harness/skills/${skillName}/SKILL.md`;
+      const content = readRepoFile(skillPath);
+      for (const phrase of requiredPhrases) {
+        expect(content, `${skillName} missing ${phrase}`).toContain(phrase);
+      }
     }
   });
 
@@ -281,6 +365,26 @@ describe("Codex plugin platform surface", () => {
       expect(readme).toContain(`\`${skillName}\``);
     }
     expect(readme).toContain("Parallel Orchestration Contract");
+  });
+
+  it("documents Claude-only primitives as intentional Codex non-equivalents", () => {
+    for (const skillName of CLAUDE_ONLY_NON_EQUIVALENTS) {
+      expect(
+        existsSync(resolve(CODEX_PLUGIN_ROOT, "skills", skillName)),
+        `${skillName} should not be exposed as a direct Codex skill`,
+      ).toBe(false);
+    }
+
+    const readme = readRepoFile("plugins/codex-harness/README.md");
+    const platformAdapters = readRepoFile("docs/maintainer/platform-adapters.md");
+    const combinedDocs = `${readme}\n${platformAdapters}`;
+
+    for (const skillName of CLAUDE_ONLY_NON_EQUIVALENTS) {
+      expect(combinedDocs).toContain(skillName);
+    }
+    expect(combinedDocs).toContain("not copied as direct Codex skills");
+    expect(combinedDocs).toContain("Codex subagents and isolated worktrees");
+    expect(combinedDocs).toContain("Claude-only primitive");
   });
 
   it("keeps the Codex second-opinion mechanism portable", () => {

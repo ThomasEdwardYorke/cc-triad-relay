@@ -18,16 +18,34 @@ Use the marketplace name configured by the project.
 ## Entry Skills
 
 - `harness-work`: choose the right work mode and dispatch a task through the quality gates.
+- `clarify`: resolve ambiguous requirements one question at a time before planning or code changes.
+- `harness-plan`: convert clarified requirements into handoff-aware tasks and acceptance criteria.
+- `harness-review`: run read-only code, plan, scope, setup, or Harness integrity reviews.
+- `harness-setup`: initialize, inspect, or verify Harness configuration for Codex-managed projects.
 - `tdd-implement`: run one implementation task through RED, GREEN, refactor, and review.
 - `session-handoff`: inspect or update handoff files without leaking local state into the public repo.
+- `context-audit`: inspect context sources for size, discoverability, dead links, and stale entrypoints.
 - `coderabbit-review`: inspect PR review feedback and keep fixes scoped to actionable findings.
 - `pseudo-coderabbit-loop`: run a local CodeRabbit-style pre-review before pushing.
 - `new-feature-branch`: create a clean feature branch from the integration branch.
 - `branch-merge`: merge one reviewed feature PR into the integration branch.
 - `harness-release`: prepare and verify release PRs from integration to release branch.
 - `harness-merge-train`: merge multiple ready PRs in order with fail-fast gates.
+- `harness-self-improve`: mine session archives and review notes for reusable Harness improvement tasks.
 - `parallel-worktree`: coordinate isolated Codex worktrees with bounded concurrency.
 - `codex-team`: request delegated Codex implementation, review, or adversarial checks.
+
+## Claude-Only Primitive Equivalents
+
+Two Claude Code primitives are intentionally not copied as direct Codex skills:
+
+- `claude-oneshot` is a Claude-only primitive for spawning `claude -p` and writing stream-json logs. Codex should use `codex-team`, `codex exec`, or Codex subagents instead.
+- `parallel-worktree-v2` is a Claude/tmux Model B launcher. Codex should use Codex subagents and isolated worktrees through `parallel-worktree` rather than requiring tmux or a top-level Claude process.
+
+These are Claude-only primitive names, not missing Codex files. The Codex
+adapter preserves the operator outcome through Codex subagents and isolated
+worktrees, while avoiding a literal copy of Claude Code command metadata.
+Codex subagents and isolated worktrees are the parity surface for this path.
 
 ## Second Opinion Contract
 
@@ -66,6 +84,10 @@ checks and Codex second opinion rerun after each accepted task branch.
 Parallel work may prepare a feature branch or PR against the integration
 branch. It must not push directly to `main`; release exposure still happens
 only through a release PR.
+
+`parallel-worktree-v2` and `claude-oneshot` remain Claude-only primitive
+surfaces. They are not copied as direct Codex skills because Codex has its own
+subagent, CLI, and isolated-worktree paths.
 
 ## Boundary
 
