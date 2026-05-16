@@ -52,10 +52,12 @@ codex plugin marketplace add /path/to/project
 ```
 
 After adding the marketplace, enable `codex-harness` from the project
-marketplace. Current Codex skills are `harness-work`, `tdd-implement`,
-`session-handoff`, `coderabbit-review`, `pseudo-coderabbit-loop`,
-`new-feature-branch`, `branch-merge`, `harness-release`,
-`harness-merge-train`, `parallel-worktree`, and `codex-team`.
+marketplace. Current Codex skills are `clarify`, `harness-plan`,
+`harness-work`, `harness-review`, `harness-setup`, `tdd-implement`,
+`session-handoff`, `context-audit`, `coderabbit-review`,
+`pseudo-coderabbit-loop`, `new-feature-branch`, `branch-merge`,
+`harness-release`, `harness-merge-train`, `harness-self-improve`,
+`parallel-worktree`, and `codex-team`.
 
 ### Optional companion: `openai-codex`
 

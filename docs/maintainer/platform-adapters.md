@@ -19,6 +19,9 @@ format.
 - `.agents/plugins/marketplace.json` is the repo-local Codex marketplace catalog.
 - `plugins/codex-harness/.codex-plugin/plugin.json` is the Codex plugin manifest.
 - Codex adapter entrypoints are `skills/**/SKILL.md`, not copied command or agent files.
+- Claude-only primitive surfaces such as `claude-oneshot` and
+  `parallel-worktree-v2` are documented as non-equivalents, not copied as
+  direct Codex skills.
 
 ## Shared Workflow Rules
 
@@ -70,3 +73,19 @@ This adapter work should stay staged by capability:
 3. Branch, release, and merge-train flow.
 4. Parallel worktree and multi-Codex orchestration.
 5. Codex-native guardrail scripts or MCP surfaces that replace hook-only behavior.
+
+## Intentional Non-Equivalents
+
+The parity target is equivalent operator outcome, not identical file layout.
+The following Claude-only primitive names remain intentionally absent from
+`plugins/codex-harness/skills/`:
+
+- `claude-oneshot` wraps a top-level `claude -p` process and stream-json log
+  output. Codex should use `codex-team`, `codex exec`, or Codex subagents.
+- `parallel-worktree-v2` coordinates top-level Claude sessions through tmux.
+  Codex should use Codex subagents and isolated worktrees through
+  `parallel-worktree`.
+
+These primitives are not copied as direct Codex skills because they encode
+Claude Code process and tmux assumptions. Codex subagents and isolated
+worktrees are the Codex-native replacement surface.
