@@ -370,10 +370,24 @@ While workers run, the coordinator does **not** hold an active reasoning
 loop. It runs the progress aggregator instead:
 
 ```bash
-node plugins/harness/core/src/session-manager.ts \
-     --tmux-session "${TMUX_SESSION_NAME}" \
+WORKTREE_PARENT_DIR="${WORKTREE_PARENT_DIR:-..}"
+WORKTREE_PREFIX="${WORKTREE_PREFIX:-$(basename "$PWD")-wt-}"
+harness session-manager watch \
+     --slugs frontend,backend,shared,docs \
+     --worktree-parent "${WORKTREE_PARENT_DIR}" \
+     --worktree-prefix "${WORKTREE_PREFIX}" \
      --log-dir /tmp \
-     --refresh-interval 30
+     --interval-seconds 30
+```
+
+`harness session-manager watch` is a portable Node refresh loop. It works
+without live tmux access or the platform `watch` binary; it only reads the
+declared slug list, optional worktree paths, and any
+`<log_dir>/claude-log-<slug>.jsonl` files. Use `once` when a single
+deterministic snapshot is enough:
+
+```bash
+harness session-manager once --slugs frontend,backend --log-dir /tmp
 ```
 
 Sample dashboard:

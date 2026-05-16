@@ -22,6 +22,7 @@ import {
   existsSync,
   readFileSync,
   writeFileSync,
+  mkdirSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, resolve, join } from "node:path";
@@ -522,6 +523,138 @@ describe("bin/harness pr-metrics — PR metrics collection", () => {
     expect(combined).toContain("#91");
     expect(existsSync(jsonOut)).toBe(false);
     expect(existsSync(mdOut)).toBe(false);
+  });
+});
+
+describe("bin/harness session-manager — dashboard refresh", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "harness-session-manager-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("root usage advertises the session-manager watch command", () => {
+    const result = runHarness(["--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("harness session-manager watch");
+  });
+
+  it("prints session-manager help to stdout", () => {
+    const result = runHarness(["session-manager", "--help"], { cwd: tmpDir });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("usage: harness session-manager");
+    expect(result.stdout).toContain("once");
+    expect(result.stdout).toContain("watch");
+    expect(result.stdout).toContain("--interval-seconds");
+  });
+
+  it("requires slugs before rendering a session-manager dashboard", () => {
+    const result = runHarness(["session-manager", "watch"], { cwd: tmpDir });
+    const combined = result.stdout + result.stderr;
+
+    expect(result.exitCode).toBe(2);
+    expect(combined).toContain("--slugs");
+  });
+
+  it("allows an explicit empty worktree prefix for projects without prefixed worktrees", () => {
+    const result = runHarness(
+      [
+        "session-manager",
+        "once",
+        "--slugs",
+        "frontend",
+        "--worktree-parent",
+        tmpDir,
+        "--worktree-prefix",
+        "",
+      ],
+      { cwd: tmpDir },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("| frontend |");
+  });
+
+  it("renders a one-shot dashboard from offline session logs", () => {
+    const logDir = join(tmpDir, "logs");
+    mkdirSync(logDir, { recursive: true });
+    writeFileSync(
+      join(logDir, "claude-log-frontend.jsonl"),
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-05-15T00:00:00.000Z",
+        message: {
+          content: [{ type: "text", text: "Phase 5 GREEN complete" }],
+        },
+      }) + "\n",
+    );
+
+    const result = runHarness(
+      [
+        "session-manager",
+        "once",
+        "--slugs",
+        "frontend",
+        "--log-dir",
+        logDir,
+        "--now",
+        "2026-05-15T00:01:00.000Z",
+      ],
+      { cwd: tmpDir },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("| slug | branch | phase | last commit | status |");
+    expect(result.stdout).toContain("| frontend |");
+    expect(result.stdout).toContain("Phase 5");
+    expect(result.stdout).toContain("| running |");
+  });
+
+  it("watch mode can run a deterministic bounded refresh loop without platform watch", () => {
+    const logDir = join(tmpDir, "logs");
+    mkdirSync(logDir, { recursive: true });
+    writeFileSync(
+      join(logDir, "claude-log-api.jsonl"),
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-05-15T00:00:00.000Z",
+        message: {
+          content: [{ type: "text", text: "Phase 6 Real CR approved" }],
+        },
+      }) + "\n",
+    );
+
+    const result = runHarness(
+      [
+        "session-manager",
+        "watch",
+        "--slugs",
+        "api",
+        "--log-dir",
+        logDir,
+        "--interval-seconds",
+        "1",
+        "--iterations",
+        "2",
+        "--now",
+        "2026-05-15T00:01:00.000Z",
+      ],
+      {
+        cwd: tmpDir,
+        env: { HARNESS_SESSION_MANAGER_SLEEP_MS: "0" },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("session-manager watch: refresh every 1s");
+    expect((result.stdout.match(/\| api \|/g) ?? []).length).toBe(2);
+    expect(result.stdout).toContain("Phase 6");
   });
 });
 
