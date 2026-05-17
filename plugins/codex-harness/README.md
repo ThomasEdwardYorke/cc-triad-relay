@@ -74,6 +74,25 @@ local-only boundary:
 git ls-files -- harness.config.json docs/maintainer/handoff .docs/handoff
 ```
 
+## Durable Guidance And Setup Contract
+
+`harness-setup` owns Codex project setup. It can guide or create a concise
+`AGENTS.md` plus project-scoped `.codex/config.toml` from:
+
+- `skills/harness-setup/assets/AGENTS.md.tmpl`
+- `skills/harness-setup/assets/codex-config.toml.tmpl`
+
+The `AGENTS.md` template keeps durable guidance short and points to
+task-specific references. The `.codex/config.toml` template documents
+project-scoped defaults for `model`, `review_model`, `approval_policy`,
+`sandbox_mode`, `sandbox_workspace_write.network_access`, MCP via
+`mcp_servers`, plugin hooks via `features.hooks` / `features.plugin_hooks`,
+and review-policy guidance through `auto_review.policy`.
+
+Project-scoped config is public only when it is generic. Keep personal machine
+paths, credentials, active branch notes, PR state, and handoff session state in
+ignored local files.
+
 ## Parallel Orchestration Contract
 
 Codex parallel orchestration uses isolated worktrees and explicit ownership

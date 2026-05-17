@@ -74,6 +74,12 @@ and run `/hooks` to review and trust the plugin hooks. The bundled hooks cover
 tool guardrails, permission requests, prompt secret checks, and stop-time
 completion reminders.
 
+For Codex project setup, `harness-setup` can guide a concise `AGENTS.md` and
+project-scoped `.codex/config.toml` from its bundled templates. The config
+template covers `model`, `review_model`, `approval_policy`, `sandbox_mode`,
+MCP (`mcp_servers`), plugin hook flags, and `auto_review.policy` without
+including local handoff state or personal machine paths.
+
 ### Optional companion: `openai-codex`
 
 The Harness ships stack- and LLM-neutral. Two of its agents —

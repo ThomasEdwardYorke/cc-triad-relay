@@ -44,6 +44,23 @@ fail closed with `BLOCKED` when neither path is available. The review input is
 the diff, PR context, and test results; the output must be
 `PASS | NEEDS_FIX | BLOCKED` plus actionable findings.
 
+## Codex Durable Guidance And Setup
+
+Codex setup parity is implemented through `harness-setup` guidance plus
+copy-ready setup assets under
+`plugins/codex-harness/skills/harness-setup/assets/`.
+
+- `AGENTS.md.tmpl` is the concise durable-guidance starting point. It should
+  hold stable repository expectations and point to task-specific references.
+- `codex-config.toml.tmpl` is the project-scoped `.codex/config.toml` starting
+  point. It documents `model`, `review_model`, `approval_policy`,
+  `sandbox_mode`, `sandbox_workspace_write.network_access`, MCP
+  (`mcp_servers`), plugin hook flags (`features.hooks` /
+  `features.plugin_hooks`), and `auto_review.policy`.
+- Project-scoped setup files are publishable only when they stay generic.
+  Personal machine paths, credentials, active branch state, PR state, and
+  handoff session notes remain local-only.
+
 ## Codex Plugin Hook Foundation
 
 Codex hook parity is implemented as a Codex-native plugin hook bundle under
@@ -84,7 +101,7 @@ Local-only paths:
 Release and feature PRs must keep this check empty:
 
 ```bash
-git ls-files -- harness.config.json docs/maintainer/handoff
+git ls-files -- harness.config.json docs/maintainer/handoff .docs/handoff
 ```
 
 Generic maintainer process docs may live under `docs/maintainer/` only after

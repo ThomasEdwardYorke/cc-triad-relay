@@ -1,0 +1,39 @@
+# .codex/config.toml
+#
+# Project-scoped Codex defaults. Commit only values that are safe for every
+# contributor; keep personal tokens, absolute machine paths, and active session
+# state in user-level config or ignored local files.
+
+# Pick the team's default model explicitly when the project needs one.
+model = "gpt-5.5"
+review_model = "gpt-5.5"
+
+# Interactive setup: Codex can work inside the project and asks before leaving
+# the sandbox, using networked commands, or taking higher-risk actions.
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+sandbox_workspace_write.network_access = false
+
+# Keep durable guidance concise. AGENTS.md is the primary project instruction
+# file; add fallback names only when this repository already has them.
+project_doc_max_bytes = 32768
+project_doc_fallback_filenames = []
+
+# Optional review-policy defaults. Keep the policy generic and repository-safe.
+auto_review.policy = """
+Review for correctness, tests, security, public/local boundary leaks, and
+project portability. Return actionable findings before style-only comments.
+"""
+
+# Optional plugin hook parity for projects that have reviewed and trusted the
+# bundled non-managed hooks.
+features.hooks = true
+features.plugin_hooks = true
+
+# Optional MCP example. Enable only after deciding which external context the
+# workflow actually needs, and keep authentication in environment variables.
+[mcp_servers.example]
+enabled = false
+command = "example-mcp-server"
+args = []
+env = {}

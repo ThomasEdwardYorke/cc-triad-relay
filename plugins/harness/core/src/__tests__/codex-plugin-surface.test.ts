@@ -8,6 +8,7 @@ import {
 import { execFileSync } from "node:child_process";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse as parseToml } from "smol-toml";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -71,6 +72,11 @@ const PARALLEL_CODEX_SKILLS = [
   "codex-team",
 ] as const;
 
+const CODEX_SETUP_TEMPLATE_FILES = [
+  "plugins/codex-harness/skills/harness-setup/assets/AGENTS.md.tmpl",
+  "plugins/codex-harness/skills/harness-setup/assets/codex-config.toml.tmpl",
+] as const;
+
 const CLAUDE_ONLY_NON_EQUIVALENTS = [
   "claude-oneshot",
   "parallel-worktree-v2",
@@ -94,6 +100,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function expectRecord(value: unknown, label: string): Record<string, unknown> {
+  expect(isRecord(value), `${label} must be a table`).toBe(true);
+  return isRecord(value) ? value : {};
+}
+
+function expectNoActiveSessionState(surface: string): void {
+  expect(surface).not.toMatch(/\/Users\//);
+  expect(surface).not.toMatch(/\bfeature\/[A-Za-z0-9._/-]+/);
+  expect(surface).not.toMatch(/\b[0-9a-f]{7,40}\b/i);
+  expect(surface).not.toMatch(/\bPR\s+#\d+\b/i);
 }
 
 function listFiles(root: string): string[] {
@@ -310,6 +328,109 @@ describe("Codex plugin platform surface", () => {
         expect(content, `${skillName} missing ${phrase}`).toContain(phrase);
       }
     }
+  });
+
+  it("publishes generic Codex setup guidance and templates", () => {
+    const harnessSetup = readRepoFile(
+      "plugins/codex-harness/skills/harness-setup/SKILL.md",
+    );
+    const readme = readRepoFile("plugins/codex-harness/README.md");
+    const platformAdapters = readRepoFile("docs/maintainer/platform-adapters.md");
+    const combinedDocs = `${harnessSetup}\n${readme}\n${platformAdapters}`;
+
+    for (const path of CODEX_SETUP_TEMPLATE_FILES) {
+      expect(existsSync(repoPath(path)), `${path} must exist`).toBe(true);
+    }
+
+    const agentsTemplate = readRepoFile(CODEX_SETUP_TEMPLATE_FILES[0]);
+    const configTemplate = readRepoFile(CODEX_SETUP_TEMPLATE_FILES[1]);
+    const setupSurface = `${combinedDocs}\n${agentsTemplate}\n${configTemplate}`;
+    const templateSurface = `${agentsTemplate}\n${configTemplate}`;
+    const parsedConfig = expectRecord(
+      parseToml(configTemplate) as unknown,
+      "codex config template",
+    );
+
+    expect(harnessSetup).toContain("Durable guidance gate");
+    expect(harnessSetup).toContain("Codex config defaults gate");
+    expect(harnessSetup).toContain("AGENTS.md");
+    expect(harnessSetup).toContain(".codex/config.toml");
+    expect(harnessSetup).toContain("assets/AGENTS.md.tmpl");
+    expect(harnessSetup).toContain("assets/codex-config.toml.tmpl");
+
+    expect(agentsTemplate).toContain("## Repository Expectations");
+    expect(agentsTemplate).toContain("## Harness Workflow");
+    expect(agentsTemplate).toContain("## Task-Specific References");
+    expect(agentsTemplate).toContain("## Local-Only State");
+    expect(agentsTemplate).toContain(".docs/handoff/");
+    expect(agentsTemplate).toContain("harness.config.json");
+    expect(agentsTemplate).not.toContain("docs/maintainer/handoff");
+
+    for (const requiredConfigKey of [
+      "model",
+      "review_model",
+      "approval_policy",
+      "sandbox_mode",
+      "sandbox_workspace_write.network_access",
+      "project_doc_max_bytes",
+      "project_doc_fallback_filenames",
+      "auto_review.policy",
+      "mcp_servers",
+      "features.hooks",
+      "features.plugin_hooks",
+    ]) {
+      expect(configTemplate, `missing ${requiredConfigKey}`).toContain(
+        requiredConfigKey,
+      );
+      expect(setupSurface, `docs missing ${requiredConfigKey}`).toContain(
+        requiredConfigKey,
+      );
+    }
+
+    expect(parsedConfig.model).toBe("gpt-5.5");
+    expect(parsedConfig.review_model).toBe("gpt-5.5");
+    expect(parsedConfig.approval_policy).toBe("on-request");
+    expect(parsedConfig.sandbox_mode).toBe("workspace-write");
+    expect(parsedConfig.project_doc_max_bytes).toBe(32768);
+    expect(parsedConfig.project_doc_fallback_filenames).toEqual([]);
+
+    const sandboxWorkspaceWrite = expectRecord(
+      parsedConfig.sandbox_workspace_write,
+      "sandbox_workspace_write",
+    );
+    expect(sandboxWorkspaceWrite.network_access).toBe(false);
+
+    const autoReview = expectRecord(parsedConfig.auto_review, "auto_review");
+    expect(autoReview.policy).toEqual(expect.any(String));
+    expect(String(autoReview.policy)).toMatch(/public\/local boundary leaks/i);
+
+    const features = expectRecord(parsedConfig.features, "features");
+    expect(features.hooks).toBe(true);
+    expect(features.plugin_hooks).toBe(true);
+
+    const mcpServers = expectRecord(parsedConfig.mcp_servers, "mcp_servers");
+    const exampleServer = expectRecord(mcpServers.example, "mcp_servers.example");
+    expect(exampleServer).toMatchObject({
+      enabled: false,
+      command: "example-mcp-server",
+      args: [],
+      env: {},
+    });
+
+    for (const phrase of [
+      "sandbox",
+      "approval",
+      "model",
+      "MCP",
+      "review-policy",
+      "local-only",
+      "project-scoped",
+    ]) {
+      expect(setupSurface).toMatch(new RegExp(escapeRegExp(phrase), "i"));
+    }
+
+    expectNoActiveSessionState(setupSurface);
+    expect(templateSurface).not.toContain("docs/maintainer/handoff");
   });
 
   it("documents Codex handoff lifecycle parity without Claude-only metadata", () => {
