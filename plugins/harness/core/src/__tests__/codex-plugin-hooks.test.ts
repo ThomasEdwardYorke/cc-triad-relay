@@ -20,10 +20,15 @@ const REPO_ROOT_FROM_HOME = REPO_ROOT.startsWith(`${HOME_DIR}/`)
 const REPO_ROOT_FROM_TILDE = REPO_ROOT.startsWith(`${HOME_DIR}/`)
   ? `~${REPO_ROOT.slice(HOME_DIR.length)}`
   : undefined;
+const SAMPLE_HANDOFF_FILENAME = "my-project-current.md";
 
 function runHook(mode: string, payload: unknown, cwd = REPO_ROOT): unknown {
+  return runHookRaw(mode, JSON.stringify(payload), cwd);
+}
+
+function runHookRaw(mode: string, input: string, cwd = REPO_ROOT): unknown {
   const stdout = execFileSync("node", [DISPATCHER, mode], {
-    input: JSON.stringify(payload),
+    input,
     encoding: "utf-8",
     cwd,
   }).trim();
@@ -35,6 +40,12 @@ describe("Codex plugin hook dispatcher", () => {
   it("blocks destructive shell commands before tool execution", () => {
     const commands = [
       "git reset --hard origin/dev",
+      "git.exe reset --hard HEAD",
+      "C:/Program Files/Git/bin/git.exe reset --hard HEAD",
+      '"C:/Program Files/Git/bin/git.exe" reset --hard HEAD',
+      "/usr/bin/git reset --hard HEAD",
+      '"/usr/bin/git" restore .',
+      "./git reset --hard HEAD",
       "git reset --merge --hard HEAD",
       "git -C ../repo reset --hard HEAD",
       'git -C "../repo with spaces" reset --hard HEAD',
@@ -73,17 +84,55 @@ describe("Codex plugin hook dispatcher", () => {
     }
   });
 
+  it("fails closed when shell hook payload JSON is malformed", () => {
+    const cases = [
+      {
+        mode: "pre-tool",
+        expected: {
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "deny",
+          },
+        },
+      },
+      {
+        mode: "permission",
+        expected: {
+          hookSpecificOutput: {
+            hookEventName: "PermissionRequest",
+            decision: {
+              behavior: "deny",
+            },
+          },
+        },
+      },
+    ] as const;
+
+    for (const { mode, expected } of cases) {
+      for (const input of ["", "{not-json"]) {
+        const result = runHookRaw(mode, input);
+
+        expect(result).toMatchObject(expected);
+        expect(JSON.stringify(result)).toContain("malformed hook input");
+      }
+    }
+  });
+
   it("blocks attempts to publish local-only handoff state", () => {
     const commands = [
-      "git add .docs/handoff/cc-triad-relay-current.md",
-      "git add ./.docs/handoff/cc-triad-relay-current.md",
-      "git add -f .DOCS/handoff/cc-triad-relay-current.md",
+      `git add .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
+      `/usr/bin/git add .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
+      `./git add .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
+      `git add ./.docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
+      `git add -f .DOCS/handoff/${SAMPLE_HANDOFF_FILENAME}`,
       "git add -f DOCS/maintainer/handoff/note.md",
-      String.raw`git add .\.docs\handoff\cc-triad-relay-current.md`,
+      `git add .\\.docs\\handoff\\${SAMPLE_HANDOFF_FILENAME}`,
       String.raw`git add docs\maintainer\handoff\note.md`,
-      "git --no-optional-locks add .docs/handoff/cc-triad-relay-current.md",
+      `git --no-optional-locks add .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
       "git add -f .docs",
       "git add -f docs",
+      '"C:/Program Files/Git/bin/git.exe" add -f docs',
+      '"/usr/bin/git" add -f --pathspec-from-file /tmp/list',
       "git add -f docs/*",
       "git add -f docs/**",
       "git add -f docs/maintainer",
@@ -108,7 +157,7 @@ describe("Codex plugin hook dispatcher", () => {
       'git add -f "${PWD}/docs/maintainer/handoff"',
       ...(REPO_ROOT_FROM_HOME
         ? [
-            `git add -f ${REPO_ROOT_FROM_HOME}/.docs/handoff/cc-triad-relay-current.md`,
+            `git add -f ${REPO_ROOT_FROM_HOME}/.docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
           ]
         : []),
       ...(REPO_ROOT_FROM_TILDE
@@ -116,10 +165,10 @@ describe("Codex plugin hook dispatcher", () => {
             `git add -f ${REPO_ROOT_FROM_TILDE}/docs/maintainer/handoff/note.md`,
           ]
         : []),
-      "git add -f :/.docs/handoff/cc-triad-relay-current.md",
+      `git add -f :/.docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
       "git add -f :(top)docs/maintainer/handoff/note.md",
-      `git add ${resolve(REPO_ROOT, ".docs/handoff/cc-triad-relay-current.md")}`,
-      `git add ${resolve(REPO_ROOT, ".DOCS/handoff/cc-triad-relay-current.md")}`,
+      `git add ${resolve(REPO_ROOT, ".docs/handoff", SAMPLE_HANDOFF_FILENAME)}`,
+      `git add ${resolve(REPO_ROOT, ".DOCS/handoff", SAMPLE_HANDOFF_FILENAME)}`,
     ];
 
     for (const command of commands) {
@@ -142,20 +191,20 @@ describe("Codex plugin hook dispatcher", () => {
 
     const subdir = resolve(REPO_ROOT, "plugins/harness/core");
     const subdirCommands = [
-      `git add ${resolve(REPO_ROOT, ".docs/handoff/cc-triad-relay-current.md")}`,
-      "git add ../../../.docs/handoff/cc-triad-relay-current.md",
-      `git -C ${REPO_ROOT} add -f .docs/handoff/cc-triad-relay-current.md`,
+      `git add ${resolve(REPO_ROOT, ".docs/handoff", SAMPLE_HANDOFF_FILENAME)}`,
+      `git add ../../../.docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
+      `git -C ${REPO_ROOT} add -f .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
       ...(REPO_ROOT_FROM_HOME
         ? [
-            `git -C ${REPO_ROOT_FROM_HOME} add -f .docs/handoff/cc-triad-relay-current.md`,
+            `git -C ${REPO_ROOT_FROM_HOME} add -f .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
           ]
         : []),
       ...(REPO_ROOT_FROM_TILDE
         ? [
-            `git -C ${REPO_ROOT_FROM_TILDE} add -f .docs/handoff/cc-triad-relay-current.md`,
+            `git -C ${REPO_ROOT_FROM_TILDE} add -f .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
           ]
         : []),
-      "git -C ../../.. add -f .docs/handoff/cc-triad-relay-current.md",
+      `git -C ../../.. add -f .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
     ];
     for (const command of subdirCommands) {
       const result = runHook(
@@ -181,7 +230,7 @@ describe("Codex plugin hook dispatcher", () => {
     }
 
     const cdCommands = [
-      "cd plugins/harness/core && git add -f ../../../.docs/handoff/cc-triad-relay-current.md && git commit -m leak",
+      `cd plugins/harness/core && git add -f ../../../.docs/handoff/${SAMPLE_HANDOFF_FILENAME} && git commit -m leak`,
       "git status && cd plugins/harness/core && git add -f ../../../.docs/handoff/current.md",
       `git -C /tmp status && git add -f ${resolve(REPO_ROOT, ".docs/handoff/current.md")}`,
       "git add README.md && cd plugins/harness/core && git add -f ../../../.docs/handoff/current.md",
@@ -229,12 +278,12 @@ describe("Codex plugin hook dispatcher", () => {
 
   it("blocks local-only files used as commit messages or PR bodies", () => {
     const commands = [
-      "git commit -F .docs/handoff/cc-triad-relay-current.md",
+      `git commit -F .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
       "git commit --file=DOCS/maintainer/handoff/note.md",
-      `git commit -F${resolve(REPO_ROOT, ".DOCS/handoff/cc-triad-relay-current.md")}`,
-      "gh pr create -F .docs/handoff/cc-triad-relay-current.md",
+      `git commit -F${resolve(REPO_ROOT, ".DOCS/handoff", SAMPLE_HANDOFF_FILENAME)}`,
+      `gh pr create -F .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
       "gh pr edit --body-file docs/maintainer/handoff/note.md",
-      "gh pr create --template .DOCS/handoff/cc-triad-relay-current.md",
+      `gh pr create --template .DOCS/handoff/${SAMPLE_HANDOFF_FILENAME}`,
       "gh pr create -T docs/maintainer/handoff/template.md",
     ];
 
@@ -514,6 +563,47 @@ describe("Codex plugin hook dispatcher", () => {
     }
   });
 
+  it("does not block non-mutating git add help and preview forms", () => {
+    const commands = [
+      "git add --help",
+      "git add -h",
+      "git add --dry-run",
+      "git add -n",
+      "git.exe add --help",
+    ];
+
+    for (const command of commands) {
+      const result = runHook("pre-tool", {
+        hook_event_name: "PreToolUse",
+        tool_name: "Bash",
+        tool_input: {
+          command,
+        },
+      });
+
+      expect(result).toEqual({});
+    }
+  });
+
+  it("does not treat dash-prefixed pathspecs after separator as broad publication", () => {
+    const commands = [
+      "git add -- -generated.patch",
+      '"/usr/bin/git" add -- -generated.patch',
+    ];
+
+    for (const command of commands) {
+      const result = runHook("pre-tool", {
+        hook_event_name: "PreToolUse",
+        tool_name: "Bash",
+        tool_input: {
+          command,
+        },
+      });
+
+      expect(result).toEqual({});
+    }
+  });
+
   it("reads Codex exec_command cmd payloads before applying shell guards", () => {
     const commands = [
       "git add .",
@@ -522,6 +612,9 @@ describe("Codex plugin hook dispatcher", () => {
       "git add --all",
       "git add --update",
       "git push origin feature -f",
+      '"C:/Program Files/Git/bin/git.exe" push --force origin main',
+      '"/usr/bin/git" push --force-with-lease origin main',
+      'git.exe push --force-with-lease=refs/heads/main origin main',
     ];
 
     for (const command of commands) {
@@ -569,6 +662,7 @@ describe("Codex plugin hook dispatcher", () => {
       "git -C ../repo push origin +main",
       'git -C "../repo with spaces" push --force origin feature/example',
       "git push origin HEAD:+main",
+      '"/usr/bin/git" push --force-with-lease origin feature/example',
     ];
 
     for (const command of commands) {

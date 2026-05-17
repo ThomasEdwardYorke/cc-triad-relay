@@ -197,30 +197,34 @@ describe("Codex plugin platform surface", () => {
     for (const eventName of expectedEvents) {
       const entries = hooksConfig.hooks[eventName];
       expect(Array.isArray(entries)).toBe(true);
-      const firstEntry = (entries as unknown[])[0];
-      expect(isRecord(firstEntry)).toBe(true);
-      if (!isRecord(firstEntry)) continue;
-      if (eventName === "PreToolUse" || eventName === "PermissionRequest") {
-        expect(firstEntry.matcher).toBe(
-          "Bash|Shell|functions\\.exec_command|functions\\.shell_command|exec_command|shell_command",
-        );
+      expect((entries as unknown[]).length).toBeGreaterThan(0);
+      for (const entry of entries as unknown[]) {
+        expect(isRecord(entry)).toBe(true);
+        if (!isRecord(entry)) continue;
+        if (eventName === "PreToolUse" || eventName === "PermissionRequest") {
+          expect(entry.matcher).toBe(
+            "Bash|Shell|functions\\.exec_command|functions\\.shell_command|exec_command|shell_command",
+          );
+        }
+
+        const hookList = entry.hooks;
+        expect(Array.isArray(hookList)).toBe(true);
+        expect((hookList as unknown[]).length).toBeGreaterThan(0);
+        for (const hook of hookList as unknown[]) {
+          expect(isRecord(hook)).toBe(true);
+          if (!isRecord(hook)) continue;
+
+          expect(hook).toMatchObject({
+            type: "command",
+            timeout: 30,
+          });
+          expect(String(hook.command)).toContain("${PLUGIN_ROOT}");
+          expect(String(hook.command)).toContain(
+            "hooks/codex-hook-dispatcher.mjs",
+          );
+          expect(String(hook.command)).not.toContain("CLAUDE_PLUGIN_ROOT");
+        }
       }
-
-      const hookList = firstEntry.hooks;
-      expect(Array.isArray(hookList)).toBe(true);
-      const hook = (hookList as unknown[])[0];
-      expect(isRecord(hook)).toBe(true);
-      if (!isRecord(hook)) continue;
-
-      expect(hook).toMatchObject({
-        type: "command",
-        timeout: 30,
-      });
-      expect(String(hook.command)).toContain("${PLUGIN_ROOT}");
-      expect(String(hook.command)).toContain(
-        "hooks/codex-hook-dispatcher.mjs",
-      );
-      expect(String(hook.command)).not.toContain("CLAUDE_PLUGIN_ROOT");
     }
 
     expect(

@@ -7,7 +7,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 
 const SHELL_WORD = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s;&|]+)`;
 const GIT_GLOBAL_OPTION = String.raw`(?:(?:-C|-c|--git-dir|--work-tree|--namespace|--config-env|--exec-path)(?:=${SHELL_WORD}|\s+${SHELL_WORD})|--[A-Za-z0-9-]+(?:=${SHELL_WORD})?|-[A-Za-z]+)`;
-const GIT_PREFIX = String.raw`\bgit(?:\s+${GIT_GLOBAL_OPTION})*\s+`;
+const GIT_PREFIX = String.raw`\bgit(?:\.exe)?(?:\s+${GIT_GLOBAL_OPTION})*\s+`;
 
 const DESTRUCTIVE_COMMANDS = [
   {
@@ -74,13 +74,13 @@ function readStdin() {
 
 function parsePayload(raw) {
   if (!raw.trim()) {
-    return {};
+    return null;
   }
   try {
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
-    return {};
+    return null;
   }
 }
 
@@ -149,6 +149,11 @@ function isShellExecution(payload) {
   );
 }
 
+function isGitToken(token) {
+  const executable = normalizeCommandText(token).split("/").pop()?.toLowerCase();
+  return executable === "git" || executable === "git.exe";
+}
+
 function promptText(payload) {
   if (typeof payload.prompt === "string") {
     return payload.prompt;
@@ -186,6 +191,10 @@ function detectUnsafeToolUse(text, cwd = process.cwd()) {
   }
   if (detectDestructiveGitClean(normalizedText, cwd)) {
     return "Blocked destructive git clean. Use an explicit, reviewed recovery path instead.";
+  }
+  const destructiveGitLabel = detectDestructiveGitCommand(normalizedText, cwd);
+  if (destructiveGitLabel) {
+    return `Blocked ${destructiveGitLabel}. Use an explicit, reviewed recovery path instead.`;
   }
   for (const check of DESTRUCTIVE_COMMANDS) {
     if (check.pattern.test(normalizedText)) {
@@ -230,7 +239,7 @@ function gitEffectiveCwd(text, cwd) {
   for (const { words, cwd: effectiveCwd } of shellSegmentsWithCwd(text, cwd)) {
     lastCwd = effectiveCwd;
     for (let index = 0; index < words.length; index += 1) {
-      if (words[index] !== "git") {
+      if (!isGitToken(words[index])) {
         continue;
       }
       const invocation = parseGitInvocation(words, index, effectiveCwd);
@@ -337,7 +346,7 @@ function cdTarget(words) {
 function detectDestructiveCheckout(text, cwd) {
   for (const { words, cwd: effectiveCwd } of shellSegmentsWithCwd(text, cwd)) {
     for (let index = 0; index < words.length; index += 1) {
-      if (words[index] !== "git") {
+      if (!isGitToken(words[index])) {
         continue;
       }
       const invocation = parseGitInvocation(words, index, effectiveCwd);
@@ -355,7 +364,7 @@ function detectDestructiveCheckout(text, cwd) {
 function detectDestructiveGitClean(text, cwd) {
   for (const { words, cwd: effectiveCwd } of shellSegmentsWithCwd(text, cwd)) {
     for (let index = 0; index < words.length; index += 1) {
-      if (words[index] !== "git") {
+      if (!isGitToken(words[index])) {
         continue;
       }
       const invocation = parseGitInvocation(words, index, effectiveCwd);
@@ -368,6 +377,61 @@ function detectDestructiveGitClean(text, cwd) {
     }
   }
   return false;
+}
+
+function detectDestructiveGitCommand(text, cwd) {
+  for (const { words, cwd: effectiveCwd } of shellSegmentsWithCwd(text, cwd)) {
+    for (let index = 0; index < words.length; index += 1) {
+      if (!isGitToken(words[index])) {
+        continue;
+      }
+      const invocation = parseGitInvocation(words, index, effectiveCwd);
+      if (!invocation) {
+        continue;
+      }
+      if (
+        invocation.command === "reset" &&
+        invocation.args.includes("--hard")
+      ) {
+        return "destructive git reset";
+      }
+      if (invocation.command === "restore") {
+        return "destructive git restore";
+      }
+      if (
+        invocation.command === "switch" &&
+        invocation.args.some(isDestructiveSwitchArg)
+      ) {
+        return "destructive git switch";
+      }
+      if (
+        invocation.command === "push" &&
+        invocation.args.some(isForcePushArg)
+      ) {
+        return "force push";
+      }
+    }
+  }
+  return "";
+}
+
+function isDestructiveSwitchArg(arg) {
+  return (
+    arg === "--discard-changes" ||
+    arg === "--force" ||
+    /^-[A-Za-z]*f[A-Za-z]*$/.test(arg)
+  );
+}
+
+function isForcePushArg(arg) {
+  return (
+    arg === "--force" ||
+    arg === "--force-with-lease" ||
+    arg.startsWith("--force-with-lease=") ||
+    /^-[A-Za-z]*f[A-Za-z]*$/.test(arg) ||
+    arg.startsWith("+") ||
+    /\S:\+\S/.test(arg)
+  );
 }
 
 function isDestructiveGitCleanArgs(args) {
@@ -535,18 +599,23 @@ function isPathPublishingCommand(text) {
 }
 
 function findLocalOnlyPublicationHitByInvocation(text, cwd) {
-  if (!isPathPublishingCommand(text)) {
-    return undefined;
-  }
-
   for (const { segment, words, cwd: effectiveCwd } of shellSegmentsWithCwd(text, cwd)) {
     for (let index = 0; index < words.length; index += 1) {
-      if (words[index] !== "git") {
+      if (!isGitToken(words[index])) {
         continue;
       }
       const invocation = parseGitInvocation(words, index, effectiveCwd);
       if (!invocation || !/^(?:add|archive)$/.test(invocation.command)) {
         continue;
+      }
+      if (invocation.command === "add") {
+        const addHit = findGitAddLocalOnlyPublicationHit(
+          invocation.args,
+          invocation.cwd,
+        );
+        if (addHit) {
+          return addHit;
+        }
       }
       const hit = findLocalOnlyPublicationHit(segment, invocation.cwd);
       if (hit) {
@@ -565,6 +634,40 @@ function findLocalOnlyPublicationHitByInvocation(text, cwd) {
   return undefined;
 }
 
+function findGitAddLocalOnlyPublicationHit(args, cwd) {
+  if (hasGitAddPathspecFileArg(args)) {
+    return {
+      label: "pathspec-from-file input",
+    };
+  }
+  if (!args.some(isForceAddArg)) {
+    return undefined;
+  }
+  const root = rootPath(cwd);
+  for (const arg of args) {
+    const relativePath = relativePathForToken(arg, cwd, root);
+    if (isLocalOnlyParentPath(relativePath)) {
+      return {
+        label: "docs/maintainer/handoff/",
+      };
+    }
+  }
+  return undefined;
+}
+
+function hasGitAddPathspecFileArg(args) {
+  return args.some(
+    (token) =>
+      token === "--pathspec-from-file" ||
+      token.startsWith("--pathspec-from-file=") ||
+      token === "--pathspec-file-nul",
+  );
+}
+
+function isForceAddArg(arg) {
+  return arg === "--force" || /^-[A-Za-z]*f[A-Za-z]*$/.test(arg);
+}
+
 function isIndexPublishingCommand(text) {
   return (
     new RegExp(`${GIT_PREFIX}(?:commit|push|archive)\\b`).test(text) ||
@@ -575,13 +678,9 @@ function isIndexPublishingCommand(text) {
 }
 
 function findIndexedLocalOnlyHitByInvocation(text, cwd) {
-  if (!isIndexPublishingCommand(text)) {
-    return undefined;
-  }
-
   for (const { words, cwd: effectiveCwd } of shellSegmentsWithCwd(text, cwd)) {
     for (let index = 0; index < words.length; index += 1) {
-      if (words[index] !== "git") {
+      if (!isGitToken(words[index])) {
         continue;
       }
       const invocation = parseGitInvocation(words, index, effectiveCwd);
@@ -611,7 +710,7 @@ function findIndexedLocalOnlyHitByInvocation(text, cwd) {
 function findLocalOnlyTextInputHitByInvocation(text, cwd) {
   for (const { words, cwd: effectiveCwd } of shellSegmentsWithCwd(text, cwd)) {
     for (let index = 0; index < words.length; index += 1) {
-      if (words[index] !== "git") {
+      if (!isGitToken(words[index])) {
         continue;
       }
       const invocation = parseGitInvocation(words, index, effectiveCwd);
@@ -756,6 +855,7 @@ function isGhPrPublicationWords(words) {
 
 function isBroadPublicationCommand(text) {
   return (
+    hasBroadGitAddInvocation(text) ||
     hasGitAddWholeTreePathspec(text) ||
     new RegExp(
       `${GIT_PREFIX}add(?:\\s+(?:-[A-Za-z]*[Au][A-Za-z]*|--all|--update|--force|-f))*\\s*(?:$|[\\n;&|])`,
@@ -766,10 +866,60 @@ function isBroadPublicationCommand(text) {
   );
 }
 
+function hasBroadGitAddInvocation(text) {
+  for (const { words, cwd: effectiveCwd } of shellSegmentsWithCwd(text, process.cwd())) {
+    for (let index = 0; index < words.length; index += 1) {
+      if (!isGitToken(words[index])) {
+        continue;
+      }
+      const invocation = parseGitInvocation(words, index, effectiveCwd);
+      if (invocation?.command !== "add") {
+        continue;
+      }
+      if (isNonMutatingGitAddArgs(invocation.args)) {
+        continue;
+      }
+      if (!hasExplicitGitAddPath(invocation.args)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function hasExplicitGitAddPath(args) {
+  let pathspecMode = false;
+  for (const arg of args) {
+    if (pathspecMode) {
+      return true;
+    }
+    if (arg === "--") {
+      pathspecMode = true;
+      continue;
+    }
+    if (!arg.startsWith("-")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isNonMutatingGitAddArgs(args) {
+  return args.some((arg) => {
+    if (arg === "--help" || arg === "--dry-run") {
+      return true;
+    }
+    if (arg.startsWith("--")) {
+      return false;
+    }
+    return arg.startsWith("-") && /[hn]/.test(arg.slice(1));
+  });
+}
+
 function hasGitAddWholeTreePathspec(text) {
   for (const { words, cwd: effectiveCwd } of shellSegmentsWithCwd(text, process.cwd())) {
     for (let index = 0; index < words.length; index += 1) {
-      if (words[index] !== "git") {
+      if (!isGitToken(words[index])) {
         continue;
       }
       const invocation = parseGitInvocation(words, index, effectiveCwd);
@@ -1305,7 +1455,22 @@ function handle(mode, payload) {
   return {};
 }
 
+function parseFailureResult(mode) {
+  const reason = "Blocked malformed hook input. Codex hook payload JSON could not be parsed.";
+  if (mode === "pre-tool" || mode === "PreToolUse") {
+    return preToolDeny(reason);
+  }
+  if (mode === "permission" || mode === "PermissionRequest") {
+    return permissionDeny(reason);
+  }
+  if (mode === "prompt-submit" || mode === "UserPromptSubmit") {
+    return promptBlock(reason);
+  }
+  return {};
+}
+
 const rawInput = await readStdin();
 const payload = parsePayload(rawInput);
-const result = handle(process.argv[2] ?? "", payload);
+const mode = process.argv[2] ?? "";
+const result = payload === null ? parseFailureResult(mode) : handle(mode, payload);
 process.stdout.write(`${JSON.stringify(result)}\n`);
