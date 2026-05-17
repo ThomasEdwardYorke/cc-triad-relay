@@ -8,6 +8,19 @@ import { isAbsolute, relative, resolve } from "node:path";
 const SHELL_WORD = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s;&|]+)`;
 const GIT_GLOBAL_OPTION = String.raw`(?:(?:-C|-c|--git-dir|--work-tree|--namespace|--config-env|--exec-path)(?:=${SHELL_WORD}|\s+${SHELL_WORD})|--[A-Za-z0-9-]+(?:=${SHELL_WORD})?|-[A-Za-z]+)`;
 const GIT_PREFIX = String.raw`\bgit(?:\.exe)?(?:\s+${GIT_GLOBAL_OPTION})*\s+`;
+const MAX_NESTED_SHELL_DEPTH = 5;
+const SHELL_EXECUTABLES = new Set([
+  "bash",
+  "bash.exe",
+  "dash",
+  "dash.exe",
+  "ksh",
+  "ksh.exe",
+  "sh",
+  "sh.exe",
+  "zsh",
+  "zsh.exe",
+]);
 
 const DESTRUCTIVE_COMMANDS = [
   {
@@ -159,6 +172,10 @@ function isGhToken(token) {
   return executable === "gh" || executable === "gh.exe";
 }
 
+function isShellToken(token) {
+  return SHELL_EXECUTABLES.has(executableName(token));
+}
+
 function executableName(token) {
   return normalizeCommandText(token).split("/").pop()?.toLowerCase() ?? "";
 }
@@ -193,7 +210,15 @@ function cwdFromPayload(payload) {
     : process.cwd();
 }
 
-function detectUnsafeToolUse(text, cwd = process.cwd()) {
+function detectUnsafeToolUse(text, cwd = process.cwd(), depth = 0) {
+  const nestedReason = detectNestedShellUnsafeToolUse(
+    text,
+    cwd,
+    depth,
+  );
+  if (nestedReason) {
+    return nestedReason;
+  }
   const normalizedText = normalizeCommandText(text);
   if (detectDestructiveCheckout(normalizedText, cwd)) {
     return "Blocked destructive checkout of tracked files. Use an explicit, reviewed recovery path instead.";
@@ -240,6 +265,59 @@ function detectUnsafeToolUse(text, cwd = process.cwd()) {
   }
 
   return "";
+}
+
+function detectNestedShellUnsafeToolUse(text, cwd, depth) {
+  for (const { words, cwd: effectiveCwd } of shellSegmentsWithCwd(text, cwd)) {
+    for (let index = 0; index < words.length; index += 1) {
+      if (!isShellToken(words[index])) {
+        continue;
+      }
+      const script = shellCommandArgument(words, index);
+      if (!script) {
+        continue;
+      }
+      if (depth >= MAX_NESTED_SHELL_DEPTH) {
+        return "Blocked deeply nested shell command. Run the reviewed command directly instead.";
+      }
+      const reason = detectUnsafeToolUse(script, effectiveCwd, depth + 1);
+      if (reason) {
+        return reason;
+      }
+    }
+  }
+  return "";
+}
+
+function shellCommandArgument(words, shellIndex) {
+  for (let index = shellIndex + 1; index < words.length; index += 1) {
+    const word = words[index];
+    if (word === "-c" || word === "--command") {
+      return commandArgumentAfterOption(words, index + 1);
+    }
+    if (word.startsWith("--command=")) {
+      return word.slice("--command=".length);
+    }
+    if (/^-[^-].*c/.test(word)) {
+      return commandArgumentAfterOption(words, index + 1);
+    }
+    if (["--init-file", "--rcfile", "-o", "-O"].includes(word)) {
+      index += 1;
+      continue;
+    }
+    if (word.startsWith("--init-file=") || word.startsWith("--rcfile=")) {
+      continue;
+    }
+    if (word.startsWith("-")) {
+      continue;
+    }
+    return "";
+  }
+  return "";
+}
+
+function commandArgumentAfterOption(words, index) {
+  return words[index] === "--" ? words[index + 1] ?? "" : words[index] ?? "";
 }
 
 function gitEffectiveCwd(text, cwd) {
@@ -1422,8 +1500,10 @@ function shellWords(text) {
   const words = [];
   let current = "";
   let quote = "";
+  let ansiQuote = false;
   let escaping = false;
-  for (const char of text) {
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
     if (escaping) {
       current += char;
       escaping = false;
@@ -1434,11 +1514,24 @@ function shellWords(text) {
       continue;
     }
     if (quote.length > 0) {
+      if (ansiQuote && char === "\\") {
+        const decoded = decodeAnsiEscape(text, index);
+        current += decoded.value;
+        index += decoded.consumed - 1;
+        continue;
+      }
       if (char === quote) {
         quote = "";
+        ansiQuote = false;
       } else {
         current += char;
       }
+      continue;
+    }
+    if (char === "$" && (text[index + 1] === "'" || text[index + 1] === '"')) {
+      quote = text[index + 1];
+      ansiQuote = text[index + 1] === "'";
+      index += 1;
       continue;
     }
     if (char === '"' || char === "'") {
@@ -1458,6 +1551,64 @@ function shellWords(text) {
     words.push(current);
   }
   return words;
+}
+
+function decodeAnsiEscape(text, index) {
+  const next = text[index + 1];
+  if (!next) {
+    return { value: "\\", consumed: 1 };
+  }
+  const simpleEscapes = {
+    a: "\x07",
+    b: "\b",
+    e: "\x1b",
+    E: "\x1b",
+    f: "\f",
+    n: "\n",
+    r: "\r",
+    t: "\t",
+    v: "\v",
+    "\\": "\\",
+    "'": "'",
+    '"': '"',
+    "?": "?",
+  };
+  if (Object.prototype.hasOwnProperty.call(simpleEscapes, next)) {
+    return { value: simpleEscapes[next], consumed: 2 };
+  }
+  if (next === "x") {
+    return decodeNumericEscape(text, index + 2, 2, 16, "x");
+  }
+  if (next === "u") {
+    return decodeNumericEscape(text, index + 2, 4, 16, "u");
+  }
+  if (next === "U") {
+    return decodeNumericEscape(text, index + 2, 8, 16, "U");
+  }
+  if (/[0-7]/.test(next)) {
+    return decodeNumericEscape(text, index + 1, 3, 8, "");
+  }
+  return { value: next, consumed: 2 };
+}
+
+function decodeNumericEscape(text, start, maxLength, radix, prefix) {
+  let digits = "";
+  const pattern = radix === 16 ? /[0-9A-Fa-f]/ : /[0-7]/;
+  for (
+    let index = start;
+    index < text.length && digits.length < maxLength && pattern.test(text[index]);
+    index += 1
+  ) {
+    digits += text[index];
+  }
+  if (!digits) {
+    return { value: prefix, consumed: prefix.length + 1 };
+  }
+  const codePoint = Number.parseInt(digits, radix);
+  return {
+    value: codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : "",
+    consumed: prefix.length + digits.length + 1,
+  };
 }
 
 function localOnlyLabelForToken(token, cwd, root) {

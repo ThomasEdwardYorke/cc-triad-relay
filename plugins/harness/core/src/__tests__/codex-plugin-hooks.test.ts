@@ -130,6 +130,57 @@ describe("Codex plugin hook dispatcher", () => {
     }
   });
 
+  it("blocks unsafe commands nested inside shell -c bodies", () => {
+    const cases = [
+      {
+        command: 'bash -lc "git checkout -- README.md"',
+        reason: "destructive",
+      },
+      {
+        command: 'bash -lc -- "git checkout -- README.md"',
+        reason: "destructive",
+      },
+      {
+        command: 'sh -c "gh pr create -F docs/maintainer/handoff/body.md"',
+        reason: "local-only",
+      },
+      {
+        command: 'sh -c -- "gh pr create -F docs/maintainer/handoff/body.md"',
+        reason: "local-only",
+      },
+      {
+        command: 'zsh -lc "git add -f .docs/handoff/current.md"',
+        reason: "local-only",
+      },
+      {
+        command: "bash -lc $'git add -f .docs/handoff/current.md'",
+        reason: "local-only",
+      },
+      {
+        command: String.raw`bash -lc $'git\x20add\x20-f\x20.docs/handoff/current.md'`,
+        reason: "local-only",
+      },
+    ];
+
+    for (const { command, reason } of cases) {
+      const result = runHook("pre-tool", {
+        hook_event_name: "PreToolUse",
+        tool_name: "Bash",
+        tool_input: {
+          command,
+        },
+      });
+
+      expect(result).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+        },
+      });
+      expect(JSON.stringify(result)).toContain(reason);
+    }
+  });
+
   it("blocks attempts to publish local-only handoff state", () => {
     const commands = [
       `git add .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
