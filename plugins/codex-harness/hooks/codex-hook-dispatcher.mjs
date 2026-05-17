@@ -492,6 +492,10 @@ function isExistingCheckoutPathspec(token, cwd) {
 }
 
 function isTrackedCheckoutPathspec(token, cwd, root) {
+  if (gitPathspecExists(cwd, token)) {
+    return true;
+  }
+
   const relativePath = relativePathForToken(token, cwd, root);
   if (
     relativePath.length === 0 ||
