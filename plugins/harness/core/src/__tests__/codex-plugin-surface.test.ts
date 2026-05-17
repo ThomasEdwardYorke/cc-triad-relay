@@ -77,6 +77,9 @@ const CODEX_SETUP_TEMPLATE_FILES = [
   "plugins/codex-harness/skills/harness-setup/assets/codex-config.toml.tmpl",
 ] as const;
 
+const SESSION_BRANCH_PATTERN =
+  /\bfeature\/(?=[A-Za-z0-9._/-]*(?:[A-Z]+-\d+|[0-9a-f]{7,40}))[A-Za-z0-9._/-]+/i;
+
 const CLAUDE_ONLY_NON_EQUIVALENTS = [
   "claude-oneshot",
   "parallel-worktree-v2",
@@ -109,7 +112,11 @@ function expectRecord(value: unknown, label: string): Record<string, unknown> {
 
 function expectNoActiveSessionState(surface: string): void {
   expect(surface).not.toMatch(/\/Users\//);
-  expect(surface).not.toMatch(/\bfeature\/[A-Za-z0-9._/-]+/);
+  expect(surface).not.toMatch(SESSION_BRANCH_PATTERN);
+  const currentBranch = gitLines(["branch", "--show-current"])[0] ?? "";
+  if (currentBranch.startsWith("feature/")) {
+    expect(surface).not.toContain(currentBranch);
+  }
   expect(surface).not.toMatch(/\b[0-9a-f]{7,40}\b/i);
   expect(surface).not.toMatch(/\bPR\s+#\d+\b/i);
 }
@@ -429,6 +436,9 @@ describe("Codex plugin platform surface", () => {
       expect(setupSurface).toMatch(new RegExp(escapeRegExp(phrase), "i"));
     }
 
+    expect("feature/my-feature").not.toMatch(SESSION_BRANCH_PATTERN);
+    expect("feature/T-016-codex-guidance").toMatch(SESSION_BRANCH_PATTERN);
+    expect("feature/86182b2-codex-guidance").toMatch(SESSION_BRANCH_PATTERN);
     expectNoActiveSessionState(setupSurface);
     expect(templateSurface).not.toContain("docs/maintainer/handoff");
   });
