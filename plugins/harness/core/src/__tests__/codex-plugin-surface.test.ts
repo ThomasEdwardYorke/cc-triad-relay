@@ -166,6 +166,7 @@ describe("Codex plugin platform surface", () => {
       version: "0.4.0-rc.2",
       license: "MIT",
       skills: "./skills/",
+      hooks: "./hooks/hooks.json",
       interface: {
         displayName: "Codex Harness",
         category: "Coding",
@@ -173,6 +174,62 @@ describe("Codex plugin platform surface", () => {
     });
     expect(manifest).not.toHaveProperty("commands");
     expect(manifest).not.toHaveProperty("agents");
+  });
+
+  it("wires Codex plugin hooks through the Codex adapter root", () => {
+    const hooksConfig = readJson("plugins/codex-harness/hooks/hooks.json");
+    expect(isRecord(hooksConfig)).toBe(true);
+    if (!isRecord(hooksConfig)) return;
+
+    expect(isRecord(hooksConfig.hooks)).toBe(true);
+    if (!isRecord(hooksConfig.hooks)) return;
+
+    const expectedEvents = [
+      "PreToolUse",
+      "PermissionRequest",
+      "UserPromptSubmit",
+      "Stop",
+    ] as const;
+    expect(Object.keys(hooksConfig.hooks).sort()).toEqual(
+      [...expectedEvents].sort(),
+    );
+
+    for (const eventName of expectedEvents) {
+      const entries = hooksConfig.hooks[eventName];
+      expect(Array.isArray(entries)).toBe(true);
+      expect((entries as unknown[]).length).toBeGreaterThan(0);
+      for (const entry of entries as unknown[]) {
+        expect(isRecord(entry)).toBe(true);
+        if (!isRecord(entry)) continue;
+        if (eventName === "PreToolUse" || eventName === "PermissionRequest") {
+          expect(entry.matcher).toBe(
+            "Bash|Shell|functions\\.exec_command|functions\\.shell_command|exec_command|shell_command",
+          );
+        }
+
+        const hookList = entry.hooks;
+        expect(Array.isArray(hookList)).toBe(true);
+        expect((hookList as unknown[]).length).toBeGreaterThan(0);
+        for (const hook of hookList as unknown[]) {
+          expect(isRecord(hook)).toBe(true);
+          if (!isRecord(hook)) continue;
+
+          expect(hook).toMatchObject({
+            type: "command",
+            timeout: 30,
+          });
+          expect(String(hook.command)).toContain("${PLUGIN_ROOT}");
+          expect(String(hook.command)).toContain(
+            "hooks/codex-hook-dispatcher.mjs",
+          );
+          expect(String(hook.command)).not.toContain("CLAUDE_PLUGIN_ROOT");
+        }
+      }
+    }
+
+    expect(
+      existsSync(resolve(CODEX_PLUGIN_ROOT, "hooks", "codex-hook-dispatcher.mjs")),
+    ).toBe(true);
   });
 
   it("exposes the Codex-native skill entrypoints", () => {
@@ -414,13 +471,15 @@ describe("Codex plugin platform surface", () => {
     ).toBe(false);
     expect(existsSync(resolve(CODEX_PLUGIN_ROOT, "commands"))).toBe(false);
     expect(existsSync(resolve(CODEX_PLUGIN_ROOT, "agents"))).toBe(false);
-    expect(existsSync(resolve(CODEX_PLUGIN_ROOT, "hooks"))).toBe(false);
+    expect(existsSync(resolve(CODEX_PLUGIN_ROOT, "hooks"))).toBe(true);
 
     const codexFiles = listFiles(CODEX_PLUGIN_ROOT);
     const codexSurface = codexFiles
       .map((path) => readFileSync(path, "utf-8"))
       .join("\n");
     expect(codexSurface).not.toContain(".claude-plugin");
+    expect(codexSurface).not.toContain("${CLAUDE_PLUGIN_ROOT}");
+    expect(codexSurface).toContain("${PLUGIN_ROOT}");
 
     const claudeSurface = [
       "plugins/harness/.claude-plugin/plugin.json",
@@ -456,6 +515,11 @@ describe("Codex plugin platform surface", () => {
     expect(readme).toContain(
       "codex plugin marketplace add /path/to/project",
     );
+    expect(readme).toContain("[features]");
+    expect(readme).toContain("hooks = true");
+    expect(readme).toContain("plugin_hooks = true");
+    expect(readme).toContain("/hooks");
+    expect(docs).toContain("Plugin hooks are off by default");
 
     expect(
       gitLines([

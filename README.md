@@ -44,8 +44,8 @@ This creates a `harness.config.json` tailored to your project.
 ### Codex local adapter
 
 This repository also ships a Codex-native adapter in
-`plugins/codex-harness/`. It exposes Harness workflows as Codex skills rather
-than Claude Code commands, agents, or hooks.
+`plugins/codex-harness/`. It exposes Harness workflows as Codex skills plus
+optional Codex plugin hooks, rather than Claude Code commands or agents.
 
 ```bash
 codex plugin marketplace add /path/to/project
@@ -58,6 +58,21 @@ marketplace. Current Codex skills are `clarify`, `harness-plan`,
 `pseudo-coderabbit-loop`, `new-feature-branch`, `branch-merge`,
 `harness-release`, `harness-merge-train`, `harness-self-improve`,
 `parallel-worktree`, and `codex-team`.
+
+Codex plugin hooks are bundled for early guardrail parity. Codex hooks must be
+enabled and plugin-bundled hooks are still opt-in, so the current local config
+shape is:
+
+```toml
+[features]
+hooks = true
+plugin_hooks = true
+```
+
+After enabling the feature flags and the `codex-harness` plugin, restart Codex
+and run `/hooks` to review and trust the plugin hooks. The bundled hooks cover
+tool guardrails, permission requests, prompt secret checks, and stop-time
+completion reminders.
 
 ### Optional companion: `openai-codex`
 

@@ -1,0 +1,54 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Shell|functions\\.exec_command|functions\\.shell_command|exec_command|shell_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/codex-hook-dispatcher.mjs\" pre-tool",
+            "timeout": 30,
+            "statusMessage": "Checking Harness tool guardrails"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "Bash|Shell|functions\\.exec_command|functions\\.shell_command|exec_command|shell_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/codex-hook-dispatcher.mjs\" permission",
+            "timeout": 30,
+            "statusMessage": "Checking Harness approval policy"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/codex-hook-dispatcher.mjs\" prompt-submit",
+            "timeout": 30,
+            "statusMessage": "Checking prompt safety"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/codex-hook-dispatcher.mjs\" stop",
+            "timeout": 30,
+            "statusMessage": "Checking completion evidence"
+          }
+        ]
+      }
+    ]
+  }
+}
