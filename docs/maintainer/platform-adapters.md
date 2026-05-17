@@ -10,7 +10,7 @@ format.
 | Adapter | Public surface | Entrypoint model | Owns |
 | --- | --- | --- | --- |
 | Claude Code adapter | `plugins/harness/` | Commands, agents, hooks, schemas | Claude Code manifest, command specs, agent prompts, hook dispatch |
-| Codex adapter | `plugins/codex-harness/` | Skills | Codex manifest, Codex skills, repo-local Codex marketplace entry |
+| Codex adapter | `plugins/codex-harness/` | Skills, optional plugin hooks | Codex manifest, Codex skills, Codex hook config, repo-local Codex marketplace entry |
 
 ## Metadata Rules
 
@@ -18,7 +18,8 @@ format.
 - Codex adapter metadata stays with the Codex adapter.
 - `.agents/plugins/marketplace.json` is the repo-local Codex marketplace catalog.
 - `plugins/codex-harness/.codex-plugin/plugin.json` is the Codex plugin manifest.
-- Codex adapter entrypoints are `skills/**/SKILL.md`, not copied command or agent files.
+- Codex adapter entrypoints are `skills/**/SKILL.md` and Codex plugin hook
+  config under `hooks/**`, not copied command or agent files.
 - Claude-only primitive surfaces such as `claude-oneshot` and
   `parallel-worktree-v2` are documented as non-equivalents, not copied as
   direct Codex skills.
@@ -42,6 +43,32 @@ try a Codex sub-agent first, fall back to an authenticated `codex` CLI, and
 fail closed with `BLOCKED` when neither path is available. The review input is
 the diff, PR context, and test results; the output must be
 `PASS | NEEDS_FIX | BLOCKED` plus actionable findings.
+
+## Codex Plugin Hook Foundation
+
+Codex hook parity is implemented as a Codex-native plugin hook bundle under
+`plugins/codex-harness/hooks/`. The Codex manifest points at
+`./hooks/hooks.json`, and the dispatcher uses `${PLUGIN_ROOT}` so installed
+plugin paths remain portable.
+
+Plugin hooks are off by default in the current Codex release. Operators must
+enable both hook layers before bundled plugin hooks can run:
+
+```toml
+[features]
+hooks = true
+plugin_hooks = true
+```
+
+After enabling the flags, Codex requires non-managed hooks to be reviewed and
+trusted through `/hooks`.
+
+The initial Codex hook foundation covers deterministic, testable guardrails:
+
+- `PreToolUse` for tool guardrails and local-only publication blocks.
+- `PermissionRequest` for unsafe escalation denial.
+- `UserPromptSubmit` for prompt secret checks.
+- `Stop` for completion evidence reminders before session finalization.
 
 ## Local-Only Boundary
 

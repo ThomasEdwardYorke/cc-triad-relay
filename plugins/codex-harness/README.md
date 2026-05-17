@@ -1,10 +1,11 @@
 # Codex Harness Adapter
 
 This plugin is the Codex-native adapter for the cc-triad-relay Harness. It
-exposes skills instead of command or agent files, while keeping the same
-workflow intent: repository checks, TDD, handoff hygiene, local review, CI, and
-CodeRabbit-aware PR follow-up. Review and implementation skills also require a
-Codex second-opinion gate before any branch or PR is reported clear.
+exposes skills and optional Codex plugin hooks instead of command or agent
+files, while keeping the same workflow intent: repository checks, TDD, handoff
+hygiene, local review, CI, and CodeRabbit-aware PR follow-up. Review and
+implementation skills also require a Codex second-opinion gate before any
+branch or PR is reported clear.
 
 Install it from a checkout of this repository:
 
@@ -88,6 +89,32 @@ only through a release PR.
 `parallel-worktree-v2` and `claude-oneshot` remain Claude-only primitive
 surfaces. They are not copied as direct Codex skills because Codex has its own
 subagent, CLI, and isolated-worktree paths.
+
+## Plugin Hook Contract
+
+This adapter bundles `./hooks/hooks.json` and points to it from
+`.codex-plugin/plugin.json`. Plugin hooks are off by default in the current
+Codex release, so enable both hook layers before expecting these hooks to run:
+
+```toml
+[features]
+hooks = true
+plugin_hooks = true
+```
+
+After enabling the flags and this plugin, restart Codex and run `/hooks` to
+review and trust the non-managed plugin hooks.
+
+The bundled hook dispatcher is deterministic and testable without a live Codex
+session:
+
+- `PreToolUse` blocks destructive shell paths and local-only publication commands.
+- `PermissionRequest` denies the same unsafe escalations before the normal approval prompt.
+- `UserPromptSubmit` blocks prompts that appear to contain common secret shapes.
+- `Stop` reminds the operator to report tests, review/CodeRabbit status, and handoff/archive state before ending implementation work.
+
+The hooks use `${PLUGIN_ROOT}` and stay under `plugins/codex-harness/hooks/`.
+They do not depend on `CLAUDE_PLUGIN_ROOT` or Claude Code hook metadata.
 
 ## Boundary
 
