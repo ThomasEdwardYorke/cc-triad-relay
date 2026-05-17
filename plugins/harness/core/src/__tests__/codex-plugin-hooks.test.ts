@@ -22,6 +22,18 @@ const REPO_ROOT_FROM_TILDE = REPO_ROOT.startsWith(`${HOME_DIR}/`)
   : undefined;
 const SAMPLE_HANDOFF_FILENAME = "my-project-current.md";
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function shellDoubleQuoteExpansion(value: string): string {
+  return `"${value.replace(/(["\\`])/g, "\\$1")}"`;
+}
+
+function shellQuoteTildeExpansion(value: string): string {
+  return value.startsWith("~/") ? `~/${shellQuote(value.slice(2))}` : shellQuote(value);
+}
+
 function runHook(mode: string, payload: unknown, cwd = REPO_ROOT): unknown {
   return runHookRaw(mode, JSON.stringify(payload), cwd);
 }
@@ -157,18 +169,18 @@ describe("Codex plugin hook dispatcher", () => {
       'git add -f "${PWD}/docs/maintainer/handoff"',
       ...(REPO_ROOT_FROM_HOME
         ? [
-            `git add -f ${REPO_ROOT_FROM_HOME}/.docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
+            `git add -f ${shellDoubleQuoteExpansion(`${REPO_ROOT_FROM_HOME}/.docs/handoff/${SAMPLE_HANDOFF_FILENAME}`)}`,
           ]
         : []),
       ...(REPO_ROOT_FROM_TILDE
         ? [
-            `git add -f ${REPO_ROOT_FROM_TILDE}/docs/maintainer/handoff/note.md`,
+            `git add -f ${shellQuoteTildeExpansion(`${REPO_ROOT_FROM_TILDE}/docs/maintainer/handoff/note.md`)}`,
           ]
         : []),
       `git add -f :/.docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
       "git add -f :(top)docs/maintainer/handoff/note.md",
-      `git add ${resolve(REPO_ROOT, ".docs/handoff", SAMPLE_HANDOFF_FILENAME)}`,
-      `git add ${resolve(REPO_ROOT, ".DOCS/handoff", SAMPLE_HANDOFF_FILENAME)}`,
+      `git add ${shellQuote(resolve(REPO_ROOT, ".docs/handoff", SAMPLE_HANDOFF_FILENAME))}`,
+      `git add ${shellQuote(resolve(REPO_ROOT, ".DOCS/handoff", SAMPLE_HANDOFF_FILENAME))}`,
     ];
 
     for (const command of commands) {
@@ -191,17 +203,17 @@ describe("Codex plugin hook dispatcher", () => {
 
     const subdir = resolve(REPO_ROOT, "plugins/harness/core");
     const subdirCommands = [
-      `git add ${resolve(REPO_ROOT, ".docs/handoff", SAMPLE_HANDOFF_FILENAME)}`,
+      `git add ${shellQuote(resolve(REPO_ROOT, ".docs/handoff", SAMPLE_HANDOFF_FILENAME))}`,
       `git add ../../../.docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
-      `git -C ${REPO_ROOT} add -f .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
+      `git -C ${shellQuote(REPO_ROOT)} add -f .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
       ...(REPO_ROOT_FROM_HOME
         ? [
-            `git -C ${REPO_ROOT_FROM_HOME} add -f .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
+            `git -C ${shellDoubleQuoteExpansion(REPO_ROOT_FROM_HOME)} add -f .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
           ]
         : []),
       ...(REPO_ROOT_FROM_TILDE
         ? [
-            `git -C ${REPO_ROOT_FROM_TILDE} add -f .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
+            `git -C ${shellQuoteTildeExpansion(REPO_ROOT_FROM_TILDE)} add -f .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
           ]
         : []),
       `git -C ../../.. add -f .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
@@ -232,7 +244,7 @@ describe("Codex plugin hook dispatcher", () => {
     const cdCommands = [
       `cd plugins/harness/core && git add -f ../../../.docs/handoff/${SAMPLE_HANDOFF_FILENAME} && git commit -m leak`,
       "git status && cd plugins/harness/core && git add -f ../../../.docs/handoff/current.md",
-      `git -C /tmp status && git add -f ${resolve(REPO_ROOT, ".docs/handoff/current.md")}`,
+      `git -C /tmp status && git add -f ${shellQuote(resolve(REPO_ROOT, ".docs/handoff/current.md"))}`,
       "git add README.md && cd plugins/harness/core && git add -f ../../../.docs/handoff/current.md",
       'git -C "$PWD/plugins/harness/core" add -f ../../../.docs/handoff/current.md',
       "(cd plugins/harness/core && git add -f ../../../.docs/handoff/current.md)",
@@ -280,7 +292,7 @@ describe("Codex plugin hook dispatcher", () => {
     const commands = [
       `git commit -F .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
       "git commit --file=DOCS/maintainer/handoff/note.md",
-      `git commit -F${resolve(REPO_ROOT, ".DOCS/handoff", SAMPLE_HANDOFF_FILENAME)}`,
+      `git commit -F${shellQuote(resolve(REPO_ROOT, ".DOCS/handoff", SAMPLE_HANDOFF_FILENAME))}`,
       `gh pr create -F .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
       `/usr/bin/gh pr create -F .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
       "gh pr edit --body-file docs/maintainer/handoff/note.md",
@@ -1008,7 +1020,7 @@ describe("Codex plugin hook dispatcher", () => {
           hook_event_name: "PreToolUse",
           tool_name: "Bash",
           tool_input: {
-            command: `git add -f --pathspec-from-file=${pathspecFile} && git commit -m leak`,
+            command: `git add -f --pathspec-from-file=${shellQuote(pathspecFile)} && git commit -m leak`,
           },
         },
         repo,
