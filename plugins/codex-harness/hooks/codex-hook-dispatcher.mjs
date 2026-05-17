@@ -150,8 +150,17 @@ function isShellExecution(payload) {
 }
 
 function isGitToken(token) {
-  const executable = normalizeCommandText(token).split("/").pop()?.toLowerCase();
+  const executable = executableName(token);
   return executable === "git" || executable === "git.exe";
+}
+
+function isGhToken(token) {
+  const executable = executableName(token);
+  return executable === "gh" || executable === "gh.exe";
+}
+
+function executableName(token) {
+  return normalizeCommandText(token).split("/").pop()?.toLowerCase() ?? "";
 }
 
 function promptText(payload) {
@@ -697,7 +706,11 @@ function findIndexedLocalOnlyHitByInvocation(text, cwd) {
     }
 
     if (isGhPrPublicationWords(words)) {
-      const hit = findIndexedLocalOnlyHit(effectiveCwd, { checkHistory: true });
+      const hit = findIndexedLocalOnlyHit(effectiveCwd, {
+        checkHistory: true,
+        ignoreUpstream: true,
+        publicationBase: ghPrPublicationBase(words, effectiveCwd),
+      });
       if (hit) {
         return hit;
       }
@@ -739,7 +752,7 @@ function findLocalOnlyTextInputHitByInvocation(text, cwd) {
 
 function findGhPrTextInputHit(words, cwd) {
   for (let index = 0; index < words.length; index += 1) {
-    if (words[index] !== "gh") {
+    if (!isGhToken(words[index])) {
       continue;
     }
     let cursor = index + 1;
@@ -819,7 +832,7 @@ function findLocalOnlyOptionFileHit(args, cwd, options) {
 
 function isGhPrPublicationWords(words) {
   for (let index = 0; index < words.length; index += 1) {
-    if (words[index] !== "gh") {
+    if (!isGhToken(words[index])) {
       continue;
     }
     let cursor = index + 1;
@@ -851,6 +864,80 @@ function isGhPrPublicationWords(words) {
     }
   }
   return false;
+}
+
+function ghPrPublicationBase(words, cwd) {
+  for (let index = 0; index < words.length; index += 1) {
+    if (!isGhToken(words[index])) {
+      continue;
+    }
+    let cursor = index + 1;
+    while (cursor < words.length) {
+      const word = words[cursor];
+      if (["-R", "--repo", "--hostname"].includes(word)) {
+        cursor += 2;
+        continue;
+      }
+      if (
+        word.startsWith("--repo=") ||
+        word.startsWith("--hostname=") ||
+        word === "--"
+      ) {
+        cursor += 1;
+        continue;
+      }
+      if (word.startsWith("-")) {
+        cursor += 1;
+        continue;
+      }
+      break;
+    }
+    if (
+      words[cursor] === "pr" &&
+      /^(?:create|edit)$/.test(words[cursor + 1] ?? "")
+    ) {
+      const command = words[cursor + 1] ?? "";
+      const explicitBase = explicitGhBaseArg(words.slice(cursor + 2));
+      if (explicitBase) {
+        return explicitBase;
+      }
+      return command === "create" ? configuredGhMergeBase(cwd) : "";
+    }
+  }
+  return "";
+}
+
+function explicitGhBaseArg(args) {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--base" || arg === "-B") {
+      const value = args[index + 1] ?? "";
+      return value.startsWith("-") ? "" : value;
+    }
+    if (arg.startsWith("--base=")) {
+      return arg.slice("--base=".length);
+    }
+    if (arg.startsWith("-B=")) {
+      return arg.slice("-B=".length);
+    }
+    if (/^-B\S+/.test(arg)) {
+      return arg.slice(2);
+    }
+  }
+  return "";
+}
+
+function configuredGhMergeBase(cwd) {
+  const root = rootPath(cwd);
+  const branch = gitFirstLine(root, ["branch", "--show-current"]);
+  if (!branch) {
+    return "";
+  }
+  return gitFirstLine(root, [
+    "config",
+    "--get",
+    `branch.${branch}.gh-merge-base`,
+  ]);
 }
 
 function isBroadPublicationCommand(text) {
@@ -1129,13 +1216,13 @@ function findIndexedLocalOnlyHit(cwd, options = {}) {
     }
   }
   if (checkHistory) {
-    return findHistoricalLocalOnlyHit(root);
+    return findHistoricalLocalOnlyHit(root, options);
   }
   return undefined;
 }
 
-function findHistoricalLocalOnlyHit(root) {
-  const range = publicationHistoryRange(root);
+function findHistoricalLocalOnlyHit(root, options = {}) {
+  const range = publicationHistoryRange(root, options);
   const args = ["log", "--name-status", "--format="];
   if (range) {
     args.push(range);
@@ -1156,28 +1243,149 @@ function findHistoricalLocalOnlyHit(root) {
   return undefined;
 }
 
-function publicationHistoryRange(root) {
-  const upstream = gitFirstLine(root, [
-    "rev-parse",
-    "--verify",
-    "--quiet",
-    "@{u}",
-  ]);
-  if (upstream) {
-    return `${upstream}..HEAD`;
+function publicationHistoryRange(root, options = {}) {
+  const explicitBase = remoteRefForPublicationBase(options.publicationBase);
+  const explicitMergeBase = explicitBase
+    ? mergeBaseForRemoteRef(root, explicitBase)
+    : "";
+  if (explicitMergeBase) {
+    return `${explicitMergeBase}..HEAD`;
   }
 
-  for (const base of ["origin/dev", "origin/main", "origin/master"]) {
-    if (!gitFirstLine(root, ["rev-parse", "--verify", "--quiet", `${base}^{commit}`])) {
-      continue;
+  if (options.ignoreUpstream !== true) {
+    const upstream = gitFirstLine(root, [
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      "@{u}",
+    ]);
+    if (upstream) {
+      return `${upstream}..HEAD`;
     }
-    const mergeBase = gitFirstLine(root, ["merge-base", "HEAD", base]);
-    if (mergeBase) {
-      return `${mergeBase}..HEAD`;
-    }
+  }
+
+  const defaultBase = remoteDefaultBranch(root);
+  const defaultMergeBase = defaultBase
+    ? mergeBaseForRemoteRef(root, defaultBase)
+    : "";
+  if (defaultMergeBase) {
+    return `${defaultMergeBase}..HEAD`;
+  }
+
+  const nearestBase = nearestRemoteHistoryBase(root);
+  if (nearestBase) {
+    return `${nearestBase.mergeBase}..HEAD`;
   }
 
   return "HEAD";
+}
+
+function nearestRemoteHistoryBase(root) {
+  const candidates = uniqueStrings(commonRemoteBaseRefs());
+  const head = gitFirstLine(root, ["rev-parse", "HEAD"]);
+  const ranked = [];
+  for (const base of candidates) {
+    const mergeBase = mergeBaseForRemoteRef(root, base);
+    if (!mergeBase) {
+      continue;
+    }
+    if (
+      mergeBase === head &&
+      !localBranchMatchesRemoteAtHead(root, base, head)
+    ) {
+      continue;
+    }
+    const count = Number.parseInt(
+      gitFirstLine(root, ["rev-list", "--count", `${mergeBase}..HEAD`]),
+      10,
+    );
+    ranked.push({
+      base,
+      mergeBase,
+      count: Number.isFinite(count) ? count : Number.MAX_SAFE_INTEGER,
+    });
+  }
+  ranked.sort((left, right) =>
+    left.count - right.count ||
+    left.base.localeCompare(right.base),
+  );
+  return ranked[0];
+}
+
+function mergeBaseForRemoteRef(root, base) {
+  if (!gitFirstLine(root, ["rev-parse", "--verify", "--quiet", `${base}^{commit}`])) {
+    return "";
+  }
+  return gitFirstLine(root, ["merge-base", "HEAD", base]);
+}
+
+function remoteRefForPublicationBase(base) {
+  if (typeof base !== "string" || base.length === 0) {
+    return "";
+  }
+  const normalized = normalizeCommandText(base)
+    .replace(/^refs\/heads\//, "")
+    .replace(/^refs\/remotes\//, "");
+  if (!normalized || normalized.includes(":")) {
+    return "";
+  }
+  return normalized.startsWith("origin/") ? normalized : `origin/${normalized}`;
+}
+
+function localBranchMatchesRemoteAtHead(root, remoteRef, head) {
+  const branch = remoteRef.startsWith("origin/")
+    ? remoteRef.slice("origin/".length)
+    : "";
+  if (!branch || branch === "HEAD") {
+    return false;
+  }
+  const localCommit = gitFirstLine(root, [
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    `refs/heads/${branch}^{commit}`,
+  ]);
+  const remoteCommit = gitFirstLine(root, [
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    `${remoteRef}^{commit}`,
+  ]);
+  return localCommit === head && remoteCommit === head;
+}
+
+function commonRemoteBaseRefs() {
+  return ["main", "master", "develop", "dev", "trunk"].map(
+    (branch) => `origin/${branch}`,
+  );
+}
+
+function remoteDefaultBranch(root) {
+  const symbolicRef = gitFirstLine(root, [
+    "symbolic-ref",
+    "--quiet",
+    "refs/remotes/origin/HEAD",
+  ]);
+  const remoteHead = symbolicRef ||
+    gitFirstLine(root, ["rev-parse", "--abbrev-ref", "origin/HEAD"]);
+  return normalizeRemoteHeadRef(remoteHead);
+}
+
+function normalizeRemoteHeadRef(ref) {
+  if (!ref) {
+    return "";
+  }
+  const normalized = ref
+    .trim()
+    .replace(/^refs\/remotes\//, "");
+  if (!normalized || normalized === "origin/HEAD") {
+    return "";
+  }
+  return normalized.startsWith("origin/") ? normalized : `origin/${normalized}`;
+}
+
+function uniqueStrings(values) {
+  return Array.from(new Set(values.filter(Boolean)));
 }
 
 function parseNameStatusLine(line) {
@@ -1408,7 +1616,7 @@ function looksLikeImplementationWork(payload, message) {
   ]
     .map((value) => stringifyValue(value))
     .join(" ");
-  if (/\b(?:implementation|implement|tdd|red|green|pr|review)\b/i.test(workflow)) {
+  if (/\b(?:implementation|implement|tdd|red|green|feature|bugfix)\b/i.test(workflow)) {
     return true;
   }
 

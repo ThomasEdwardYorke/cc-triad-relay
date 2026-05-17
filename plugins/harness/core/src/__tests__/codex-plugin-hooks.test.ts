@@ -282,7 +282,9 @@ describe("Codex plugin hook dispatcher", () => {
       "git commit --file=DOCS/maintainer/handoff/note.md",
       `git commit -F${resolve(REPO_ROOT, ".DOCS/handoff", SAMPLE_HANDOFF_FILENAME)}`,
       `gh pr create -F .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
+      `/usr/bin/gh pr create -F .docs/handoff/${SAMPLE_HANDOFF_FILENAME}`,
       "gh pr edit --body-file docs/maintainer/handoff/note.md",
+      '"C:/Program Files/GitHub CLI/gh.exe" pr edit --body-file docs/maintainer/handoff/note.md',
       `gh pr create --template .DOCS/handoff/${SAMPLE_HANDOFF_FILENAME}`,
       "gh pr create -T docs/maintainer/handoff/template.md",
     ];
@@ -1025,6 +1027,508 @@ describe("Codex plugin hook dispatcher", () => {
     }
   });
 
+  it("uses remote HEAD instead of a project-specific base branch for history checks", () => {
+    const remote = mkdtempSync(resolve(tmpdir(), "codex-hook-remote-"));
+    const repo = mkdtempSync(resolve(tmpdir(), "codex-hook-remote-head-"));
+    try {
+      execFileSync("git", ["init", "--bare"], { cwd: remote, stdio: "ignore" });
+      execFileSync("git", ["symbolic-ref", "HEAD", "refs/heads/trunk"], {
+        cwd: remote,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "test@example.com"], {
+        cwd: repo,
+      });
+      execFileSync("git", ["config", "user.name", "Test User"], { cwd: repo });
+      execFileSync("git", ["checkout", "-b", "trunk"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      writeFileSync(resolve(repo, "README.md"), "seed\n");
+      execFileSync("git", ["add", "README.md"], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "seed"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["remote", "add", "origin", remote], { cwd: repo });
+      execFileSync("git", ["push", "-u", "origin", "trunk"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync(
+        "git",
+        ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"],
+        { cwd: repo, stdio: "ignore" },
+      );
+      execFileSync("git", ["checkout", "-b", "feature/local-only"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      mkdirSync(resolve(repo, ".docs/handoff"), { recursive: true });
+      writeFileSync(resolve(repo, ".docs/handoff/current.md"), "local\n");
+      execFileSync("git", ["add", "-f", ".docs/handoff/current.md"], {
+        cwd: repo,
+      });
+      execFileSync("git", ["commit", "-m", "leak"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+
+      const result = runHook(
+        "pre-tool",
+        {
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_name: "Bash",
+          tool_input: {
+            command: "/usr/bin/gh pr create",
+          },
+        },
+        repo,
+      );
+
+      expect(result).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+        },
+      });
+      expect(JSON.stringify(result)).toContain("local-only");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the nearest remote ancestor when remote HEAD is not available", () => {
+    const remote = mkdtempSync(resolve(tmpdir(), "codex-hook-nearest-remote-"));
+    const repo = mkdtempSync(resolve(tmpdir(), "codex-hook-nearest-repo-"));
+    try {
+      execFileSync("git", ["init", "--bare"], { cwd: remote, stdio: "ignore" });
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "test@example.com"], {
+        cwd: repo,
+      });
+      execFileSync("git", ["config", "user.name", "Test User"], { cwd: repo });
+      writeFileSync(resolve(repo, "README.md"), "seed\n");
+      execFileSync("git", ["add", "README.md"], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "seed"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["branch", "-M", "main"], { cwd: repo });
+      execFileSync("git", ["remote", "add", "origin", remote], { cwd: repo });
+      execFileSync("git", ["push", "-u", "origin", "main"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["checkout", "-b", "dev"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      mkdirSync(resolve(repo, "docs/maintainer/handoff"), { recursive: true });
+      writeFileSync(resolve(repo, "docs/maintainer/handoff/current.md"), "local\n");
+      execFileSync("git", ["add", "-f", "docs/maintainer/handoff/current.md"], {
+        cwd: repo,
+      });
+      execFileSync("git", ["commit", "-m", "add local-only"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["rm", "-r", "docs/maintainer/handoff"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["commit", "-m", "remove local-only"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["push", "-u", "origin", "dev"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["checkout", "-b", "feature/no-upstream"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+
+      const result = runHook(
+        "pre-tool",
+        {
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_name: "Bash",
+          tool_input: {
+            command: "/usr/bin/gh pr create",
+          },
+        },
+        repo,
+      );
+
+      expect(result).toEqual({});
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  });
+
+  it("uses merge-base when the no-upstream remote base advanced", () => {
+    const remote = mkdtempSync(resolve(tmpdir(), "codex-hook-advanced-remote-"));
+    const repo = mkdtempSync(resolve(tmpdir(), "codex-hook-advanced-repo-"));
+    try {
+      execFileSync("git", ["init", "--bare"], { cwd: remote, stdio: "ignore" });
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "test@example.com"], {
+        cwd: repo,
+      });
+      execFileSync("git", ["config", "user.name", "Test User"], { cwd: repo });
+      writeFileSync(resolve(repo, "README.md"), "seed\n");
+      execFileSync("git", ["add", "README.md"], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "seed"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      mkdirSync(resolve(repo, "docs/maintainer/handoff"), { recursive: true });
+      writeFileSync(resolve(repo, "docs/maintainer/handoff/current.md"), "local\n");
+      execFileSync("git", ["add", "-f", "docs/maintainer/handoff/current.md"], {
+        cwd: repo,
+      });
+      execFileSync("git", ["commit", "-m", "old local-only"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["rm", "-r", "docs/maintainer/handoff"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["commit", "-m", "cleanup local-only"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["branch", "-M", "main"], { cwd: repo });
+      execFileSync("git", ["remote", "add", "origin", remote], { cwd: repo });
+      execFileSync("git", ["push", "-u", "origin", "main"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["checkout", "-b", "feature/normal"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["checkout", "main"], { cwd: repo, stdio: "ignore" });
+      writeFileSync(resolve(repo, "README.md"), "seed\nbase advance\n");
+      execFileSync("git", ["commit", "-am", "advance base"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["push", "origin", "main"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["checkout", "feature/normal"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      writeFileSync(resolve(repo, "feature.txt"), "feature\n");
+      execFileSync("git", ["add", "feature.txt"], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "normal feature"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+
+      const result = runHook(
+        "pre-tool",
+        {
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_name: "Bash",
+          tool_input: {
+            command: "gh pr create",
+          },
+        },
+        repo,
+      );
+
+      expect(result).toEqual({});
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  });
+
+  it("uses an explicit PR base for local-only history checks", () => {
+    const remote = mkdtempSync(resolve(tmpdir(), "codex-hook-pr-base-remote-"));
+    const repo = mkdtempSync(resolve(tmpdir(), "codex-hook-pr-base-repo-"));
+    try {
+      execFileSync("git", ["init", "--bare"], { cwd: remote, stdio: "ignore" });
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "test@example.com"], {
+        cwd: repo,
+      });
+      execFileSync("git", ["config", "user.name", "Test User"], { cwd: repo });
+      writeFileSync(resolve(repo, "README.md"), "seed\n");
+      execFileSync("git", ["add", "README.md"], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "seed"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["branch", "-M", "main"], { cwd: repo });
+      execFileSync("git", ["remote", "add", "origin", remote], { cwd: repo });
+      execFileSync("git", ["push", "-u", "origin", "main"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync(
+        "git",
+        ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
+        { cwd: repo, stdio: "ignore" },
+      );
+      execFileSync("git", ["checkout", "-b", "dev"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      mkdirSync(resolve(repo, ".docs/handoff"), { recursive: true });
+      writeFileSync(resolve(repo, ".docs/handoff/current.md"), "local\n");
+      execFileSync("git", ["add", "-f", ".docs/handoff/current.md"], {
+        cwd: repo,
+      });
+      execFileSync("git", ["commit", "-m", "add local-only"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["rm", "-r", ".docs"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["commit", "-m", "remove local-only"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["push", "-u", "origin", "dev"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["checkout", "-b", "feature/from-dev"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      writeFileSync(resolve(repo, "feature.txt"), "feature\n");
+      execFileSync("git", ["add", "feature.txt"], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "normal feature"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+
+      for (const command of [
+        "gh pr create --base dev",
+        "gh pr create --base=dev",
+        "gh pr create -B dev",
+        "gh pr create -Bdev",
+        "gh pr create -B=dev",
+      ]) {
+        const result = runHook(
+          "pre-tool",
+          {
+            cwd: repo,
+            hook_event_name: "PreToolUse",
+            tool_name: "Bash",
+            tool_input: {
+              command,
+            },
+          },
+          repo,
+        );
+
+        expect(result).toEqual({});
+      }
+      execFileSync("git", [
+        "config",
+        "branch.feature/from-dev.gh-merge-base",
+        "dev",
+      ], { cwd: repo });
+
+      const configuredBaseResult = runHook(
+        "pre-tool",
+        {
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_name: "Bash",
+          tool_input: {
+            command: "gh pr create",
+          },
+        },
+        repo,
+      );
+
+      expect(configuredBaseResult).toEqual({});
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  });
+
+  it("does not use matching or integration remote branches as the publication base", () => {
+    const remote = mkdtempSync(resolve(tmpdir(), "codex-hook-pushed-remote-"));
+    const repo = mkdtempSync(resolve(tmpdir(), "codex-hook-pushed-repo-"));
+    try {
+      execFileSync("git", ["init", "--bare"], { cwd: remote, stdio: "ignore" });
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "test@example.com"], {
+        cwd: repo,
+      });
+      execFileSync("git", ["config", "user.name", "Test User"], { cwd: repo });
+      writeFileSync(resolve(repo, "README.md"), "seed\n");
+      execFileSync("git", ["add", "README.md"], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "seed"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["branch", "-M", "main"], { cwd: repo });
+      execFileSync("git", ["remote", "add", "origin", remote], { cwd: repo });
+      execFileSync("git", ["push", "-u", "origin", "main"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync(
+        "git",
+        ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
+        { cwd: repo, stdio: "ignore" },
+      );
+      execFileSync("git", ["checkout", "-b", "feature/leaky"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      mkdirSync(resolve(repo, ".docs/handoff"), { recursive: true });
+      writeFileSync(resolve(repo, ".docs/handoff/current.md"), "local\n");
+      execFileSync("git", ["add", "-f", ".docs/handoff/current.md"], {
+        cwd: repo,
+      });
+      execFileSync("git", ["commit", "-m", "add local-only"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["rm", "-r", ".docs"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["commit", "-m", "remove local-only"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["push", "-u", "origin", "HEAD:feature/leaky"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["push", "origin", "HEAD:wip-shadow"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["push", "origin", "HEAD:develop"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+
+      const result = runHook(
+        "pre-tool",
+        {
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_name: "Bash",
+          tool_input: {
+            command: "gh pr create",
+          },
+        },
+        repo,
+      );
+
+      expect(result).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+        },
+      });
+      expect(JSON.stringify(result)).toContain("local-only");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  });
+
+  it("does not use a remote integration branch at HEAD without a matching local base", () => {
+    const remote = mkdtempSync(resolve(tmpdir(), "codex-hook-remote-only-base-"));
+    const repo = mkdtempSync(resolve(tmpdir(), "codex-hook-remote-only-repo-"));
+    try {
+      execFileSync("git", ["init", "--bare"], { cwd: remote, stdio: "ignore" });
+      execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "test@example.com"], {
+        cwd: repo,
+      });
+      execFileSync("git", ["config", "user.name", "Test User"], { cwd: repo });
+      writeFileSync(resolve(repo, "README.md"), "seed\n");
+      execFileSync("git", ["add", "README.md"], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "seed"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["branch", "-M", "main"], { cwd: repo });
+      execFileSync("git", ["remote", "add", "origin", remote], { cwd: repo });
+      execFileSync("git", ["push", "-u", "origin", "main"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["checkout", "-b", "feature/leaky"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      mkdirSync(resolve(repo, ".docs/handoff"), { recursive: true });
+      writeFileSync(resolve(repo, ".docs/handoff/current.md"), "local\n");
+      execFileSync("git", ["add", "-f", ".docs/handoff/current.md"], {
+        cwd: repo,
+      });
+      execFileSync("git", ["commit", "-m", "add local-only"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["rm", "-r", ".docs"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["commit", "-m", "remove local-only"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["push", "origin", "HEAD:develop"], {
+        cwd: repo,
+        stdio: "ignore",
+      });
+
+      const result = runHook(
+        "pre-tool",
+        {
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_name: "Bash",
+          tool_input: {
+            command: "gh pr create",
+          },
+        },
+        repo,
+      );
+
+      expect(result).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+        },
+      });
+      expect(JSON.stringify(result)).toContain("local-only");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
+    }
+  });
+
   it("allows cleanup commits that remove previously tracked local-only files", () => {
     const repo = mkdtempSync(resolve(tmpdir(), "codex-hook-cleanup-"));
     try {
@@ -1048,6 +1552,7 @@ describe("Codex plugin hook dispatcher", () => {
         "git push origin HEAD",
         "git archive HEAD -o /tmp/leak.tar",
         "gh pr create",
+        "/usr/bin/gh pr create",
       ];
       for (const command of publicationCommands) {
         const publicationResult = runHook(
@@ -1095,6 +1600,7 @@ describe("Codex plugin hook dispatcher", () => {
       const historyPublicationCommands = [
         "git push origin HEAD",
         "gh pr create",
+        "./gh pr create",
       ];
       for (const command of historyPublicationCommands) {
         const publicationResult = runHook(
@@ -1162,6 +1668,19 @@ describe("Codex plugin hook dispatcher", () => {
             content: message,
           },
         ],
+      });
+
+      expect(result).toEqual({});
+    }
+  });
+
+  it("does not treat review or PR workflow labels as implementation work", () => {
+    for (const workflow of ["review", "pr"] as const) {
+      const result = runHook("stop", {
+        hook_event_name: "Stop",
+        stop_hook_active: false,
+        workflow,
+        last_assistant_message: "Reviewed the PR status.",
       });
 
       expect(result).toEqual({});
