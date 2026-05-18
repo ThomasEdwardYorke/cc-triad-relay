@@ -77,6 +77,11 @@ const CODEX_SETUP_TEMPLATE_FILES = [
   "plugins/codex-harness/skills/harness-setup/assets/codex-config.toml.tmpl",
 ] as const;
 
+const CODEX_CI_AUTOMATION_TEMPLATE_FILES = [
+  "plugins/codex-harness/skills/harness-setup/assets/codex-github-action-review.yml.tmpl",
+  "plugins/codex-harness/skills/harness-setup/assets/codex-review-prompt.md.tmpl",
+] as const;
+
 const CODEX_MCP_CONFIG_FILE = "plugins/codex-harness/.mcp.json";
 
 const CODEX_SUBAGENT_TEMPLATE_FILES = [
@@ -272,6 +277,107 @@ describe("Codex plugin platform surface", () => {
     expectNoActiveSessionState(`${JSON.stringify(mcpConfig)}\n${combinedDocs}`);
     expect(combinedDocs).not.toMatch(/github_pat_|gh[pousr]_/);
     expect(combinedDocs).not.toMatch(/OPENAI_API_KEY|GITHUB_TOKEN/);
+  });
+
+  it("publishes Codex CI and non-interactive automation gates without replacing CI or CodeRabbit", () => {
+    const harnessWork = readRepoFile(
+      "plugins/codex-harness/skills/harness-work/SKILL.md",
+    );
+    const tddImplement = readRepoFile(
+      "plugins/codex-harness/skills/tdd-implement/SKILL.md",
+    );
+    const pseudoCoderabbit = readRepoFile(
+      "plugins/codex-harness/skills/pseudo-coderabbit-loop/SKILL.md",
+    );
+    const coderabbitReview = readRepoFile(
+      "plugins/codex-harness/skills/coderabbit-review/SKILL.md",
+    );
+    const branchMerge = readRepoFile(
+      "plugins/codex-harness/skills/branch-merge/SKILL.md",
+    );
+    const harnessSetup = readRepoFile(
+      "plugins/codex-harness/skills/harness-setup/SKILL.md",
+    );
+    const readme = readRepoFile("plugins/codex-harness/README.md");
+    const platformAdapters = readRepoFile("docs/maintainer/platform-adapters.md");
+    const setupTemplates = CODEX_SETUP_TEMPLATE_FILES.map(readRepoFile).join(
+      "\n",
+    );
+    const workflowTemplate = readRepoFile(CODEX_CI_AUTOMATION_TEMPLATE_FILES[0]);
+    const promptTemplate = readRepoFile(CODEX_CI_AUTOMATION_TEMPLATE_FILES[1]);
+    const combinedDocs = [
+      harnessWork,
+      tddImplement,
+      pseudoCoderabbit,
+      coderabbitReview,
+      branchMerge,
+      harnessSetup,
+      readme,
+      platformAdapters,
+      setupTemplates,
+      workflowTemplate,
+      promptTemplate,
+    ].join("\n");
+
+    for (const path of CODEX_CI_AUTOMATION_TEMPLATE_FILES) {
+      expect(existsSync(repoPath(path)), `${path} must exist`).toBe(true);
+    }
+
+    for (const phrase of [
+      "Codex CI and non-interactive automation gate",
+      "codex exec",
+      "Non-interactive mode",
+      "local-only",
+      "CI-optional",
+      "release-blocking",
+      "GitHub CI remains the release-blocking source",
+      "CodeRabbit remains the PR review source",
+      "do not duplicate CodeRabbit",
+      "do not replace GitHub CI",
+    ]) {
+      expect(combinedDocs, `missing ${phrase}`).toContain(phrase);
+    }
+
+    for (const cliPhrase of [
+      "--sandbox read-only",
+      "--sandbox workspace-write",
+      "--json",
+      "--output-schema",
+      "--output-last-message",
+      "--ephemeral",
+      "--ignore-user-config",
+      "CODEX_API_KEY",
+    ]) {
+      expect(combinedDocs, `missing ${cliPhrase}`).toContain(cliPhrase);
+    }
+
+    for (const actionPhrase of [
+      "openai/codex-action@v1",
+      "prompt-file",
+      "output-file",
+      "safety-strategy: drop-sudo",
+      "sandbox: read-only",
+      "codex-args",
+      "refs/pull/${{ github.event.pull_request.number }}/merge",
+      "github.event.pull_request.head.repo.fork == false",
+      "if: ${{ env.CODEX_API_KEY != '' }}",
+      "openai-api-key: ${{ env.CODEX_API_KEY }}",
+      "if: ${{ steps.run_codex.outcome == 'success' }}",
+      "pull-requests: write",
+      "allow-users",
+    ]) {
+      expect(workflowTemplate, `workflow missing ${actionPhrase}`).toContain(
+        actionPhrase,
+      );
+    }
+
+    expect(promptTemplate).toContain("PASS | NEEDS_FIX | BLOCKED");
+    expect(promptTemplate).toContain("actionable findings");
+    expect(promptTemplate).toContain("public/local boundary");
+    expect(workflowTemplate).not.toContain("danger-full-access");
+    expect(combinedDocs).not.toContain("full-auto");
+    expect(combinedDocs).not.toMatch(/OPENAI_API_KEY|GITHUB_TOKEN/);
+    expectNoActiveSessionState(combinedDocs);
   });
 
   it("wires Codex plugin hooks through the Codex adapter root", () => {

@@ -1,0 +1,20 @@
+# Codex PR Review Prompt
+
+Review the current pull request merge checkout.
+
+Return exactly one verdict: `PASS | NEEDS_FIX | BLOCKED`.
+
+Report only actionable findings. For each finding, include:
+
+- file and line when available
+- risk level: critical, major, or minor
+- why the behavior is wrong
+- the smallest verification command that should prove the fix
+
+Focus on correctness, tests, security, public/local boundary leaks, and
+project portability. Do not duplicate CodeRabbit: skip broad style feedback,
+nitpicks, and findings that are already covered by CodeRabbit or GitHub CI.
+
+Do not edit files in a read-only review job. If the repository cannot be read,
+required tests are unavailable, or the prompt lacks enough context, return
+`BLOCKED` with the missing evidence.
