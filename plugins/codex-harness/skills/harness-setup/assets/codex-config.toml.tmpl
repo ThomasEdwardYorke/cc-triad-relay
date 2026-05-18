@@ -44,3 +44,12 @@ enabled = false
 command = "example-mcp-server"
 args = []
 env = {}
+
+# Optional plugin-provided MCP policy. The codex-harness plugin bundles an
+# OpenAI Codex official docs server entry with required = false and
+# enabled = false. Enable it only when current docs lookup removes manual
+# review work.
+#
+# [plugins."codex-harness".mcp_servers.openaiDeveloperDocs]
+# enabled = true
+# default_tools_approval_mode = "prompt"

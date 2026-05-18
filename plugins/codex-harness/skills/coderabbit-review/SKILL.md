@@ -29,7 +29,11 @@ Use this skill after a branch has a PR and the user wants Codex to inspect revie
    - Check PR CI after fixes and verify that the reviewed head still matches the local branch head.
    - For draft PRs, trigger `@coderabbitai review` only when an explicit review is needed and no fresh review exists for the head SHA.
    - Do not resolve or reply to GitHub review threads unless the user explicitly authorizes that externally visible action.
-7. Codex second-opinion gate
+7. External review metadata gate
+   - Gather GitHub review metadata from the available connector, `gh`, or an explicitly configured optional external context.
+   - Treat unavailable MCP as a warning when `gh` or connector data is sufficient, and do not block on optional external context unless PR review thread state cannot be established any other way.
+   - Do not require private MCP state in the plugin; repository-shipped guidance must stay generic.
+8. Codex second-opinion gate
    - Required after fixing CodeRabbit or GitHub review findings and before push, re-review request, or clear status.
    - Provide the independent reviewer with the current diff, PR context, and test results.
    - Require the reviewer to return `PASS | NEEDS_FIX | BLOCKED` plus actionable findings.
@@ -38,7 +42,7 @@ Use this skill after a branch has a PR and the user wants Codex to inspect revie
      2. `codex` CLI, when a repo-local or PATH-available CLI is authenticated.
      3. If neither path is available, fail-closed with `BLOCKED`.
    - Do not mark the PR clear until the second opinion returns `PASS`.
-8. Local-only boundary gate
+9. Local-only boundary gate
    - Do not paste local handoff content into public PR comments.
    - Keep self-hosting files untracked.
 

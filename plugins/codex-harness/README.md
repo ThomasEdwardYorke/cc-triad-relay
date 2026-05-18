@@ -93,6 +93,32 @@ Project-scoped config is public only when it is generic. Keep personal machine
 paths, credentials, active branch notes, PR state, and handoff session state in
 ignored local files.
 
+## MCP And External Context Contract
+
+The Codex adapter bundles `./.mcp.json` through `mcpServers` in
+`.codex-plugin/plugin.json`. The bundled entry is the OpenAI Codex official docs
+MCP endpoint, disabled by default and marked optional (`required = false`) so
+missing MCP availability does not block normal Harness skills.
+The bundled JSON file uses `mcpServers`; project and plugin-scoped TOML policy
+uses `mcp_servers`.
+
+Projects can opt in from local or project config without editing this plugin:
+
+```toml
+[plugins."codex-harness".mcp_servers.openaiDeveloperDocs]
+enabled = true
+default_tools_approval_mode = "prompt"
+```
+
+Use MCP and optional external context only when it removes a real manual loop:
+OpenAI Codex official docs for current platform behavior, GitHub review
+metadata for PR comments, review states, and unresolved threads, and selected
+external contexts such as issue trackers or incident systems when the task
+depends on them. If optional external context or unavailable MCP cannot be read,
+report the missing source explicitly, fall back to committed docs, `gh`, or
+local exports where they are sufficient, and do not block unless the requested
+task specifically requires that remote evidence.
+
 ## Parallel Orchestration Contract
 
 Codex parallel orchestration uses isolated worktrees and explicit ownership

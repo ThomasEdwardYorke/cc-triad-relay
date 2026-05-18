@@ -20,7 +20,9 @@ Use this skill when the user asks Codex to inspect context health, always-on gui
    - Keep large references on-demand instead of forcing them into every session.
 4. MCP gate
    - Treat MCP as optional external context.
+   - Inventory the OpenAI Codex official docs MCP, GitHub review metadata access, and selected external contexts only when they remove a real manual lookup.
    - Report unavailable MCP servers explicitly instead of assuming remote context was read.
+   - If optional external context is unavailable, name the missing source, use committed docs or local exports where they are sufficient, and do not block unless the audit requires that remote source.
 5. Actionable report gate
    - Return prioritized fixes with concrete files and expected impact.
    - Do not edit context files unless the user explicitly requests an applied cleanup.
