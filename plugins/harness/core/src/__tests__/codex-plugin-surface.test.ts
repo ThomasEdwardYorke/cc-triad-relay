@@ -431,9 +431,9 @@ describe("Codex plugin platform surface", () => {
     for (const phrase of [
       "Official-doc Maximization Audit",
       "capability matrix",
-      "T-021",
-      "T-022",
-      "T-023",
+      "Claude Code official-feature uplift",
+      "Codex official-feature uplift",
+      "Eval and self-improve loop",
       "PR-sized follow-up",
       "CodeRabbit CLI",
       "coderabbit review --agent",
