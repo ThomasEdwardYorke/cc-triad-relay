@@ -39,7 +39,12 @@ Use this skill before pushing a meaningful branch, especially when real CodeRabb
 7. CI and CodeRabbit gate
    - Run the relevant local checks after fixes.
    - Push only after actionable local findings and tests are clean.
-8. Local-only boundary gate
+8. Codex CI and non-interactive automation gate
+   - Treat this skill as local-only pre-push evidence unless the repository explicitly promotes it into CI.
+   - Do not duplicate CodeRabbit: focus on concrete actionable findings that reduce PR round trips, not broad style feedback.
+   - If the same prompt is run through `codex exec` or a Codex Action, classify the result as `local-only`, `CI-optional`, or `release-blocking` before using it as a gate.
+   - GitHub CI remains the release-blocking source for build/test status.
+9. Local-only boundary gate
    - Review only tracked or intended-to-track public files.
    - Confirm local handoff and self-hosting files were not added accidentally.
 

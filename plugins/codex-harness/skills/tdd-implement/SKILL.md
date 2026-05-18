@@ -39,7 +39,12 @@ Use this skill for a single implementation task that should be carried from test
 8. CI and CodeRabbit gate
    - Run the repo's typecheck, build, smoke, or full test commands as appropriate.
    - Use `pseudo-coderabbit-loop` before push for non-trivial diffs.
-9. Local-only boundary gate
+9. Codex CI and non-interactive automation gate
+   - Use Codex Non-interactive mode only when it adds concrete evidence for the task.
+   - Classify `codex exec` or Codex Action checks as `local-only`, `CI-optional`, or `release-blocking` before citing them.
+   - Keep local review runs read-only by default with `--sandbox read-only`, `--json`, and `--output-last-message`; use `--sandbox workspace-write` only for isolated fix experiments that are verified by the normal test command.
+   - GitHub CI remains the release-blocking source and CodeRabbit remains the PR review source unless project policy explicitly promotes a Codex automation workflow.
+10. Local-only boundary gate
    - Keep live handoff state and self-hosting config out of tracked files.
    - Keep Codex metadata out of the Claude Code adapter.
 

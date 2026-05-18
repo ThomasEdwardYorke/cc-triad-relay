@@ -119,6 +119,50 @@ report the missing source explicitly, fall back to committed docs, `gh`, or
 local exports where they are sufficient, and do not block unless the requested
 task specifically requires that remote evidence.
 
+## Codex CI And Non-Interactive Automation Contract
+
+Codex automation uses Non-interactive mode through `codex exec` or the Codex
+GitHub Action. Keep this layer narrow and explicit: GitHub CI remains the
+release-blocking source for test/build/smoke status, and CodeRabbit remains the
+PR review source for configured automated review. Codex automation should add
+focused second-opinion evidence; do not duplicate CodeRabbit and do not
+replace GitHub CI.
+
+Use `codex exec` locally or in trusted scripts when a task should finish
+without the TUI:
+
+```bash
+codex exec --sandbox read-only --ephemeral --ignore-user-config --json \
+  --output-last-message codex-review.md \
+  "Review this diff for correctness, tests, security, and public/local boundary leaks."
+```
+
+Use `--sandbox workspace-write` only for isolated fix experiments that will be
+reviewed before push. Use `--output-schema` when a downstream script needs
+stable fields. CI jobs that call `codex exec` should pass a project API key
+secret such as `CODEX_API_KEY` and keep prompts narrow.
+
+`harness-setup` ships two copy-ready assets for projects that opt in:
+
+- `skills/harness-setup/assets/codex-github-action-review.yml.tmpl`
+- `skills/harness-setup/assets/codex-review-prompt.md.tmpl`
+
+The GitHub Action template uses `openai/codex-action@v1`, `prompt-file`,
+`output-file`, `safety-strategy: drop-sudo`, and `sandbox: read-only`. It skips
+forked pull requests and repositories where the `CODEX_API_KEY` secret has not
+been configured.
+
+Gate classification:
+
+- `local-only`: one-shot `codex exec` reviews, release-note summaries, log
+  triage, schema-shaped reports, and workspace-write experiments. These do not
+  clear a branch by themselves.
+- `CI-optional`: non-blocking Codex Action PR review artifacts or scheduled
+  audits while prompts and false-positive handling are still being tuned.
+- `release-blocking`: normal GitHub CI, local-only boundary checks, configured
+  CodeRabbit clear state, and Codex automation only after the repository has
+  explicitly promoted that workflow to a required check.
+
 ## Parallel Orchestration Contract
 
 Codex parallel orchestration uses isolated worktrees and explicit ownership

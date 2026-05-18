@@ -114,9 +114,8 @@ The initial Codex hook foundation covers deterministic, testable guardrails:
 Codex MCP parity is intentionally optional. The Codex manifest points
 `mcpServers` at `plugins/codex-harness/.mcp.json`, which contains the OpenAI
 Codex official docs endpoint disabled by default and optional (`required =
-false`). Users can opt in with plugin-scoped policy:
-The bundled JSON uses `mcpServers`; the Codex TOML policy path uses
-`mcp_servers`.
+false`). The bundled JSON uses `mcpServers`; the Codex TOML policy path uses
+`mcp_servers`. Users can opt in with plugin-scoped policy:
 
 ```toml
 [plugins."codex-harness".mcp_servers.openaiDeveloperDocs]
@@ -132,6 +131,48 @@ depends on them. If unavailable MCP or another optional source cannot be read,
 the skill must say which source was unavailable, fall back to committed docs,
 `gh`, or local exports when sufficient, and do not block unless the task's
 acceptance criteria require that remote evidence.
+
+## Codex CI And Non-Interactive Automation
+
+Codex CI parity is implemented as an opt-in automation layer, not as a
+replacement for existing review and test gates. GitHub CI remains the
+release-blocking source for build, typecheck, smoke, and platform matrix
+results. CodeRabbit remains the PR review source when configured. Codex
+automation should provide focused second-opinion evidence; do not duplicate
+CodeRabbit and do not replace GitHub CI.
+
+Use Codex Non-interactive mode for repeatable local-only or CI-optional checks:
+
+```bash
+codex exec --sandbox read-only --ephemeral --ignore-user-config --json \
+  --output-last-message codex-review.md \
+  "Review this branch for correctness, tests, security, and public/local boundary leaks."
+```
+
+Use `--sandbox workspace-write` only in an isolated job that will rerun the
+normal test command before producing a patch. Use `--output-schema` for
+machine-readable verdicts, and keep CI credentials in a project secret such as
+`CODEX_API_KEY`.
+
+`harness-setup` ships copy-ready templates for opt-in projects:
+
+- `plugins/codex-harness/skills/harness-setup/assets/codex-github-action-review.yml.tmpl`
+- `plugins/codex-harness/skills/harness-setup/assets/codex-review-prompt.md.tmpl`
+
+The workflow template uses `openai/codex-action@v1`, a committed `prompt-file`,
+an `output-file`, `safety-strategy: drop-sudo`, and `sandbox: read-only`. It
+skips forked pull requests and repositories where the `CODEX_API_KEY` secret has
+not been configured.
+
+Gate classification:
+
+- `local-only`: ad hoc `codex exec` reviews, summaries, log triage,
+  schema-shaped reports, and workspace-write experiments.
+- `CI-optional`: non-blocking Codex Action PR review artifacts, scheduled
+  audits, and migration prep checks while prompt quality is still being tuned.
+- `release-blocking`: GitHub CI, local-only boundary checks, CodeRabbit clear
+  state, and Codex automation only after maintainers explicitly mark the
+  workflow as required.
 
 ## Local-Only Boundary
 

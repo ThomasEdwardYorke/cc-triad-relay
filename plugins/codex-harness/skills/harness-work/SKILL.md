@@ -30,7 +30,13 @@ Use this skill when the user asks Codex to implement, fix, refactor, or continue
 6. CI and CodeRabbit gate
    - Before push, run `pseudo-coderabbit-loop` when the diff is meaningful.
    - After push, use `coderabbit-review` for actionable PR feedback.
-7. Codex second-opinion gate
+7. Codex CI and non-interactive automation gate
+   - Treat `codex exec` and Codex Action jobs as explicit automation evidence, not an implicit replacement for existing gates.
+   - Classify each Codex automation path as `local-only`, `CI-optional`, or `release-blocking` before relying on it.
+   - GitHub CI remains the release-blocking source for build/test/smoke status unless maintainers explicitly require a Codex workflow.
+   - CodeRabbit remains the PR review source when configured; do not duplicate CodeRabbit with broad style-only Codex automation.
+   - Prefer `codex exec --sandbox read-only --json --output-last-message <file>` for repeatable review or summary checks, and use `--sandbox workspace-write` only in isolated fix experiments followed by normal verification.
+8. Codex second-opinion gate
    - Required before declaring implementation or review work clear.
    - Provide the independent reviewer with the current diff, PR context, and test results.
    - Require the reviewer to return `PASS | NEEDS_FIX | BLOCKED` plus actionable findings.
@@ -39,7 +45,7 @@ Use this skill when the user asks Codex to implement, fix, refactor, or continue
      2. `codex` CLI, when a repo-local or PATH-available CLI is authenticated.
      3. If neither path is available, fail-closed with `BLOCKED`.
    - Do not mark the branch clear until the second opinion returns `PASS`.
-8. Local-only boundary gate
+9. Local-only boundary gate
    - Never commit live `harness.config.json`.
    - Never commit `.docs/handoff/` session state.
    - Keep Codex adapter files under `plugins/codex-harness/` and repo marketplace files under `.agents/plugins/`.
