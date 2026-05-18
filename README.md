@@ -6,7 +6,7 @@ A portable, TypeScript-powered guardrail and agent harness for [Claude Code](htt
 
 - **13 guardrail rules** (R01–R13) that block dangerous operations: `sudo`, `rm -rf`, force-push, `curl | bash`, `.env` leakage, and more. Configurable via `harness.config.json`.
 - **5 native agents** (no Codex required): `worker` (implement + self-review + verify + commit), `reviewer` (read-only multi-angle review), `scaffolder` (docs + state sync), `security-auditor`, `context-audit-agent`. **2 optional** Codex-backed agents — `codex-sync` (synchronous second-opinion review) and `coderabbit-mimic` (local pseudo-CodeRabbit loop) — fail fast if Codex is not installed.
-- **19 slash commands**: 5 verb (`/harness-plan`, `/harness-work`, `/harness-review`, `/harness-release`, `/harness-setup`) plus 14 workflow primitives (`/clarify`, `/tdd-implement`, `/parallel-worktree`, `/parallel-worktree-v2`, `/coderabbit-review`, `/pseudo-coderabbit-loop`, `/session-handoff`, `/harness-merge-train`, `/codex-team`, `/context-audit`, `/branch-merge`, `/new-feature-branch`, `/claude-oneshot`, `/harness-self-improve`).
+- **19 slash-invoked skills**: 5 verb (`/harness-plan`, `/harness-work`, `/harness-review`, `/harness-release`, `/harness-setup`) plus 14 workflow primitives (`/clarify`, `/tdd-implement`, `/parallel-worktree`, `/parallel-worktree-v2`, `/coderabbit-review`, `/pseudo-coderabbit-loop`, `/session-handoff`, `/harness-merge-train`, `/codex-team`, `/context-audit`, `/branch-merge`, `/new-feature-branch`, `/claude-oneshot`, `/harness-self-improve`).
 - **Zero native dependencies** (pure JS JSON state store) — works on macOS, Linux, and Windows without `npm install` native rebuilds.
 
 ## Installation
@@ -40,6 +40,15 @@ Then in your project root:
 ```
 
 This creates a `harness.config.json` tailored to your project.
+
+### Claude Code official skills model
+
+Claude Code's current skills docs state that "Custom commands have been
+merged into skills" and that existing `.claude/commands/` files keep working.
+The Harness keeps its Claude adapter skill-first: the public surface is
+slash-invoked skills, packaged under `commands/` for compatibility, not
+command-only metadata. New reusable workflow guidance should use "skill"
+terminology even when the installed file path is `plugins/harness/commands/`.
 
 ### Codex local adapter
 
@@ -94,7 +103,7 @@ therefore optional**:
 
 | Plugin installed | What works | What errors on invocation |
 |------------------|------------|---------------------------|
-| `harness` only (default) | All 13 guardrails, 19 commands (5 verb + 14 workflow), 5 native agents (`worker` / `reviewer` / `scaffolder` / `security-auditor` / `context-audit-agent`), all 16 lifecycle hooks | `codex-sync` fails fast with `ERROR: Codex plugin not found` and `coderabbit-mimic` fails with `ERROR: codex-companion.mjs not found.` — both hard errors that stop the agent before any work starts. Other agents and commands are unaffected. |
+| `harness` only (default) | All 13 guardrails, 19 slash-invoked skills (5 verb + 14 workflow), 5 native agents (`worker` / `reviewer` / `scaffolder` / `security-auditor` / `context-audit-agent`), all 16 lifecycle hooks | `codex-sync` fails fast with `ERROR: Codex plugin not found` and `coderabbit-mimic` fails with `ERROR: codex-companion.mjs not found.` — both hard errors that stop the agent before any work starts. Other agents and skills are unaffected. |
 | `harness` + `codex` | Everything above **plus** Codex-powered synchronous second-opinion review (`codex-sync`) and local pseudo-CodeRabbit loop (`coderabbit-mimic`) | — |
 
 `install-project.sh --with-codex` flips the opt-in; otherwise run
@@ -133,7 +142,7 @@ Surfaces:
 ## Quickstart — 4-step day-1 flow
 
 After `harness doctor` reports green, the canonical day-1 workflow is four
-slash commands. Run each from inside a Claude Code session in your project
+slash-invoked skills. Run each from inside a Claude Code session in your project
 root:
 
 ```text
@@ -157,8 +166,8 @@ or via `/harness-merge-train` for multi-PR batches).
 
 ## Core skills — front-line entry points
 
-The 19 commands fall into two layers. Most day-to-day work goes through six
-front-line entry points:
+The 19 slash-invoked skills fall into two layers. Most day-to-day work goes
+through six front-line entry points:
 
 | skill | trigger phrases | role |
 |---|---|---|
