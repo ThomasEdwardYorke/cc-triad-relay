@@ -86,6 +86,15 @@ const CODEX_MCP_CONFIG_FILE = "plugins/codex-harness/.mcp.json";
 const OFFICIAL_DOC_MAXIMIZATION_AUDIT_FILE =
   "docs/maintainer/official-doc-maximization-audit.md";
 
+const CODEX_OFFICIAL_FEATURE_URLS = [
+  "https://developers.openai.com/codex/concepts/customization",
+  "https://developers.openai.com/codex/plugins/build",
+  "https://developers.openai.com/codex/hooks",
+  "https://developers.openai.com/codex/subagents",
+  "https://developers.openai.com/codex/guides/agents-md",
+  "https://developers.openai.com/codex/config-reference",
+] as const;
+
 const CODEX_SUBAGENT_TEMPLATE_FILES = [
   "plugins/codex-harness/skills/codex-team/assets/agents/implementation-worker.toml.tmpl",
   "plugins/codex-harness/skills/codex-team/assets/agents/reviewer.toml.tmpl",
@@ -535,6 +544,119 @@ describe("Codex plugin platform surface", () => {
     }
   });
 
+  it("keeps Codex official-feature guidance aligned with current config and plugin docs", () => {
+    const manifest = expectRecord(
+      readJson("plugins/codex-harness/.codex-plugin/plugin.json"),
+      "codex plugin manifest",
+    );
+    const marketplace = expectRecord(
+      readJson(".agents/plugins/marketplace.json"),
+      "codex marketplace",
+    );
+    const readme = readRepoFile("plugins/codex-harness/README.md");
+    const harnessSetup = readRepoFile(
+      "plugins/codex-harness/skills/harness-setup/SKILL.md",
+    );
+    const platformAdapters = readRepoFile("docs/maintainer/platform-adapters.md");
+    const configTemplate = readRepoFile(CODEX_SETUP_TEMPLATE_FILES[1]);
+    const parsedConfig = expectRecord(
+      parseToml(configTemplate) as unknown,
+      "codex config template",
+    );
+    const combinedDocs = [
+      readme,
+      harnessSetup,
+      platformAdapters,
+      configTemplate,
+    ].join("\n");
+
+    for (const url of CODEX_OFFICIAL_FEATURE_URLS) {
+      expect(combinedDocs, `missing ${url}`).toContain(url);
+    }
+
+    for (const phrase of [
+      "Current Codex official feature references",
+      "Project-scoped config loads only after trust",
+      "Do not put provider, auth, telemetry, or profile routing in shared project config",
+      '`approval_policy = "on-request"` is the interactive default',
+      '`never` is for non-interactive automation',
+      "`on-failure` is deprecated",
+      "Use `features.multi_agent` for subagent collaboration",
+      "Use `features.hooks` for lifecycle hooks and `features.plugin_hooks` for plugin-bundled hooks",
+      "Prefer top-level `web_search` for web search policy",
+      "Plugin manifest paths stay inside the plugin root and start with `./`",
+      "Use `skills`, `mcpServers`, and `hooks` for bundled surfaces",
+      "Plugin hooks are opt-in with `[features].plugin_hooks = true`",
+      "Optional MCP failures are warnings unless acceptance criteria require remote evidence",
+      "Second-opinion gate must be fail-closed",
+    ]) {
+      expect(combinedDocs, `missing ${phrase}`).toContain(phrase);
+    }
+
+    for (const manifestPathKey of ["skills", "mcpServers", "hooks"]) {
+      const value = manifest[manifestPathKey];
+      expect(typeof value).toBe("string");
+      expect(String(value), `${manifestPathKey} must be ./-prefixed`).toMatch(
+        /^\.\//,
+      );
+      expect(
+        String(value),
+        `${manifestPathKey} must stay in plugin root`,
+      ).not.toContain("..");
+    }
+
+    const plugins = Array.isArray(marketplace.plugins)
+      ? marketplace.plugins
+      : [];
+    const entry = plugins.find(
+      (plugin): plugin is Record<string, unknown> =>
+        isRecord(plugin) && plugin.name === "codex-harness",
+    );
+    const source = expectRecord(entry?.source, "codex marketplace source");
+    expect(source.path).toBe("./plugins/codex-harness");
+    expect(String(source.path)).toMatch(/^\.\//);
+    expect(String(source.path)).not.toContain("..");
+
+    const features = expectRecord(parsedConfig.features, "features");
+    expect(features.multi_agent).toBe(true);
+    expect(features.hooks).toBe(true);
+    expect(features.plugin_hooks).toBe(true);
+    expect(parsedConfig.approvals_reviewer).toBe("user");
+    expect(parsedConfig.model_reasoning_effort).toBe("medium");
+    expect(parsedConfig.model_reasoning_summary).toBe("auto");
+
+    for (const staleKey of [
+      "features.multi_agent_v2",
+      "multi_agent_v2",
+      "features.codex_hooks",
+      "codex_hooks",
+      "features.web_search",
+      "features.web_search_cached",
+      "features.web_search_request",
+    ]) {
+      expect(combinedDocs, `stale key leaked: ${staleKey}`).not.toContain(
+        staleKey,
+      );
+    }
+
+    for (const projectUnsafeKey of [
+      "model_providers.",
+      "openai_base_url",
+      "chatgpt_base_url",
+      "forced_login_method",
+      "forced_chatgpt_workspace_id",
+      "otel.",
+      "profiles.",
+    ]) {
+      expect(
+        configTemplate,
+        `project-unsafe key leaked: ${projectUnsafeKey}`,
+      ).not.toContain(projectUnsafeKey);
+    }
+
+    expectNoActiveSessionState(combinedDocs);
+  });
+
   it("adds Codex-native planning, review, setup, context, and self-improvement parity skills", () => {
     const expectations: Record<string, string[]> = {
       "clarify": [
@@ -623,7 +745,10 @@ describe("Codex plugin platform surface", () => {
     for (const requiredConfigKey of [
       "model",
       "review_model",
+      "model_reasoning_effort",
+      "model_reasoning_summary",
       "approval_policy",
+      "approvals_reviewer",
       "sandbox_mode",
       "sandbox_workspace_write.network_access",
       "project_doc_max_bytes",
@@ -631,6 +756,7 @@ describe("Codex plugin platform surface", () => {
       "agents.max_depth",
       "auto_review.policy",
       "mcp_servers",
+      "features.multi_agent",
       "features.hooks",
       "features.plugin_hooks",
     ]) {
@@ -643,12 +769,15 @@ describe("Codex plugin platform surface", () => {
     }
     expect(configTemplate).toContain("agents.max_threads");
     expect(configTemplate).not.toMatch(/^\s*agents\.max_threads\s*=/m);
-    expect(setupSurface).toContain("multi_agent_v2");
+    expect(setupSurface).toContain("features.multi_agent");
     expect(harnessSetup).toContain("../codex-team/assets/agents/*.toml.tmpl");
 
     expect(parsedConfig.model).toBe("gpt-5.5");
     expect(parsedConfig.review_model).toBe("gpt-5.5");
+    expect(parsedConfig.model_reasoning_effort).toBe("medium");
+    expect(parsedConfig.model_reasoning_summary).toBe("auto");
     expect(parsedConfig.approval_policy).toBe("on-request");
+    expect(parsedConfig.approvals_reviewer).toBe("user");
     expect(parsedConfig.sandbox_mode).toBe("workspace-write");
     expect(parsedConfig.project_doc_max_bytes).toBe(32768);
     expect(parsedConfig.project_doc_fallback_filenames).toEqual([]);
@@ -668,6 +797,7 @@ describe("Codex plugin platform surface", () => {
     expect(String(autoReview.policy)).toMatch(/public\/local boundary leaks/i);
 
     const features = expectRecord(parsedConfig.features, "features");
+    expect(features.multi_agent).toBe(true);
     expect(features.hooks).toBe(true);
     expect(features.plugin_hooks).toBe(true);
 
