@@ -57,12 +57,19 @@ Use this skill when the user asks Codex to split implementation across multiple 
 
 1. Decompose the work into task slugs with `owned_files`, `forbidden_files`, dependencies, and merge priority.
 2. Validate ownership and dependency ordering before creating worktrees.
-3. Launch up to `MAX_CODEX_PARALLEL` Codex workers.
+3. Launch up to `MAX_CODEX_PARALLEL` Codex workers, staying within Codex's `agents.max_threads` cap and configured `agents.max_depth`.
 4. Require each worker to run RED, GREEN, and local review inside its task worktree.
 5. Request second opinion from a read-only path or a separate reviewer worktree before accepting the task.
 6. Merge task branches into the parent feature branch one at a time.
 7. Run the parent branch verification stack and local-only boundary guard.
 
+## Model A / Model B Mapping
+
+- Model A: keep the parent feature branch as the integration point, use read-only Codex subagents for exploration and review, and keep writable changes in the coordinator checkout.
+- Model B: create isolated worktrees for independent writable tasks, assign `owned_files` / `forbidden_files`, run Codex workers with bounded concurrency, and merge task branches back to the parent feature branch in explicit order.
+- Parent runtime overrides caveat: when the coordinator runs with danger-full-access, yolo-style approval changes, or another broader runtime override, Model A review roles require an explicit read-only launch instead of relying only on template `sandbox_mode`.
+- tmux optional: Codex subagents and isolated worktrees are the parity surface; tmux may be used as an operator presentation layer, but it is not a hard dependency for Codex worktree orchestration.
+
 ## Completion Contract
 
-Report the parent feature branch, task branches, worktree paths, `MAX_CODEX_PARALLEL`, merge order, tests, second-opinion status, CodeRabbit readiness, release-to-main gate status, and local-only boundary status.
+Report the parent feature branch, Model A / Model B path, task branches, worktree paths, `MAX_CODEX_PARALLEL`, `agents.max_threads`, `agents.max_depth`, merge order, tests, second-opinion status, CodeRabbit readiness, release-to-main gate status, and local-only boundary status.

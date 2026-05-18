@@ -109,6 +109,36 @@ only through a release PR.
 surfaces. They are not copied as direct Codex skills because Codex has its own
 subagent, CLI, and isolated-worktree paths.
 
+## Subagent And Worktree Parity Contract
+
+`codex-team` ships project-scoped custom agent templates for `.codex/agents/`:
+
+- `implementation_worker`
+- `reviewer`
+- `adversarial_auditor`
+- `release_verifier`
+- `handoff_docs_checker`
+
+The role templates live under `skills/codex-team/assets/agents/` and stay
+generic until a project copies or adapts them. Respect Codex's
+`agents.max_threads` cap, keep `agents.max_depth` bounded, and use
+`MAX_CODEX_PARALLEL` so subagent work keeps bounded concurrency. Do not set
+`agents.max_threads` in shared project config while Codex `multi_agent_v2`
+rejects that key.
+
+Model A maps to read-only Codex subagents for exploration, review, and handoff
+checks while the coordinator owns the writable feature branch. Model B maps to
+isolated worktrees for independent writable tasks with explicit `owned_files`,
+`forbidden_files`, and deterministic merge order. tmux optional: it can present
+parallel sessions for operators, but Codex parity relies on subagents and
+isolated worktrees, not a hard tmux dependency.
+
+Read-only roles must still account for parent runtime overrides. If the parent
+Codex session is running with danger-full-access, yolo-style approval changes,
+or another broader runtime override, use an explicit read-only launch for
+review, adversarial audit, release verification, and handoff/docs checks before
+treating the result as independent read-only evidence.
+
 ## Plugin Hook Contract
 
 This adapter bundles `./hooks/hooks.json` and points to it from
