@@ -403,7 +403,7 @@ describe("Codex plugin platform surface", () => {
       );
     }
     expect(configTemplate).toContain("agents.max_threads");
-    expect(configTemplate).not.toMatch(/^agents\.max_threads\s*=/m);
+    expect(configTemplate).not.toMatch(/^\s*agents\.max_threads\s*=/m);
     expect(setupSurface).toContain("multi_agent_v2");
     expect(harnessSetup).toContain("../codex-team/assets/agents/*.toml.tmpl");
 
@@ -545,6 +545,7 @@ describe("Codex plugin platform surface", () => {
     }
 
     expectNoActiveSessionState(`${combinedDocs}\n${templateSurface}`);
+    expect(templateSurface).not.toContain("CodeRabbit");
     expect(templateSurface).not.toContain("docs/maintainer/handoff");
   });
 

@@ -22,7 +22,7 @@ Use this skill when the user asks Codex to initialize, check, doctor, or explain
 4. Codex config defaults gate
    - Use `assets/codex-config.toml.tmpl` when creating or explaining `.codex/config.toml`.
    - Explain `sandbox_mode`, `approval_policy`, `model`, `review_model`, MCP (`mcp_servers`), subagent limits (`agents.max_depth`, workflow `MAX_CODEX_PARALLEL`, and Codex's default `agents.max_threads` cap), and `auto_review.policy` defaults before applying them.
-   - Do not set `agents.max_threads` in shared config while Codex `multi_agent_v2` rejects that key.
+   - Do not set `agents.max_threads` in shared config when Codex `features.multi_agent_v2` is enabled and rejects that key.
    - Treat project-scoped `.codex/config.toml` as public only when it contains no personal paths, credentials, or active session state.
 5. Configuration template gate
    - Prefer generic templates and project-relative paths.
