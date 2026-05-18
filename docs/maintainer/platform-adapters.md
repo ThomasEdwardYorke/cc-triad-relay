@@ -205,6 +205,11 @@ This adapter work should stay staged by capability:
 4. Parallel worktree and multi-Codex orchestration.
 5. Codex-native guardrail scripts or MCP surfaces that replace hook-only behavior.
 
+The next adapter-expansion queue is defined by the source-backed
+`docs/maintainer/official-doc-maximization-audit.md` capability matrix. Keep
+that audit generic, use it to split PR-sized follow-up work, and run CodeRabbit
+CLI as a pre-push review aid before the normal PR CodeRabbit loop.
+
 ## Intentional Non-Equivalents
 
 The parity target is equivalent operator outcome, not identical file layout.
