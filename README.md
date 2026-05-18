@@ -178,7 +178,7 @@ through six front-line entry points:
 | `/harness:session-handoff check` | session start / session end, "handoff", "rehydration" | Read-only 3-gate check (structural integrity + content comprehension + rehydration synthesis) |
 | `/harness:coderabbit-review <PR>` | after pushing a PR, "handle CodeRabbit review" | Background watch for CodeRabbit reviews + auto-respond loop until Strong Clear |
 
-The remaining 13 commands are workflow primitives that the entry points
+The remaining 13 workflow skills are primitives that the entry points
 dispatch into: `/tdd-implement`, `/parallel-worktree` (Model A legacy),
 `/pseudo-coderabbit-loop`, `/codex-team`, `/harness-merge-train`,
 `/branch-merge`, `/new-feature-branch`, `/context-audit`, `/claude-oneshot`,
