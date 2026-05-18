@@ -83,6 +83,8 @@ const CODEX_CI_AUTOMATION_TEMPLATE_FILES = [
 ] as const;
 
 const CODEX_MCP_CONFIG_FILE = "plugins/codex-harness/.mcp.json";
+const OFFICIAL_DOC_MAXIMIZATION_AUDIT_FILE =
+  "docs/maintainer/official-doc-maximization-audit.md";
 
 const CODEX_SUBAGENT_TEMPLATE_FILES = [
   "plugins/codex-harness/skills/codex-team/assets/agents/implementation-worker.toml.tmpl",
@@ -378,6 +380,72 @@ describe("Codex plugin platform surface", () => {
     expect(combinedDocs).not.toContain("full-auto");
     expect(combinedDocs).not.toMatch(/OPENAI_API_KEY|GITHUB_TOKEN/);
     expectNoActiveSessionState(combinedDocs);
+  });
+
+  it("publishes an official-doc maximization audit with PR-sized follow-up slices", () => {
+    expect(existsSync(repoPath(OFFICIAL_DOC_MAXIMIZATION_AUDIT_FILE))).toBe(
+      true,
+    );
+
+    const audit = readRepoFile(OFFICIAL_DOC_MAXIMIZATION_AUDIT_FILE);
+    const platformAdapters = readRepoFile("docs/maintainer/platform-adapters.md");
+    const combinedDocs = `${audit}\n${platformAdapters}`;
+
+    for (const url of [
+      "https://developers.openai.com/codex/concepts/customization",
+      "https://developers.openai.com/codex/plugins/build",
+      "https://developers.openai.com/codex/hooks",
+      "https://developers.openai.com/codex/subagents",
+      "https://developers.openai.com/codex/guides/agents-md",
+      "https://developers.openai.com/codex/config-reference",
+      "https://code.claude.com/docs/en/skills",
+      "https://code.claude.com/docs/en/plugins",
+      "https://code.claude.com/docs/en/plugins-reference",
+      "https://code.claude.com/docs/en/worktrees",
+      "https://code.claude.com/docs/en/sub-agents",
+      "https://code.claude.com/docs/en/hooks",
+      "https://code.claude.com/docs/en/mcp",
+      "https://code.claude.com/docs/en/settings",
+      "https://code.claude.com/docs/en/github-actions",
+      "https://code.claude.com/docs/en/agent-sdk/overview",
+    ]) {
+      expect(audit, `audit missing ${url}`).toContain(url);
+    }
+
+    for (const axis of [
+      "skills",
+      "commands",
+      "agents/subagents",
+      "hooks",
+      "MCP",
+      "worktrees",
+      "config",
+      "permissions",
+      "models",
+      "automation",
+      "CI",
+    ]) {
+      expect(audit, `audit missing axis ${axis}`).toContain(`| ${axis} |`);
+    }
+
+    for (const phrase of [
+      "Official-doc Maximization Audit",
+      "capability matrix",
+      "Claude Code official-feature uplift",
+      "Codex official-feature uplift",
+      "Eval and self-improve loop",
+      "PR-sized follow-up",
+      "CodeRabbit CLI",
+      "coderabbit review --agent",
+      "public/local boundary",
+      "local-only",
+      "Not Found",
+    ]) {
+      expect(combinedDocs, `missing ${phrase}`).toContain(phrase);
+    }
+
+    expectNoActiveSessionState(combinedDocs);
+    expect(audit).not.toContain("docs/maintainer/handoff");
   });
 
   it("wires Codex plugin hooks through the Codex adapter root", () => {
