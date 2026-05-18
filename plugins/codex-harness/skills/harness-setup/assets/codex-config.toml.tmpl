@@ -19,6 +19,13 @@ sandbox_workspace_write.network_access = false
 project_doc_max_bytes = 32768
 project_doc_fallback_filenames = []
 
+# Keep subagent fan-out bounded. Do not set agents.max_threads in shared
+# config because Codex rejects it when features.multi_agent_v2 is enabled; rely
+# on Codex's default thread cap and the workflow-level MAX_CODEX_PARALLEL gate.
+# The default depth allows direct child agents but avoids recursive delegation
+# unless the project explicitly opts in.
+agents.max_depth = 1
+
 # Optional review-policy defaults. Keep the policy generic and repository-safe.
 auto_review.policy = """
 Review for correctness, tests, security, public/local boundary leaks, and

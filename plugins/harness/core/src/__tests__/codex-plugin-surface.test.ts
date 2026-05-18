@@ -77,6 +77,14 @@ const CODEX_SETUP_TEMPLATE_FILES = [
   "plugins/codex-harness/skills/harness-setup/assets/codex-config.toml.tmpl",
 ] as const;
 
+const CODEX_SUBAGENT_TEMPLATE_FILES = [
+  "plugins/codex-harness/skills/codex-team/assets/agents/implementation-worker.toml.tmpl",
+  "plugins/codex-harness/skills/codex-team/assets/agents/reviewer.toml.tmpl",
+  "plugins/codex-harness/skills/codex-team/assets/agents/adversarial-auditor.toml.tmpl",
+  "plugins/codex-harness/skills/codex-team/assets/agents/release-verifier.toml.tmpl",
+  "plugins/codex-harness/skills/codex-team/assets/agents/handoff-docs-checker.toml.tmpl",
+] as const;
+
 const SESSION_BRANCH_PATTERN =
   /\bfeature\/(?=[A-Za-z0-9._/-]*(?:[A-Z]+-\d+|[0-9a-f]{7,40}))[A-Za-z0-9._/-]+/i;
 
@@ -381,6 +389,7 @@ describe("Codex plugin platform surface", () => {
       "sandbox_workspace_write.network_access",
       "project_doc_max_bytes",
       "project_doc_fallback_filenames",
+      "agents.max_depth",
       "auto_review.policy",
       "mcp_servers",
       "features.hooks",
@@ -393,6 +402,10 @@ describe("Codex plugin platform surface", () => {
         requiredConfigKey,
       );
     }
+    expect(configTemplate).toContain("agents.max_threads");
+    expect(configTemplate).not.toMatch(/^\s*agents\.max_threads\s*=/m);
+    expect(setupSurface).toContain("multi_agent_v2");
+    expect(harnessSetup).toContain("../codex-team/assets/agents/*.toml.tmpl");
 
     expect(parsedConfig.model).toBe("gpt-5.5");
     expect(parsedConfig.review_model).toBe("gpt-5.5");
@@ -400,6 +413,10 @@ describe("Codex plugin platform surface", () => {
     expect(parsedConfig.sandbox_mode).toBe("workspace-write");
     expect(parsedConfig.project_doc_max_bytes).toBe(32768);
     expect(parsedConfig.project_doc_fallback_filenames).toEqual([]);
+
+    const agents = expectRecord(parsedConfig.agents, "agents");
+    expect(agents.max_threads).toBeUndefined();
+    expect(agents.max_depth).toBe(1);
 
     const sandboxWorkspaceWrite = expectRecord(
       parsedConfig.sandbox_workspace_write,
@@ -440,6 +457,95 @@ describe("Codex plugin platform surface", () => {
     expect("feature/T-016-codex-guidance").toMatch(SESSION_BRANCH_PATTERN);
     expect("feature/86182b2-codex-guidance").toMatch(SESSION_BRANCH_PATTERN);
     expectNoActiveSessionState(setupSurface);
+    expect(templateSurface).not.toContain("docs/maintainer/handoff");
+  });
+
+  it("publishes Codex subagent role templates and worktree mapping guidance", () => {
+    const codexTeam = readRepoFile(
+      "plugins/codex-harness/skills/codex-team/SKILL.md",
+    );
+    const parallelWorktree = readRepoFile(
+      "plugins/codex-harness/skills/parallel-worktree/SKILL.md",
+    );
+    const harnessSetup = readRepoFile(
+      "plugins/codex-harness/skills/harness-setup/SKILL.md",
+    );
+    const readme = readRepoFile("plugins/codex-harness/README.md");
+    const platformAdapters = readRepoFile("docs/maintainer/platform-adapters.md");
+    const combinedDocs = [
+      codexTeam,
+      parallelWorktree,
+      harnessSetup,
+      readme,
+      platformAdapters,
+    ].join("\n");
+
+    const expectedRoles = new Map([
+      ["implementation_worker", "workspace-write"],
+      ["reviewer", "read-only"],
+      ["adversarial_auditor", "read-only"],
+      ["release_verifier", "read-only"],
+      ["handoff_docs_checker", "read-only"],
+    ]);
+
+    const templateSurface = CODEX_SUBAGENT_TEMPLATE_FILES
+      .map((path) => {
+        expect(existsSync(repoPath(path)), `${path} must exist`).toBe(true);
+        return readRepoFile(path);
+      })
+      .join("\n");
+
+    for (const [roleName, sandboxMode] of expectedRoles) {
+      expect(combinedDocs, `docs missing ${roleName}`).toContain(roleName);
+      expect(templateSurface, `templates missing ${roleName}`).toContain(
+        `name = "${roleName}"`,
+      );
+      expect(templateSurface, `${roleName} missing sandbox`).toContain(
+        `sandbox_mode = "${sandboxMode}"`,
+      );
+    }
+
+    for (const template of CODEX_SUBAGENT_TEMPLATE_FILES.map(readRepoFile)) {
+      const parsedTemplate = expectRecord(
+        parseToml(template) as unknown,
+        "codex subagent template",
+      );
+
+      expect(expectedRoles.has(String(parsedTemplate.name))).toBe(true);
+      expect(parsedTemplate.description).toEqual(expect.any(String));
+      expect(parsedTemplate.developer_instructions).toEqual(expect.any(String));
+      expect(parsedTemplate.model).toEqual(expect.any(String));
+      expect(parsedTemplate.model_reasoning_effort).toEqual(expect.any(String));
+      expect(parsedTemplate.sandbox_mode).toBe(
+        expectedRoles.get(String(parsedTemplate.name)),
+      );
+      expect(String(parsedTemplate.developer_instructions)).toMatch(
+        /owned_files|forbidden_files|read-only|handoff/i,
+      );
+    }
+
+    for (const phrase of [
+      ".codex/agents/",
+      "agents.max_threads",
+      "agents.max_depth",
+      "implementation_worker",
+      "reviewer",
+      "adversarial_auditor",
+      "release_verifier",
+      "handoff_docs_checker",
+      "Model A",
+      "Model B",
+      "tmux optional",
+      "isolated worktrees",
+      "bounded concurrency",
+      "parent runtime overrides",
+      "explicit read-only launch",
+    ]) {
+      expect(combinedDocs).toContain(phrase);
+    }
+
+    expectNoActiveSessionState(`${combinedDocs}\n${templateSurface}`);
+    expect(templateSurface).not.toContain("CodeRabbit");
     expect(templateSurface).not.toContain("docs/maintainer/handoff");
   });
 

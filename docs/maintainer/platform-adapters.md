@@ -61,6 +61,28 @@ copy-ready setup assets under
   Personal machine paths, credentials, active branch state, PR state, and
   handoff session notes remain local-only.
 
+## Codex Subagent And Worktree Parity
+
+Codex subagent parity is implemented through project-scoped `.codex/agents/`
+templates shipped by `codex-team` plus the `parallel-worktree` orchestration
+contract.
+
+- Role templates cover `implementation_worker`, `reviewer`,
+  `adversarial_auditor`, `release_verifier`, and `handoff_docs_checker`.
+- Codex's `agents.max_threads` cap, configured `agents.max_depth`, and
+  workflow `MAX_CODEX_PARALLEL` bound concurrency before any parallel work
+  starts. Shared config should not set `agents.max_threads` while Codex
+  `multi_agent_v2` rejects that key.
+- Model A uses read-only subagents for exploration, review, release
+  verification, and handoff/docs checks while the coordinator owns writes.
+- Model B uses isolated worktrees for independent writable tasks with explicit
+  `owned_files`, `forbidden_files`, and deterministic merge order.
+- Parent runtime overrides can broaden spawned-agent execution context; use an
+  explicit read-only launch for Model A review, release, and handoff roles when
+  the coordinator session is running with broader sandbox or approval overrides.
+- tmux optional: tmux may still help an operator present sessions, but Codex
+  parity must not depend on tmux being present.
+
 ## Codex Plugin Hook Foundation
 
 Codex hook parity is implemented as a Codex-native plugin hook bundle under

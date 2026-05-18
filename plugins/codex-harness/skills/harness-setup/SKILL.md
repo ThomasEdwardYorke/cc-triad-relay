@@ -21,7 +21,8 @@ Use this skill when the user asks Codex to initialize, check, doctor, or explain
    - Use `assets/AGENTS.md.tmpl` when creating or refreshing project guidance.
 4. Codex config defaults gate
    - Use `assets/codex-config.toml.tmpl` when creating or explaining `.codex/config.toml`.
-   - Explain `sandbox_mode`, `approval_policy`, `model`, `review_model`, MCP (`mcp_servers`), and `auto_review.policy` defaults before applying them.
+   - Explain `sandbox_mode`, `approval_policy`, `model`, `review_model`, MCP (`mcp_servers`), subagent limits (`agents.max_depth`, workflow `MAX_CODEX_PARALLEL`, and Codex's default `agents.max_threads` cap), and `auto_review.policy` defaults before applying them.
+   - Do not set `agents.max_threads` in shared config when Codex `features.multi_agent_v2` is enabled and rejects that key.
    - Treat project-scoped `.codex/config.toml` as public only when it contains no personal paths, credentials, or active session state.
 5. Configuration template gate
    - Prefer generic templates and project-relative paths.
@@ -41,8 +42,9 @@ Use this skill when the user asks Codex to initialize, check, doctor, or explain
 4. For `init` or `localize`, guide or create:
    - `AGENTS.md` from `assets/AGENTS.md.tmpl`
    - `.codex/config.toml` from `assets/codex-config.toml.tmpl`
-5. Verify plugin manifests, skill directories, hooks/docs references, setup templates, and optional external tools.
-6. End with the exact next command for the operator.
+5. When the project asks for Codex subagent parity, guide `.codex/agents/` setup from `../codex-team/assets/agents/*.toml.tmpl`.
+6. Verify plugin manifests, skill directories, hooks/docs references, setup templates, Codex agent templates, and optional external tools.
+7. End with the exact next command for the operator.
 
 ## Completion Contract
 
