@@ -24,13 +24,18 @@ Use this skill when the user asks Codex to initialize, check, doctor, or explain
    - Explain `sandbox_mode`, `approval_policy`, `model`, `review_model`, MCP (`mcp_servers`), subagent limits (`agents.max_depth`, workflow `MAX_CODEX_PARALLEL`, and Codex's default `agents.max_threads` cap), and `auto_review.policy` defaults before applying them.
    - Do not set `agents.max_threads` in shared config when Codex `features.multi_agent_v2` is enabled and rejects that key.
    - Treat project-scoped `.codex/config.toml` as public only when it contains no personal paths, credentials, or active session state.
-5. Configuration template gate
+5. MCP and external context gate
+   - Explain that this plugin ships `mcpServers` pointing at `./.mcp.json`, with the OpenAI Codex official docs server disabled by default and optional (`required = false`).
+   - Show plugin-scoped opt-in with `plugins."codex-harness".mcp_servers.openaiDeveloperDocs` instead of editing the plugin manifest.
+   - Use optional external context only for real manual-loop reduction: current official docs, GitHub review metadata, and selected external contexts that are required by the task.
+   - Treat unavailable MCP as a reported warning; fall back to committed docs, `gh`, or local exports where sufficient, and do not block unless the requested task depends on that remote source.
+6. Configuration template gate
    - Prefer generic templates and project-relative paths.
    - Keep `harness.config.json`, `AGENTS.md`, `.codex/config.toml`, and CodeRabbit guidance free of private machine paths.
-6. Verification gate
+7. Verification gate
    - Run the repository's harness doctor, manifest checks, or equivalent file-existence checks when available.
    - Report missing optional dependencies separately from blocking setup failures.
-7. Local-only boundary gate
+8. Local-only boundary gate
    - Never commit live `harness.config.json` unless the project explicitly treats it as public.
    - Keep `.docs/handoff/` out of tracked files.
 

@@ -77,6 +77,8 @@ const CODEX_SETUP_TEMPLATE_FILES = [
   "plugins/codex-harness/skills/harness-setup/assets/codex-config.toml.tmpl",
 ] as const;
 
+const CODEX_MCP_CONFIG_FILE = "plugins/codex-harness/.mcp.json";
+
 const CODEX_SUBAGENT_TEMPLATE_FILES = [
   "plugins/codex-harness/skills/codex-team/assets/agents/implementation-worker.toml.tmpl",
   "plugins/codex-harness/skills/codex-team/assets/agents/reviewer.toml.tmpl",
@@ -199,6 +201,7 @@ describe("Codex plugin platform surface", () => {
       version: "0.4.0-rc.2",
       license: "MIT",
       skills: "./skills/",
+      mcpServers: "./.mcp.json",
       hooks: "./hooks/hooks.json",
       interface: {
         displayName: "Codex Harness",
@@ -207,6 +210,68 @@ describe("Codex plugin platform surface", () => {
     });
     expect(manifest).not.toHaveProperty("commands");
     expect(manifest).not.toHaveProperty("agents");
+  });
+
+  it("publishes optional Codex MCP guidance without private external-context state", () => {
+    const manifest = expectRecord(
+      readJson("plugins/codex-harness/.codex-plugin/plugin.json"),
+      "codex plugin manifest",
+    );
+    const mcpConfig = expectRecord(readJson(CODEX_MCP_CONFIG_FILE), ".mcp.json");
+    const mcpServers = expectRecord(mcpConfig.mcpServers, "mcpServers");
+    const docsServer = expectRecord(
+      mcpServers.openaiDeveloperDocs,
+      "mcpServers.openaiDeveloperDocs",
+    );
+    const harnessSetup = readRepoFile(
+      "plugins/codex-harness/skills/harness-setup/SKILL.md",
+    );
+    const contextAudit = readRepoFile(
+      "plugins/codex-harness/skills/context-audit/SKILL.md",
+    );
+    const coderabbitReview = readRepoFile(
+      "plugins/codex-harness/skills/coderabbit-review/SKILL.md",
+    );
+    const readme = readRepoFile("plugins/codex-harness/README.md");
+    const platformAdapters = readRepoFile("docs/maintainer/platform-adapters.md");
+    const configTemplate = readRepoFile(CODEX_SETUP_TEMPLATE_FILES[1]);
+    const combinedDocs = [
+      harnessSetup,
+      contextAudit,
+      coderabbitReview,
+      readme,
+      platformAdapters,
+      configTemplate,
+    ].join("\n");
+
+    expect(manifest.mcpServers).toBe("./.mcp.json");
+    expect(existsSync(repoPath(CODEX_MCP_CONFIG_FILE))).toBe(true);
+    expect(docsServer).toMatchObject({
+      enabled: false,
+      required: false,
+      url: "https://developers.openai.com/mcp",
+      default_tools_approval_mode: "prompt",
+    });
+    expect(docsServer).not.toHaveProperty("env");
+    expect(docsServer).not.toHaveProperty("bearer_token_env_var");
+    expect(docsServer).not.toHaveProperty("http_headers");
+
+    for (const phrase of [
+      "OpenAI Codex official docs",
+      "GitHub review metadata",
+      "selected external contexts",
+      "optional external context",
+      "unavailable MCP",
+      "required = false",
+      'plugins."codex-harness".mcp_servers.openaiDeveloperDocs',
+      "do not block",
+    ]) {
+      expect(combinedDocs).toContain(phrase);
+    }
+
+    expectNoActiveSessionState(`${JSON.stringify(mcpConfig)}\n${combinedDocs}`);
+    expect(combinedDocs).not.toMatch(/github_pat_|gh[pousr]_/);
+    expect(combinedDocs).not.toMatch(/OPENAI_API_KEY|GITHUB_TOKEN/);
   });
 
   it("wires Codex plugin hooks through the Codex adapter root", () => {

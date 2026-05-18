@@ -109,6 +109,30 @@ The initial Codex hook foundation covers deterministic, testable guardrails:
 - `UserPromptSubmit` for prompt secret checks.
 - `Stop` for completion evidence reminders before session finalization.
 
+## Codex MCP And External Context
+
+Codex MCP parity is intentionally optional. The Codex manifest points
+`mcpServers` at `plugins/codex-harness/.mcp.json`, which contains the OpenAI
+Codex official docs endpoint disabled by default and optional (`required =
+false`). Users can opt in with plugin-scoped policy:
+The bundled JSON uses `mcpServers`; the Codex TOML policy path uses
+`mcp_servers`.
+
+```toml
+[plugins."codex-harness".mcp_servers.openaiDeveloperDocs]
+enabled = true
+default_tools_approval_mode = "prompt"
+```
+
+Harness skills should request optional external context only when it removes a
+real manual loop: OpenAI Codex official docs for current platform behavior,
+GitHub review metadata for PR review state and unresolved threads, and selected
+external contexts such as issue trackers or incident systems when the task
+depends on them. If unavailable MCP or another optional source cannot be read,
+the skill must say which source was unavailable, fall back to committed docs,
+`gh`, or local exports when sufficient, and do not block unless the task's
+acceptance criteria require that remote evidence.
+
 ## Local-Only Boundary
 
 The Harness can develop itself, but live self-hosting state is not part of the

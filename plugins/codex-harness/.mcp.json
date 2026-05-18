@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "openaiDeveloperDocs": {
+      "enabled": false,
+      "required": false,
+      "url": "https://developers.openai.com/mcp",
+      "default_tools_approval_mode": "prompt"
+    }
+  }
+}
