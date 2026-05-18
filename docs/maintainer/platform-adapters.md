@@ -24,6 +24,37 @@ format.
   `parallel-worktree-v2` are documented as non-equivalents, not copied as
   direct Codex skills.
 
+## Codex Official Reference Baseline
+
+Current Codex official feature references:
+
+- https://developers.openai.com/codex/concepts/customization
+- https://developers.openai.com/codex/plugins/build
+- https://developers.openai.com/codex/hooks
+- https://developers.openai.com/codex/subagents
+- https://developers.openai.com/codex/guides/agents-md
+- https://developers.openai.com/codex/config-reference
+
+The Codex adapter uses this baseline to avoid stale config and plugin surface
+drift:
+
+- Project-scoped config loads only after trust, so public templates must remain
+  generic.
+- Do not put provider, auth, telemetry, or profile routing in shared project
+  config.
+- `approval_policy = "on-request"` is the interactive default; `never` is for
+  non-interactive automation; `on-failure` is deprecated.
+- Use `features.multi_agent` for subagent collaboration.
+- Use `features.hooks` for lifecycle hooks and `features.plugin_hooks` for
+  plugin-bundled hooks.
+- Prefer top-level `web_search` for web search policy.
+- Plugin manifest paths stay inside the plugin root and start with `./`.
+- Use `skills`, `mcpServers`, and `hooks` for bundled surfaces.
+- Plugin hooks are opt-in with `[features].plugin_hooks = true`.
+- Optional MCP failures are warnings unless acceptance criteria require remote
+  evidence.
+- Second-opinion gate must be fail-closed.
+
 ## Shared Workflow Rules
 
 Both adapters preserve the same operating intent:
@@ -53,10 +84,12 @@ copy-ready setup assets under
 - `AGENTS.md.tmpl` is the concise durable-guidance starting point. It should
   hold stable repository expectations and point to task-specific references.
 - `codex-config.toml.tmpl` is the project-scoped `.codex/config.toml` starting
-  point. It documents `model`, `review_model`, `approval_policy`,
+  point. It documents `model`, `review_model`, `model_reasoning_effort`,
+  `model_reasoning_summary`, `approval_policy`, `approvals_reviewer`,
   `sandbox_mode`, `sandbox_workspace_write.network_access`, MCP
-  (`mcp_servers`), plugin hook flags (`features.hooks` /
-  `features.plugin_hooks`), and `auto_review.policy`.
+  (`mcp_servers`), subagent collaboration (`features.multi_agent`), plugin
+  hook flags (`features.hooks` / `features.plugin_hooks`), and
+  `auto_review.policy`.
 - Project-scoped setup files are publishable only when they stay generic.
   Personal machine paths, credentials, active branch state, PR state, and
   handoff session notes remain local-only.
@@ -71,8 +104,9 @@ contract.
   `adversarial_auditor`, `release_verifier`, and `handoff_docs_checker`.
 - Codex's `agents.max_threads` cap, configured `agents.max_depth`, and
   workflow `MAX_CODEX_PARALLEL` bound concurrency before any parallel work
-  starts. Shared config should not set `agents.max_threads` while Codex
-  `multi_agent_v2` rejects that key.
+  starts. `agents.max_threads` is valid and has a built-in default when unset;
+  shared config leaves it unset unless a project deliberately needs a different
+  cap.
 - Model A uses read-only subagents for exploration, review, release
   verification, and handoff/docs checks while the coordinator owns writes.
 - Model B uses isolated worktrees for independent writable tasks with explicit

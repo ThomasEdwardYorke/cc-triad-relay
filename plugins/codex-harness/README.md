@@ -16,6 +16,35 @@ codex plugin marketplace add /path/to/project
 Then enable `codex-harness` from the project marketplace.
 Use the marketplace name configured by the project.
 
+## Current Codex Official Feature References
+
+The Codex adapter is checked against the current OpenAI Codex documentation:
+
+- https://developers.openai.com/codex/concepts/customization
+- https://developers.openai.com/codex/plugins/build
+- https://developers.openai.com/codex/hooks
+- https://developers.openai.com/codex/subagents
+- https://developers.openai.com/codex/guides/agents-md
+- https://developers.openai.com/codex/config-reference
+
+Current source-backed contracts:
+
+- Project-scoped config loads only after trust, so committed defaults must stay
+  generic and safe for every contributor.
+- Do not put provider, auth, telemetry, or profile routing in shared project config; keep that state in user-level or managed config.
+- `approval_policy = "on-request"` is the interactive default; `never` is for
+  non-interactive automation; `on-failure` is deprecated.
+- Use `features.multi_agent` for subagent collaboration.
+- Use `features.hooks` for lifecycle hooks and `features.plugin_hooks` for
+  plugin-bundled hooks.
+- Prefer top-level `web_search` for web search policy.
+- Plugin manifest paths stay inside the plugin root and start with `./`.
+- Use `skills`, `mcpServers`, and `hooks` for bundled surfaces.
+- Plugin hooks are opt-in with `[features].plugin_hooks = true`.
+- Optional MCP failures are warnings unless acceptance criteria require remote
+  evidence.
+- Second-opinion gate must be fail-closed.
+
 ## Entry Skills
 
 - `harness-work`: choose the right work mode and dispatch a task through the quality gates.
@@ -84,10 +113,13 @@ git ls-files -- harness.config.json docs/maintainer/handoff .docs/handoff
 
 The `AGENTS.md` template keeps durable guidance short and points to
 task-specific references. The `.codex/config.toml` template documents
-project-scoped defaults for `model`, `review_model`, `approval_policy`,
-`sandbox_mode`, `sandbox_workspace_write.network_access`, MCP via
-`mcp_servers`, plugin hooks via `features.hooks` / `features.plugin_hooks`,
-and review-policy guidance through `auto_review.policy`.
+project-scoped defaults for `model`, `review_model`,
+`model_reasoning_effort`, `model_reasoning_summary`, `approval_policy`,
+`approvals_reviewer`, `sandbox_mode`,
+`sandbox_workspace_write.network_access`, MCP via `mcp_servers`, subagent
+collaboration through `features.multi_agent`, plugin hooks via
+`features.hooks` / `features.plugin_hooks`, and review-policy guidance
+through `auto_review.policy`.
 
 Project-scoped config is public only when it is generic. Keep personal machine
 paths, credentials, active branch notes, PR state, and handoff session state in
@@ -192,9 +224,10 @@ subagent, CLI, and isolated-worktree paths.
 The role templates live under `skills/codex-team/assets/agents/` and stay
 generic until a project copies or adapts them. Respect Codex's
 `agents.max_threads` cap, keep `agents.max_depth` bounded, and use
-`MAX_CODEX_PARALLEL` so subagent work keeps bounded concurrency. Do not set
-`agents.max_threads` in shared project config while Codex `multi_agent_v2`
-rejects that key.
+`MAX_CODEX_PARALLEL` so subagent work keeps bounded concurrency.
+`agents.max_threads` is a valid Codex key with a built-in default when unset;
+shared templates leave it unset unless a project deliberately needs a different
+cap.
 
 Model A maps to read-only Codex subagents for exploration, review, and handoff
 checks while the coordinator owns the writable feature branch. Model B maps to

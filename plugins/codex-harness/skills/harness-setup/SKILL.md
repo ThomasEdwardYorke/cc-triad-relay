@@ -21,15 +21,24 @@ Use this skill when the user asks Codex to initialize, check, doctor, or explain
    - Use `assets/AGENTS.md.tmpl` when creating or refreshing project guidance.
 4. Codex config defaults gate
    - Use `assets/codex-config.toml.tmpl` when creating or explaining `.codex/config.toml`.
-   - Explain `sandbox_mode`, `approval_policy`, `model`, `review_model`, MCP (`mcp_servers`), subagent limits (`agents.max_depth`, workflow `MAX_CODEX_PARALLEL`, and Codex's default `agents.max_threads` cap), and `auto_review.policy` defaults before applying them.
-   - Do not set `agents.max_threads` in shared config when Codex `features.multi_agent_v2` is enabled and rejects that key.
+   - Explain `sandbox_mode`, `approval_policy`, `approvals_reviewer`, `model`, `review_model`, `model_reasoning_effort`, `model_reasoning_summary`, MCP (`mcp_servers`), subagent limits (`features.multi_agent`, `agents.max_depth`, workflow `MAX_CODEX_PARALLEL`, and Codex's built-in `agents.max_threads` cap), and `auto_review.policy` defaults before applying them.
+   - Leave `agents.max_threads` unset unless the project needs a non-default cap.
    - Treat project-scoped `.codex/config.toml` as public only when it contains no personal paths, credentials, or active session state.
+   - Project-scoped config loads only after trust; do not put provider, auth, telemetry, or profile routing in shared project config.
+   - `approval_policy = "on-request"` is the interactive default; `never` is for non-interactive automation; `on-failure` is deprecated.
 5. MCP and external context gate
    - Explain that this plugin ships `mcpServers` pointing at `./.mcp.json`, with the OpenAI Codex official docs server disabled by default and optional (`required = false`).
    - Show plugin-scoped opt-in with `plugins."codex-harness".mcp_servers.openaiDeveloperDocs` instead of editing the plugin manifest.
    - Use optional external context only for real manual-loop reduction: current official docs, GitHub review metadata, and selected external contexts that are required by the task.
-   - Treat unavailable MCP as a reported warning; fall back to committed docs, `gh`, or local exports where sufficient, and do not block unless the requested task depends on that remote source.
-6. Codex CI and non-interactive automation gate
+   - Optional MCP failures are warnings unless acceptance criteria require remote evidence; fall back to committed docs, `gh`, or local exports where sufficient.
+6. Codex plugin surface gate
+   - Plugin manifest paths stay inside the plugin root and start with `./`.
+   - Use `skills`, `mcpServers`, and `hooks` for bundled surfaces.
+   - Use `features.multi_agent` for subagent collaboration.
+   - For lifecycle hooks, use `features.hooks`; for plugin-bundled hooks, use `features.plugin_hooks`.
+   - Plugin hooks are opt-in with `[features].plugin_hooks = true`.
+   - Prefer top-level `web_search` for web search policy.
+7. Codex CI and non-interactive automation gate
    - Explain repeatable Non-interactive mode through `codex exec` before recommending any GitHub workflow.
    - Default `codex exec` review and summary jobs to `--sandbox read-only`, `--ephemeral`, `--ignore-user-config`, `--json`, and `--output-last-message`; use `--output-schema` only when downstream automation needs stable fields.
    - Use `--sandbox workspace-write` only in isolated fix experiments that rerun the normal verification command before producing a patch.
@@ -37,13 +46,13 @@ Use this skill when the user asks Codex to initialize, check, doctor, or explain
    - Classify Codex automation as `local-only`, `CI-optional`, or `release-blocking`; GitHub CI remains the release-blocking source until maintainers explicitly require the Codex workflow.
    - CodeRabbit remains the PR review source when configured; do not duplicate CodeRabbit with broad style or nitpick automation.
    - Keep API key material in a project secret such as `CODEX_API_KEY`, never in committed templates.
-7. Configuration template gate
+8. Configuration template gate
    - Prefer generic templates and project-relative paths.
    - Keep `harness.config.json`, `AGENTS.md`, `.codex/config.toml`, and CodeRabbit guidance free of private machine paths.
-8. Verification gate
+9. Verification gate
    - Run the repository's harness doctor, manifest checks, or equivalent file-existence checks when available.
    - Report missing optional dependencies separately from blocking setup failures.
-9. Local-only boundary gate
+10. Local-only boundary gate
    - Never commit live `harness.config.json` unless the project explicitly treats it as public.
    - Keep `.docs/handoff/` out of tracked files.
 

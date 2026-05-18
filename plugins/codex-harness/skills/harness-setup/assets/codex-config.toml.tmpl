@@ -7,21 +7,32 @@
 # Pick the team's default model explicitly when the project needs one.
 model = "gpt-5.5"
 review_model = "gpt-5.5"
+model_reasoning_effort = "medium"
+model_reasoning_summary = "auto"
 
 # Interactive setup: Codex can work inside the project and asks before leaving
 # the sandbox, using networked commands, or taking higher-risk actions.
+# `approval_policy = "on-request"` is the interactive default; `never` is for
+# non-interactive automation; `on-failure` is deprecated.
 approval_policy = "on-request"
+approvals_reviewer = "user"
 sandbox_mode = "workspace-write"
 sandbox_workspace_write.network_access = false
+
+# Project-scoped config loads only after trust. Do not put provider, auth,
+# telemetry, or profile routing in shared project config; keep those settings
+# in user-level or managed configuration.
 
 # Keep durable guidance concise. AGENTS.md is the primary project instruction
 # file; add fallback names only when this repository already has them.
 project_doc_max_bytes = 32768
 project_doc_fallback_filenames = []
 
-# Keep subagent fan-out bounded. Do not set agents.max_threads in shared
-# config because Codex rejects it when features.multi_agent_v2 is enabled; rely
-# on Codex's default thread cap and the workflow-level MAX_CODEX_PARALLEL gate.
+# Keep subagent fan-out bounded. Use features.multi_agent for subagent
+# collaboration. agents.max_threads is valid and has a Codex built-in default
+# when unset, so leave it unset unless this project deliberately needs a
+# different cap; keep a workflow-level MAX_CODEX_PARALLEL gate for writable
+# worktree orchestration.
 # The default depth allows direct child agents but avoids recursive delegation
 # unless the project explicitly opts in.
 agents.max_depth = 1
@@ -34,8 +45,12 @@ project portability. Return actionable findings before style-only comments.
 
 # Optional plugin hook parity for projects that have reviewed and trusted the
 # bundled non-managed hooks.
+features.multi_agent = true
 features.hooks = true
 features.plugin_hooks = true
+
+# Prefer top-level web_search for web search policy when the project needs an
+# explicit setting.
 
 # Optional MCP example. Enable only after deciding which external context the
 # workflow actually needs, and keep authentication in environment variables.
