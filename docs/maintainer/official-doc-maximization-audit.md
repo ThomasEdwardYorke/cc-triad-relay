@@ -80,6 +80,9 @@ T-023: Eval and self-improve loop.
   is generic Harness behavior, not consumer project state.
 - Keep automation local-only or CI-optional until measured signal quality is
   high enough to justify a release-blocking gate.
+- Publish the durable loop in
+  `docs/maintainer/adapter-evaluation-self-improve-loop.md`, and keep
+  `harness-self-improve` aligned with that intake policy.
 
 ## Review Gates
 

@@ -208,6 +208,20 @@ Gate classification:
   state, and Codex automation only after maintainers explicitly mark the
   workflow as required.
 
+## Adapter Evaluation And Self-Improve Loop
+
+The repeatable adapter evaluation loop lives in
+`docs/maintainer/adapter-evaluation-self-improve-loop.md`. It compares the
+Claude Code adapter and Codex adapter by workflow outcomes across planning, TDD,
+review, branch, merge, handoff, and public/local boundary gates.
+
+`harness-self-improve` may feed retrospectives into backlog candidates only when
+the root cause is generic Harness behavior, not consumer project state. Keep the
+candidate PR-sized, give it acceptance criteria, and preserve the same gate
+classification used for automation: `local-only`, `CI-optional`, or
+`release-blocking`. CodeRabbit CLI remains the pre-push review aid; PR
+CodeRabbit remains the external PR review loop.
+
 ## Local-Only Boundary
 
 The Harness can develop itself, but live self-hosting state is not part of the
