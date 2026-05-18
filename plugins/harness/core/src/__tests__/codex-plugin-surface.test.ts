@@ -85,6 +85,8 @@ const CODEX_CI_AUTOMATION_TEMPLATE_FILES = [
 const CODEX_MCP_CONFIG_FILE = "plugins/codex-harness/.mcp.json";
 const OFFICIAL_DOC_MAXIMIZATION_AUDIT_FILE =
   "docs/maintainer/official-doc-maximization-audit.md";
+const ADAPTER_EVALUATION_LOOP_FILE =
+  "docs/maintainer/adapter-evaluation-self-improve-loop.md";
 
 const CODEX_OFFICIAL_FEATURE_URLS = [
   "https://developers.openai.com/codex/concepts/customization",
@@ -455,6 +457,64 @@ describe("Codex plugin platform surface", () => {
 
     expectNoActiveSessionState(combinedDocs);
     expect(audit).not.toContain("docs/maintainer/handoff");
+  });
+
+  it("publishes adapter evaluation and self-improve loop guidance with promotion safeguards", () => {
+    expect(existsSync(repoPath(ADAPTER_EVALUATION_LOOP_FILE))).toBe(true);
+
+    const evaluationLoop = readRepoFile(ADAPTER_EVALUATION_LOOP_FILE);
+    const selfImprove = readRepoFile(
+      "plugins/codex-harness/skills/harness-self-improve/SKILL.md",
+    );
+    const platformAdapters = readRepoFile("docs/maintainer/platform-adapters.md");
+    const combinedDocs = `${evaluationLoop}\n${selfImprove}\n${platformAdapters}`;
+
+    for (const phrase of [
+      "Adapter Evaluation And Self-Improve Loop",
+      "Claude Code adapter",
+      "Codex adapter",
+      "planning",
+      "TDD",
+      "review",
+      "branch",
+      "merge",
+      "handoff",
+      "public/local boundary",
+      "CodeRabbit CLI",
+      "PR CodeRabbit",
+      "session-handoff archive",
+      "session-handoff update",
+      "root cause is generic Harness behavior",
+      "not consumer project state",
+      "backlog candidates",
+      "acceptance criteria",
+      "local-only",
+      "CI-optional",
+      "release-blocking",
+      "signal quality",
+      "false positives",
+      "false negatives",
+      "time-to-clear",
+      "defects caught",
+      "docs drift",
+      "promotion criteria",
+      "demotion",
+      "rollback",
+    ]) {
+      expect(combinedDocs, `missing ${phrase}`).toContain(phrase);
+    }
+
+    for (const localOnlyPath of [
+      ".docs/handoff",
+      "docs/maintainer/handoff",
+      "harness.config.json",
+    ]) {
+      expect(evaluationLoop, `local-only path leaked: ${localOnlyPath}`).not.toContain(
+        localOnlyPath,
+      );
+    }
+
+    expectNoActiveSessionState(evaluationLoop);
   });
 
   it("wires Codex plugin hooks through the Codex adapter root", () => {
