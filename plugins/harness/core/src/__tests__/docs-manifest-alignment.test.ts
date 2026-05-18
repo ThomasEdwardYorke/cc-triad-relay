@@ -17,6 +17,19 @@ const VERB_COMMANDS = new Set([
   "harness-setup",
 ]);
 
+const CLAUDE_OFFICIAL_FEATURE_URLS = [
+  "https://code.claude.com/docs/en/skills",
+  "https://code.claude.com/docs/en/plugins",
+  "https://code.claude.com/docs/en/plugins-reference",
+  "https://code.claude.com/docs/en/worktrees",
+  "https://code.claude.com/docs/en/sub-agents",
+  "https://code.claude.com/docs/en/hooks",
+  "https://code.claude.com/docs/en/mcp",
+  "https://code.claude.com/docs/en/settings",
+  "https://code.claude.com/docs/en/github-actions",
+  "https://code.claude.com/docs/en/agent-sdk/overview",
+] as const;
+
 function readRepoFile(path: string): string {
   return readFileSync(resolve(REPO_ROOT, path), "utf-8");
 }
@@ -110,7 +123,7 @@ describe("public docs stay aligned with plugin manifests", () => {
     );
 
     expect(commandsDoc).toContain(
-      `The harness ships ${commandNames.length} commands: ${verbCount} verb skills`,
+      `The harness ships ${commandNames.length} slash-invoked skills: ${verbCount} verb skills`,
     );
     expect(commandsDoc).toContain(`plus ${workflowCount} workflow skills`);
     expect(extractTableBacktickNames(commandListSection, "/")).toEqual(commandNames);
@@ -126,11 +139,11 @@ describe("public docs stay aligned with plugin manifests", () => {
     const readme = readRepoFile("README.md");
 
     expect(readme).toContain(
-      `**${commandNames.length} slash commands**: ${verbCount} verb`,
+      `**${commandNames.length} slash-invoked skills**: ${verbCount} verb`,
     );
     expect(readme).toContain(`plus ${workflowCount} workflow primitives`);
     expect(readme).toContain(
-      `All 13 guardrails, ${commandNames.length} commands (${verbCount} verb + ${workflowCount} workflow)`,
+      `All 13 guardrails, ${commandNames.length} slash-invoked skills (${verbCount} verb + ${workflowCount} workflow)`,
     );
     expect(readme).toContain(`all ${hookEventCount} lifecycle hooks`);
   });
@@ -151,6 +164,38 @@ describe("public docs stay aligned with plugin manifests", () => {
     }
   });
 
+  it("public Claude adapter docs follow the official skill-first feature model", () => {
+    const readme = readRepoFile("README.md");
+    const commandsDoc = readRepoFile("docs/en/commands.md");
+    const architectureDoc = readRepoFile("docs/en/architecture.md");
+    const harnessSetup = readRepoFile("plugins/harness/commands/harness-setup.md");
+    const combinedDocs = [
+      readme,
+      commandsDoc,
+      architectureDoc,
+      harnessSetup,
+    ].join("\n");
+
+    for (const url of CLAUDE_OFFICIAL_FEATURE_URLS) {
+      expect(combinedDocs, `missing ${url}`).toContain(url);
+    }
+
+    for (const phrase of [
+      "Claude Code official skills model",
+      "Custom commands have been merged into skills",
+      "existing `.claude/commands/` files keep working",
+      "slash-invoked skills",
+      "packaged under `commands/` for compatibility",
+      "skill-first",
+      "not command-only",
+      "plugins can include skills, agents, hooks, MCP servers, LSP servers, and monitors",
+      "worktree isolation",
+      "Agent SDK",
+    ]) {
+      expect(combinedDocs, `missing ${phrase}`).toContain(phrase);
+    }
+  });
+
   it("agent docs and architecture mention manifest counts and agents", () => {
     const agentsDoc = readRepoFile("docs/en/agents.md");
     const architectureDoc = readRepoFile("docs/en/architecture.md");
@@ -165,10 +210,10 @@ describe("public docs stay aligned with plugin manifests", () => {
     }
 
     expect(architectureDoc).toContain(
-      `**Skills** — ${commandNames.length} commands: ${verbCount} verb commands`,
+      `**Skills** — ${commandNames.length} slash-invoked skills: ${verbCount} verb skills`,
     );
     expect(architectureDoc).toContain(
-      `plus ${workflowCount} workflow commands under \`commands/\``,
+      `plus ${workflowCount} workflow skills, packaged under \`commands/\``,
     );
     expect(architectureDoc).toContain(
       `**Agents** — ${agentNames.length} specialised agents`,

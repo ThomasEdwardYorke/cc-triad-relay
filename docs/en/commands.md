@@ -1,9 +1,19 @@
 # Commands
 
-The harness ships 19 commands: 5 verb skills that define the overall
-lifecycle, plus 14 workflow skills for planning support, git, PR review,
-Codex collaboration, TDD enforcement, worktree parallelization, session
-handoff, context audit, and local pseudo-CodeRabbit loops.
+The harness ships 19 slash-invoked skills: 5 verb skills that define the
+overall lifecycle, plus 14 workflow skills for planning support, git, PR
+review, Codex collaboration, TDD enforcement, worktree parallelization,
+session handoff, context audit, and local pseudo-CodeRabbit loops.
+
+## Claude Code official skills model
+
+Claude Code's current skills documentation says "Custom commands have been
+merged into skills" and existing `.claude/commands/` files keep working. The
+Harness therefore uses skill-first terminology for its Claude adapter: these
+entrypoints are slash-invoked skills, packaged under `commands/` for
+compatibility, not command-only files.
+
+Primary source: https://code.claude.com/docs/en/skills
 
 ## Verb skills
 
