@@ -35,7 +35,7 @@ Use this skill when the user asks Codex to initialize, check, doctor, or explain
    - Plugin manifest paths stay inside the plugin root and start with `./`.
    - Use `skills`, `mcpServers`, and `hooks` for bundled surfaces.
    - Use `features.multi_agent` for subagent collaboration.
-   - Use `features.hooks` for lifecycle hooks and `features.plugin_hooks` for plugin-bundled hooks.
+   - For lifecycle hooks, use `features.hooks`; for plugin-bundled hooks, use `features.plugin_hooks`.
    - Plugin hooks are opt-in with `[features].plugin_hooks = true`.
    - Prefer top-level `web_search` for web search policy.
 7. Codex CI and non-interactive automation gate

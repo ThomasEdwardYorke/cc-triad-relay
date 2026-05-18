@@ -582,7 +582,7 @@ describe("Codex plugin platform surface", () => {
       '`never` is for non-interactive automation',
       "`on-failure` is deprecated",
       "Use `features.multi_agent` for subagent collaboration",
-      "Use `features.hooks` for lifecycle hooks and `features.plugin_hooks` for plugin-bundled hooks",
+      "For lifecycle hooks, use `features.hooks`; for plugin-bundled hooks, use `features.plugin_hooks`",
       "Prefer top-level `web_search` for web search policy",
       "Plugin manifest paths stay inside the plugin root and start with `./`",
       "Use `skills`, `mcpServers`, and `hooks` for bundled surfaces",
