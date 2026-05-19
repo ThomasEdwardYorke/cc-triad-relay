@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { dirname, resolve, posix as pathPosix } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +17,23 @@ import { parse as parseYaml } from "yaml";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PLUGIN_ROOT = resolve(__dirname, "../../..");
+const REPO_ROOT = resolve(PLUGIN_ROOT, "../..");
+
+function gitOutput(args: string[]): string {
+  return execFileSync("git", ["-C", REPO_ROOT, ...args], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+function gitLines(args: string[]): string[] {
+  const out = gitOutput(args).trim();
+  return out.length === 0 ? [] : out.split(/\r?\n/).sort();
+}
+
+function readRepoFile(path: string): string {
+  return readFileSync(resolve(REPO_ROOT, path), "utf-8");
+}
 
 /**
  * Regex metacharacter escape (MDN RegExp guide 推奨形式).
@@ -5319,10 +5337,11 @@ describe("commands/parallel-worktree-v2.md — Model B v2 skill anchors", () => 
     expect(skill).toMatch(/-r\b|--resume/);
   });
 
-  it("interactive と headless の signal 経路を明示する (interactive=tmux capture / git log、headless=stream-json)", () => {
+  it("interactive と headless の signal 経路を明示する (interactive=git log、headless=stream-json)", () => {
     // CR PR #68 round 1 Critical 指摘: interactive `claude -n` は stream-json を
     // 出さない。spec body で interactive と headless の経路を区別する drift guard。
-    expect(skill).toMatch(/tmux\s*capture-pane|git\s*(?:commit\s*)?log|interactive/i);
+    expect(skill).toMatch(/interactive/i);
+    expect(skill).toMatch(/git\s*(?:commit\s*)?log/i);
     // headless 経路 (claude-oneshot 経由) で stream-json が取得できることを記述
     expect(skill).toMatch(/stream-json/);
     expect(skill).toMatch(/-p\b|--print|headless|claude-oneshot/);
@@ -5348,6 +5367,33 @@ describe("commands/parallel-worktree-v2.md — Model B v2 skill anchors", () => 
       const hint = parsed["argument-hint"] as string;
       expect(hint).toMatch(/spec|tmux|dry-run|attach|status|stop|profile/i);
     }
+  });
+
+  it("operator tmux quickref is shipped and linked from attach/status guidance", () => {
+    const rootQuickrefPath = "docs/operator/tmux-quickref.md";
+    const shippedQuickrefPath = "plugins/harness/docs/operator/tmux-quickref.md";
+    expect(existsSync(resolve(REPO_ROOT, rootQuickrefPath))).toBe(true);
+    expect(existsSync(resolve(REPO_ROOT, shippedQuickrefPath))).toBe(true);
+    const quickref = readRepoFile(shippedQuickrefPath);
+    expect(readRepoFile(rootQuickrefPath)).toBe(quickref);
+    expect(quickref).toMatch(/tmux/i);
+    expect(quickref).toMatch(/parallel-worktree-v2 attach <slug>/);
+    expect(quickref).toMatch(/Ctrl-b d/);
+    expect(quickref).toMatch(/TMUX_SESSION_NAME/);
+    expect(quickref).toMatch(/tmux list-windows -t <session>/);
+    expect(quickref).not.toMatch(/tmux list-windows -t harness-parallel/);
+    expect(skill).toMatch(new RegExp(escapeRegex(shippedQuickrefPath)));
+    expect(skill).toMatch(/installed harness plugin root/i);
+    expect(skill).toMatch(/attach <slug>[\s\S]{0,300}quickref/i);
+    expect(skill).toMatch(/status[\s\S]{0,300}quickref/i);
+  });
+
+  it("documents deterministic session-manager watch refresh guidance", () => {
+    expect(skill).toMatch(/harness session-manager watch/);
+    expect(skill).toMatch(/--interval-seconds/);
+    expect(skill).toMatch(/WORKTREE_PARENT_DIR="\$\{WORKTREE_PARENT_DIR:-\.\.\}"/);
+    expect(skill).toMatch(/WORKTREE_PREFIX="\$\{WORKTREE_PREFIX:-\$\(basename "\$PWD"\)-wt-\}"/);
+    expect(skill).toMatch(/without live tmux|no live tmux|does not require live tmux/i);
   });
 });
 
@@ -5476,6 +5522,114 @@ describe("Caller Scoping Guidance (tool_uses budget) — anchor lock-in", () => 
       expect(agents["codex-sync"], `codex-sync.md missing ${label}`).toMatch(phrase);
       expect(agents["coderabbit-mimic"], `coderabbit-mimic.md missing ${label}`).toMatch(phrase);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Public repository surface guard
+// ---------------------------------------------------------------------------
+// The repository is public, while this same harness is also used to develop
+// itself. Live self-hosting state belongs in ignored local files, not in the
+// public release branch. This guard protects the repo-level public surface;
+// generality.test.ts separately protects the shipped plugin surface.
+describe("public repository surface guard", () => {
+  it("does not track live self-hosting config or handoff state", () => {
+    expect(
+      gitLines(["ls-files", "--", "harness.config.json", "docs/maintainer/handoff", ".docs/handoff"]),
+    ).toEqual([]);
+  });
+
+  it("keeps local-only self-hosting paths ignored", () => {
+    expect(
+      gitLines([
+        "check-ignore",
+        "--",
+        "harness.config.json",
+        "harness.config.json.local",
+        ".docs/handoff/example.md",
+        "docs/maintainer/handoff/example.md",
+      ]),
+    ).toEqual([
+      ".docs/handoff/example.md",
+      "docs/maintainer/handoff/example.md",
+      "harness.config.json",
+      "harness.config.json.local",
+    ]);
+  });
+
+  it("tracks a generic example config instead of a live local config", () => {
+    expect(gitLines(["ls-files", "--", "harness.config.example.json"])).toEqual([
+      "harness.config.example.json",
+    ]);
+
+    const raw = readRepoFile("harness.config.example.json");
+    const parsed = JSON.parse(raw) as {
+      projectName?: unknown;
+      repoKind?: unknown;
+      work?: {
+        handoffPaths?: Record<string, unknown>;
+        testCommand?: unknown;
+      };
+      release?: {
+        testCommand?: unknown;
+      };
+    };
+
+    expect(parsed.projectName).toBe("my-project");
+    expect(parsed.repoKind).toBe("consumer");
+    expect(parsed.work?.handoffPaths).toEqual({
+      current: ".docs/handoff/my-project-current.md",
+      backlog: ".docs/handoff/my-project-backlog.md",
+      decisions: ".docs/handoff/my-project-decisions.md",
+      roadmap: ".docs/handoff/my-project-roadmap.md",
+    });
+    expect(parsed.work?.testCommand).toBe("npm test");
+    expect(parsed.release?.testCommand).toBe("npm test");
+    expect(raw).toContain(".docs/handoff/");
+    expect(raw).not.toMatch(/cc-triad-relay-local/);
+    expect(raw).not.toMatch(/\.docs\/handoff\/cc-triad-relay-/);
+    expect(raw).not.toMatch(/plugins\/harness\/core/);
+    expect(raw).not.toMatch(/docs\/maintainer\/handoff/);
+    expect(raw).not.toMatch(/\/Users\/[^/\s]+/);
+    expect(raw).not.toMatch(new RegExp("script" + "_generate"));
+  });
+
+  it("tracked public docs do not contain personal absolute paths", () => {
+    const trackedDocs = gitLines([
+      "ls-files",
+      "--",
+      "CONTRIBUTING.md",
+      ".github/pull_request_template.md",
+      "docs/maintainer",
+      "README.md",
+    ]).filter((path) => /\.(md|ya?ml)$/.test(path));
+
+    const offenders = trackedDocs.filter((path) => {
+      const raw = readRepoFile(path);
+      return /\/Users\/[^/\s]+/.test(raw);
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("tracked shipped scripts do not carry internal review tracker comments", () => {
+    const trackedScripts = gitLines([
+      "ls-files",
+      "--",
+      "plugins/harness/scripts",
+      "scripts",
+    ]).filter((path) => /\.(sh|mjs|js|ts)$/.test(path));
+    const internalReviewPattern = new RegExp(
+      ["chatgpt-codex-connector", "review", "P\\d"].join("\\s+"),
+      "i",
+    );
+
+    const offenders = trackedScripts.filter((path) => {
+      const raw = readRepoFile(path);
+      return internalReviewPattern.test(raw);
+    });
+
+    expect(offenders).toEqual([]);
   });
 });
 

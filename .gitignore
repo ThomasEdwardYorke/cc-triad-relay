@@ -18,10 +18,13 @@ tmp/
 # But do ignore intermediate build files
 *.js.map.orig
 
-# User-specific harness config
+# Local-only self-hosting harness config and notes.
+# Keep live repository-development state out of public main.
+/harness.config.json
 harness.config.json.local
+/docs/maintainer/handoff/
 
-# Local-only design notes (not shipped with the plugin)
+# Local-only design notes and handoff state (not shipped with the plugin)
 .docs/
 # Exception: handoff template ships with the plugin so consumers can `harness init`
 # the 4-layer handoff structure (current / backlog / decisions / roadmap).

@@ -7,6 +7,23 @@
 **発端プロジェクト (test-bed)**: `parts-management` (maintainer-side reference only)
 **関連 doc (test-bed side)**: `docs/harness-model-b-plan.md` (external, test-bed repo)
 
+## Status as of 2026-05-12
+
+This roadmap is historical plus forward-looking maintainer context. Do not start
+new work from `feature/model-b-evolution`; normal work starts from `dev` on a
+short-lived `feature/*` branch and merges back to `dev` before any release PR to
+`main`.
+
+Current state:
+
+- Phase 0 and Phase 1 are complete in the shipped harness.
+- Phase 2 infrastructure has landed as `/parallel-worktree-v2`, the tmux
+  template, session manager, and `/claude-oneshot`.
+- The active follow-up is Phase 3 dogfood and metrics, after repository hygiene
+  tasks such as remote branch cleanup are settled.
+- Historical predecessor Plans snapshots were triaged on 2026-05-12; see
+  `docs/maintainer/test-bed-usage.md` for the retained and rejected items.
+
 本 doc は cc-triad-relay plugin を Model A (coordinator + subagent) から
 Model B (各 worktree で独立 claude プロセス + 同一ハーネス) へ進化させる
 技術ロードマップ。**plugin 単体**の観点で必要な改修を記述。
@@ -172,6 +189,11 @@ P3.1 を Model B で実施した結果を保存し、対照実験として **同
 **集計 tooling**:
 - `bin/harness phase-3-metrics --pr-range <from>..<to>` のような CLI を新設して標準化 (Phase 3 期間中に実装)
 - 中間出力: JSON (`docs/maintainer/phase-3-metrics.json`)、最終 report は markdown
+- 実装済み CLI: 公開 surface では汎用名 `bin/harness pr-metrics --pr-range <from>..<to> [--repo owner/name]` として提供する。
+  - `gh pr view` から PR open → merge/close wallclock、CodeRabbit review / change-request / approval 数を集計する。
+  - Phase 3 運用では `--output-json docs/maintainer/phase-3-metrics.json` / `--output-md docs/maintainer/phase-3-results-<YYYY-MM-DD>.md` を明示する。
+  - API token cost / Codex Phase 7 FIX_FIRST rounds / post-merge hot-fix / operator load は GitHub metadata から導出できないため、未指定時は JSON/Markdown の manual metrics 欄に `TBD` として残す。
+  - 実装済み follow-up: `--manual-metrics docs/maintainer/phase-3-manual-metrics.json` で PR 番号 keyed sidecar JSON を overlay し、dashboard / session log 由来の manual metrics を再生成可能にする。
 
 **成果物**: `docs/maintainer/phase-3-results-<YYYY-MM-DD>.md` (期間: P3.1 完了から 1 週間後)
 

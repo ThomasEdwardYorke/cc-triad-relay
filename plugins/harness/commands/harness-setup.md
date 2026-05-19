@@ -11,6 +11,14 @@ This skill consolidates all harness-lifecycle operations that used to live in
 separate commands. It is domain-neutral; use `harness.config.json` at the
 project root to encode any project-specific values.
 
+## Claude Code official skills model
+
+Claude Code's current skills documentation says "Custom commands have been
+merged into skills" and existing `.claude/commands/` files keep working. Keep
+this setup skill skill-first: the installed entrypoints are slash-invoked
+skills, packaged under `commands/` for compatibility, not command-only
+metadata.
+
 ## Subcommands
 
 | Subcommand | Purpose |

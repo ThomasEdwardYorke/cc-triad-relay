@@ -1,0 +1,44 @@
+{
+  "$schema": "https://raw.githubusercontent.com/ThomasEdwardYorke/cc-triad-relay/main/plugins/harness/schemas/harness.config.schema.json",
+  "projectName": "my-project",
+  "repoKind": "consumer",
+  "language": "en",
+  "protectedDirectories": [],
+  "protectedEnvVarNames": [
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "GITHUB_TOKEN",
+    "GOOGLE_API_KEY"
+  ],
+  "protectedFileSuffixes": [
+    ".env"
+  ],
+  "codex": {
+    "enabled": false
+  },
+  "workMode": {
+    "bypassRmRf": false,
+    "bypassGitPush": false
+  },
+  "tampering": {
+    "severity": "approve"
+  },
+  "work": {
+    "taskTrackerMode": "handoff",
+    "handoffPaths": {
+      "current": ".docs/handoff/my-project-current.md",
+      "backlog": ".docs/handoff/my-project-backlog.md",
+      "decisions": ".docs/handoff/my-project-decisions.md",
+      "roadmap": ".docs/handoff/my-project-roadmap.md"
+    },
+    "testCommand": "npm test"
+  },
+  "release": {
+    "strategy": "three-branch",
+    "integrationBranch": "dev",
+    "productionBranch": "main",
+    "testCommand": "npm test"
+  }
+}

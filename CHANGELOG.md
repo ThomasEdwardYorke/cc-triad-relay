@@ -5,6 +5,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`parallel-sessions-template.sh stop --rollback`** — adds an explicit rollback path for Model B parallel sessions. Default `stop` remains tmux-only, while `stop --rollback [session] [slug...]` delegates to cleanup, removes generated worktrees, deletes only launcher-recorded generated `feature/*-<slug>` branches discovered from those worktrees before removal, filters explicit and tmux-gone fallback worktrees by recorded session marker, handles missing explicit worktrees as no-op cleanup, and keeps dry-run rollback previews explicit-scope-only without live tmux or destructive git state.
+- **`/harness-merge-train` M6.5 Dynamic overlap recheck** — adds a merge-base changed-path guard immediately before squash merge so the current PR is compared against remaining PR/worktree path sets with `detectDynamicChangedPathOverlap()`. The live collection refreshes base/current/remaining refs with explicit destination refspecs, writes path lists to a dedicated tmp output directory with `${TMPDIR:-/tmp}` fallback, disables quoted path output, preserves rename source paths with `--no-renames`, and fail-fast blocks M7 when refreshed exact-path overlap is detected.
+- **`session-manager` idle pane label helpers** — exported `renderIdlePaneTitle()` and `planIdlePaneLabels()` so tmux wrappers can mark stale worker panes as `<slug>-IDLE-<min>m` from the same deterministic session summaries that drive the dashboard. The helper returns structured pane targets/titles instead of shell command strings, and `parallel-sessions-template.sh label-panes` applies those labels through a dry-run-testable `tmux select-pane -T` boundary while keeping dashboard idle status canonical and preserving stable window names for attach / verify / cleanup.
+
+### Fixed
+
+- **`session-manager` idle visibility** — running sessions now expose `WARN-idle` after 10 minutes and `FAIL-idle` after 30 minutes without activity, using parsed stream-json event timestamps first and git commit timestamps as a fallback when no event stream exists. Errored completion results (`is_error: true` / `error_*` subtype) surface as `error` instead of being hidden as `unknown`, and timestampless log lines use stable file mtime fallback instead of resetting activity on every dashboard refresh.
+
 ## [0.4.0-rc.2] - 2026-04-28
 
 ### Added

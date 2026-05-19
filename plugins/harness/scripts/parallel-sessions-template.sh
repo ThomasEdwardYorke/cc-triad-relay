@@ -15,6 +15,8 @@
 set -euo pipefail
 
 DRY_RUN=0
+GENERATED_BRANCH_RECORD_FILE="harness-generated-branch"
+GENERATED_SESSION_RECORD_FILE="harness-session-name"
 
 # --- Input validation (injection prevention) -------------------------------
 # Per-input charset enforcement for values that flow into `bash -c "$*"` (via
@@ -28,11 +30,45 @@ DRY_RUN=0
 
 validate_identifier() {
   # alphanumeric + underscore + hyphen + dot only.
-  # Used for: slug, CLAUDE_MODEL alias.
+  # Used for: CLAUDE_MODEL alias.
   local name="$1"
   local val="$2"
   if [[ ! "$val" =~ ^[a-zA-Z0-9._-]+$ ]]; then
     echo "Error: $name '$val' contains invalid characters (allowed: a-z A-Z 0-9 . _ -)" >&2
+    exit 2
+  fi
+}
+
+validate_slug() {
+  # tmux target syntax uses "." to separate window and pane, so slug/window
+  # names must not contain dots if we target panes as "${session}:${slug}".
+  # It also tries numeric indexes before exact window names, so avoid leading
+  # digits.
+  local val="$1"
+  if [[ ! "$val" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]; then
+    echo "Error: slug '$val' contains invalid characters (allowed: leading a-z A-Z _, then a-z A-Z 0-9 _ -; dot and leading digits are reserved by tmux target syntax)" >&2
+    exit 2
+  fi
+}
+
+validate_tmux_session_name() {
+  # Session names flow into single-quoted tmux targets inside emit strings.
+  # Keep the same target-safe subset as slugs, while allowing the default
+  # hyphenated session name (`harness-parallel`).
+  local val="$1"
+  if [[ ! "$val" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]; then
+    echo "Error: tmux session name '$val' contains invalid characters (allowed: leading a-z A-Z _, then a-z A-Z 0-9 _ -)" >&2
+    exit 2
+  fi
+}
+
+validate_pane_title() {
+  # Safe subset emitted by session-manager idle pane helpers:
+  # the canonical slug title or a convenience label such as <slug>-IDLE-12m.
+  # This value flows into `tmux select-pane -T`; keep it shell-safe.
+  local val="$1"
+  if [[ ! "$val" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]; then
+    echo "Error: pane title '$val' contains invalid characters (allowed: leading a-z A-Z _, then a-z A-Z 0-9 _ -)" >&2
     exit 2
   fi
 }
@@ -186,6 +222,10 @@ resolve_handoff_copy_sources() {
       echo "Error: HANDOFF_COPY_SOURCES entry '$entry' must be an ABSOLUTE path" >&2
       return 1
     fi
+    if [[ ! "$entry" =~ ^/[A-Za-z0-9._/=@,+-]+$ ]]; then
+      echo "Error: HANDOFF_COPY_SOURCES entry contains unsafe characters" >&2
+      return 1
+    fi
     if [[ ! -e "$entry" ]]; then
       echo "Warning: HANDOFF_COPY_SOURCES entry '$entry' does not exist (skipping)" >&2
       continue
@@ -198,15 +238,32 @@ resolve_handoff_copy_sources() {
       echo "Error: HANDOFF_COPY_SOURCES entry '$entry' could not be resolved" >&2
       return 1
     }
-    printf '%s/%s\n' "$real_dir" "$(basename "$entry")"
+    local normalized
+    normalized="${real_dir}/$(basename "$entry")"
+    if [[ ! "$normalized" =~ ^/[A-Za-z0-9._/=@,+-]+$ ]]; then
+      echo "Error: HANDOFF_COPY_SOURCES entry resolved to an unsafe path" >&2
+      return 1
+    fi
+    printf '%s\n' "$normalized"
   done
 }
 
 copy_handoff_sources_to_worktree() {
   # Copy every HANDOFF_COPY_SOURCES entry into $1 via `emit "cp -RP ..."`.
   # No-op when env is empty. Used by cmd_start AFTER git worktree add and
-  # BEFORE plugin install so the worktree path exists.
+  # BEFORE plugin install so the worktree path exists. Fail-fast on
+  # resolve_handoff_copy_sources errors so the caller (cmd_start) can abort
+  # the spawn cleanly instead of silently skipping malformed entries.
   # Args: $1 = worktree path (absolute or relative; passed through to cp).
+  # Exit: 0 (ok or no entries) / 1 (resolve_handoff_copy_sources rc != 0,
+  #       e.g. a relative path entry rejected).
+  #
+  # Why capture-then-read instead of process substitution: the previous form
+  # `done < <(resolve_handoff_copy_sources)` could not propagate the
+  # function's rc to the caller — a malformed entry produced a stderr
+  # warning but the while loop saw an empty stream and continued silently.
+  # Capturing into `$sources` lets us observe the rc via `|| rc=$?` and
+  # return it to cmd_start.
   #
   # Why `cp -RP` (preserve symlinks) instead of `cp -r` (default follow):
   # resolve_handoff_copy_sources already normalizes the ENTRY path via
@@ -225,11 +282,22 @@ copy_handoff_sources_to_worktree() {
   if [[ -z "${HANDOFF_COPY_SOURCES:-}" ]]; then
     return 0
   fi
+  local sources
+  local rc=0
+  sources=$(resolve_handoff_copy_sources) || rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo "Error: copy_handoff_sources_to_worktree aborted (resolve_handoff_copy_sources rc=$rc)" >&2
+    return "$rc"
+  fi
   local src
   while IFS= read -r src; do
     [[ -z "$src" ]] && continue
-    emit "cp -RP '$src' '${wt_path}/'"
-  done < <(resolve_handoff_copy_sources)
+    if [[ $DRY_RUN -eq 1 ]]; then
+      emit "cp -RP -- '$src' '${wt_path}/'"
+    else
+      cp -RP -- "$src" "${wt_path}/"
+    fi
+  done <<< "$sources"
 }
 
 install_plugins_for_worktree() {
@@ -252,7 +320,11 @@ install_plugins_for_worktree() {
   fi
   local plugins
   local resolve_rc=0
-  plugins=$(resolve_enabled_plugins "$settings_path") || resolve_rc=$?
+  # `tr -d '\r'` strips Windows CRLF endings emitted by python3 print() under
+  # Git Bash for Windows, so that the per-plugin `while IFS= read -r plugin`
+  # loop below does not capture a trailing `\r` and reject every plugin
+  # identifier as malformed via the strict regex.
+  plugins=$(resolve_enabled_plugins "$settings_path" | tr -d '\r') || resolve_rc=$?
   if [[ $resolve_rc -ne 0 ]]; then
     echo "[plugin-install] '$wt_path' FAILED — resolve_enabled_plugins rc=$resolve_rc" >&2
     return 1
@@ -261,6 +333,12 @@ install_plugins_for_worktree() {
     echo "[plugin-install] '$wt_path' no enabled plugins (skip)" >&2
     return 0
   fi
+  # Use the operator-resolved CLAUDE_BIN (same binary that worker tmux windows
+  # spawn) so a non-default claude binary path is honoured here too. This is a
+  # functional requirement: hard-coding `claude` here would ignore
+  # cmd_start's resolve_claude_bin() usage for worker spawn.
+  local claude_bin
+  claude_bin=$(resolve_claude_bin)
   local plugin
   while IFS= read -r plugin; do
     [[ -z "$plugin" ]] && continue
@@ -273,7 +351,7 @@ install_plugins_for_worktree() {
       return 1
     fi
     echo "[plugin-install] '$wt_path' installing '$plugin'..." >&2
-    emit "cd '$wt_path' && claude plugin install '$plugin' --scope=project"
+    emit "cd '$wt_path' && $claude_bin plugin install '$plugin' --scope=project"
   done <<< "$plugins"
 }
 
@@ -284,10 +362,12 @@ parallel-sessions-template.sh — tmux-based parallel-session launcher
 Usage:
   parallel-sessions-template.sh [--dry-run] start <feature_branch> <slug1> [slug2 ...]
   parallel-sessions-template.sh [--dry-run] stop    [<session_name>]
+  parallel-sessions-template.sh [--dry-run] stop    --rollback [<session_name>] [<slug1> ...]
   parallel-sessions-template.sh [--dry-run] cleanup [<session_name>] [<slug1> ...]
   parallel-sessions-template.sh [--dry-run] status  [<session_name>]
   parallel-sessions-template.sh [--dry-run] attach  <slug> [<session_name>]
   parallel-sessions-template.sh [--dry-run] verify  <session_name> [<slug1> [slug2 ...]]
+  parallel-sessions-template.sh [--dry-run] label-panes <session_name> <slug=title> [slug=title ...]
   parallel-sessions-template.sh --help
 
 Subcommands:
@@ -304,16 +384,30 @@ Subcommands:
            incomplete (overlay-load race guard). Disable per-session with
            CLAUDE_OVERLAY_LOAD_VERIFY=0.
   stop     Kill the tmux session (no worktree cleanup, no plugin uninstall).
+           With --rollback, explicitly delegates to cleanup: stop the tmux
+           session, remove generated worktrees, and delete generated
+           recorded feature/*-<slug>
+           branches discovered from each worktree before removal. This is a
+           destructive recovery path and requires the operator to pass
+           --rollback. In dry-run rollback mode, pass explicit slugs because
+           dry-run does not inspect live tmux / git state.
   cleanup  Per-slug `claude plugin uninstall --scope=project -y` + `git worktree
-           remove --force` + tmux kill-session. When no slug args are given,
-           discovers slugs from tmux window names (excludes the coordinator
-           window). When explicit slugs are given (test / operator override),
-           uses those instead of tmux discovery.
+           remove --force` + generated branch cleanup + tmux kill-session.
+           When no slug args are given, discovers slugs from tmux window names
+           (excludes the coordinator window). When explicit slugs are given
+           (test / operator override), uses those instead of tmux discovery.
+           In --dry-run cleanup / rollback mode, explicit slugs are required
+           because dry-run does not inspect live tmux / git state.
   status   Print tmux windows + per-worktree git log -1.
   attach   Attach to the tmux session and select a slug's window.
   verify   Re-run the skill-registry probe on a live session (operator-driven
            repush path). Useful after `attach` reveals an early-prompt race
            that `start` did not catch.
+  label-panes
+           Apply deterministic tmux pane labels generated from
+           session-manager summaries, for example `api=api-IDLE-12m`.
+           This is convenience-only; the session-manager dashboard remains
+           the canonical idle / hung status view.
 
 Flags:
   --dry-run  Print the planned commands without executing tmux / git / claude.
@@ -348,8 +442,8 @@ Env vars:
                                            safety net.)
   CLAUDE_OVERLAY_LOAD_VERIFY              (default 1; set 0 to skip wait+verify, e.g. mock-claude tests)
   CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS    (default 5; baseline sleep after spawn before any probe)
-  CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS    (default 20; max total wait incl. baseline + ready poll)
-  CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS     (default 12; max wait for /help probe output to populate)
+  CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS    (default 20; total wait budget, auto-raised to cover every worker probe)
+  CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS     (default 12; max wait for /help probe output to populate, minimum 2)
   CLAUDE_SKILL_VERIFY_ESCALATE            (default 1; set 0 to skip BLOCKED prompt injection on failure)
   CLAUDE_REQUIRED_SKILLS                  (default 6 harness skills; whitespace-separated list)
 
@@ -366,6 +460,20 @@ Each slug becomes:
   - tmux:     window <slug> inside session $TMUX_SESSION_NAME
   - claude:   independent top-level process running inside that tmux window
 USAGE
+}
+
+print_attach_operator_help() {
+  local session="$1"
+  local slug="$2"
+  local script_name
+  script_name="$(basename "$0")"
+  {
+    echo "[tmux quickref] ${script_name} attach '$slug' '$session' selects worker '$slug'."
+    echo "[tmux quickref] Detach without stopping work: Ctrl-b d"
+    echo "[tmux quickref] List windows: tmux list-windows -t '$session'"
+    echo "[tmux quickref] Capture pane: tmux capture-pane -p -t '$session:$slug.0'"
+    echo "[tmux quickref] Re-check after attach: ${script_name} verify '$session' '$slug'"
+  } >&2
 }
 
 emit() {
@@ -395,7 +503,7 @@ emit() {
 #            overlay finishes loading before any probe.
 #   Stage 2: send `/help` and scan `capture-pane` for the six required skill
 #            identifiers.
-#   Stage 3: on probe failure, inject the 8-section BLOCKED final-report
+#   Stage 3: on probe failure, inject the 8-field BLOCKED final-report
 #            prompt via `tmux send-keys` so the coordinator can switch to a
 #            takeover path.
 #   Stage 4: the `cmd_verify` subcommand lets an operator re-run the probe on
@@ -433,8 +541,33 @@ resolve_required_skills() {
       printf '%s' "${__DEFAULT_REQUIRED_SKILLS[*]}"
       return 0
     fi
+    local tokens=()
+    local token_count=0
+    # Split on spaces while temporarily disabling filename expansion. A plain
+    # `for tok in $CLAUDE_REQUIRED_SKILLS` would otherwise expand `*` into
+    # repository paths before the token regex sees it, while `read -a` exits
+    # non-zero for whitespace-only input on older Bash under `set -e`.
+    local IFS=' '
+    local had_noglob=0
+    case "$-" in
+      *f*) had_noglob=1 ;;
+    esac
+    set -f
     local tok
     for tok in $CLAUDE_REQUIRED_SKILLS; do
+      tokens+=("$tok")
+      token_count=$((token_count + 1))
+    done
+    if [[ "$had_noglob" -eq 0 ]]; then
+      set +f
+    fi
+    if [[ "$token_count" -eq 0 ]]; then
+      echo "Warning: CLAUDE_REQUIRED_SKILLS contains no skill tokens; using defaults" >&2
+      local IFS=' '
+      printf '%s' "${__DEFAULT_REQUIRED_SKILLS[*]}"
+      return 0
+    fi
+    for tok in "${tokens[@]}"; do
       if [[ ! "$tok" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
         echo "Warning: CLAUDE_REQUIRED_SKILLS token '$tok' rejected (allowed chars: A-Z a-z 0-9 . _ : / -); using defaults" >&2
         local IFS=' '
@@ -442,7 +575,8 @@ resolve_required_skills() {
         return 0
       fi
     done
-    printf '%s' "$CLAUDE_REQUIRED_SKILLS"
+    local IFS=' '
+    printf '%s' "${tokens[*]}"
   else
     # join with single space
     local IFS=' '
@@ -461,6 +595,8 @@ check_skill_registry_in_output() {
   local missing=()
   local skill
   local flat
+  local spaced
+  local token_stream
   if [[ -z "$required" ]]; then
     return 0
   fi
@@ -470,8 +606,20 @@ check_skill_registry_in_output() {
   # space — a space breaks the literal match too) so wrapped identifiers still
   # match `grep -qF`.
   flat=$(printf '%s' "$output" | tr -d '\n')
+  spaced=$(printf '%s' "$output" | tr '\n' ' ')
+  # Match exact command/skill tokens instead of substrings so
+  # `harness:tdd-implementation` does not satisfy `harness:tdd-implement`.
+  # `/help` commonly renders slash commands with a leading "/" while required
+  # skills are configured without it, so accept either exact token form.
+  token_stream=$(
+    {
+      printf '%s\n' "$spaced"
+      printf '%s\n' "$flat"
+    } | tr -cs 'A-Za-z0-9._:/-' '\n'
+  )
   for skill in $required; do
-    if ! printf '%s' "$flat" | grep -qF -- "$skill"; then
+    if ! printf '%s\n' "$token_stream" | grep -qxF -- "$skill" &&
+       ! printf '%s\n' "$token_stream" | grep -qxF -- "/$skill"; then
       missing+=("$skill")
     fi
   done
@@ -483,25 +631,25 @@ check_skill_registry_in_output() {
 }
 
 build_blocked_escalation_message() {
-  # Build the 8-section BLOCKED final-report prompt that is injected when the
-  # overlay-load race is detected. The whole prompt must fit on one logical
-  # line because `tmux send-keys` injects it as a single REPL submission;
-  # fields are delimited by `;`.
+  # Build the 8-field BLOCKED final-report prompt that is injected when the
+  # overlay-load race is detected. Keep the injected prompt itself one logical
+  # line for `tmux send-keys`, but require the worker's final report to use the
+  # canonical newline-separated field schema parsed by the coordinator.
   # Args: $1 = slug (worker identifier)
   #       $2 = missing_skills (whitespace-separated single string)
   local slug="$1"
   local missing="$2"
   printf 'OVERLAY_LOAD_TIMEOUT detected by launcher (overlay-load race) for slug=%s. ' "$slug"
   printf 'Required harness skills not loaded: [%s]. ' "$missing"
-  printf 'STOP all work. Output the 8-field final report exactly as: '
-  printf 'STATUS: BLOCKED; '
-  printf 'CHANGED_FILES: (none); '
-  printf 'COMMIT: (none); '
-  printf 'PUSHED_BRANCH: (none); '
-  printf 'VALIDATION: SKIPPED; '
-  printf 'BLOCKERS: harness overlay load timeout (overlay-load race) - skills missing [%s]; ' "$missing"
-  printf 'NEXT_ACTION: (escalate to coordinator for parallel-agent takeover); '
-  printf 'FORBIDDEN_ACTIONS_USED: no.\n'
+  printf 'STOP all work. Output the final report as exactly 8 newline-separated fields, one field per line, using this schema: '
+  printf '[1] STATUS: BLOCKED '
+  printf '[2] CHANGED_FILES: (none) '
+  printf '[3] COMMIT: (none) '
+  printf '[4] PUSHED_BRANCH: (none) '
+  printf '[5] VALIDATION: SKIPPED '
+  printf '[6] BLOCKERS: harness overlay load timeout (overlay-load race) - skills missing [%s] ' "$missing"
+  printf '[7] NEXT_ACTION: (escalate to coordinator for parallel-agent takeover) '
+  printf '[8] FORBIDDEN_ACTIONS_USED: no\n'
 }
 
 probe_skill_registry() {
@@ -532,16 +680,26 @@ probe_skill_registry() {
     echo "Warning: CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS='$timeout' is not an integer; defaulting to 12" >&2
     timeout=12
   fi
+  local poll_interval=2
+  if [[ "$timeout" -lt "$poll_interval" ]]; then
+    echo "Warning: CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS='$timeout' < poll interval ${poll_interval}; raising to ${poll_interval}" >&2
+    timeout=$poll_interval
+  fi
 
-  # Adversarial review fix (stale-content false-positive): clear scrollback +
-  # send Escape to flush any pending input *before* the probe, then capture
-  # only the visible pane (no -S history) so the substring match only sees
-  # output produced by THIS /help invocation. Without this, any old pane
-  # content that happened to contain the 6 skill identifiers (e.g. a previous
-  # /help, a doc snippet, the user manually typing /harness:... earlier) would
-  # let verify pass while the current REPL is still unloaded.
+  local before_output
+  if ! before_output=$(tmux capture-pane -t "${session}:${slug}" -p 2>/dev/null); then
+    printf 'tmux capture-pane failed\n'
+    return 2
+  fi
+
+  # Adversarial review fix (stale-content false-positive): record the visible
+  # pane before `/help`, then scan only the output appended by this probe.
+  # `tmux clear-history` does not clear the visible screen, and `C-l` is a best-
+  # effort REPL key rather than a tmux-level guarantee, so snapshot exclusion is
+  # the real guard against old text satisfying a fresh registry check.
   tmux send-keys -t "${session}:${slug}" Escape 2>/dev/null || true
   tmux send-keys -t "${session}:${slug}" Escape 2>/dev/null || true
+  tmux send-keys -t "${session}:${slug}" C-l 2>/dev/null || true
   tmux clear-history -t "${session}:${slug}" 2>/dev/null || true
 
   # Send `/help` to trigger the built-in skill-list rendering; the trailing
@@ -564,14 +722,20 @@ probe_skill_registry() {
     # treated as "no skills loaded" which is technically true but the proper
     # signal is "session gone" (rc=2) so the caller doesn't pointlessly inject
     # an escalation prompt to a dead pane.
-    if ! output=$(tmux capture-pane -t "${session}:${slug}" -p 2>/dev/null); then
+    if output=$(tmux capture-pane -t "${session}:${slug}" -p 2>/dev/null); then
+      capture_rc=0
+    else
       capture_rc=$?
     fi
     if [[ $capture_rc -ne 0 ]]; then
       printf 'tmux capture-pane failed\n'
       return 2
     fi
-    if missing_output=$(check_skill_registry_in_output "$output" "$required"); then
+    local scan_output="$output"
+    if [[ "$output" == "$before_output"* ]]; then
+      scan_output="${output#"$before_output"}"
+    fi
+    if missing_output=$(check_skill_registry_in_output "$scan_output" "$required"); then
       # rc=0: all present. Clear /help screen with Escape so subsequent
       # prompts (e.g. /tdd-implement) don't conflict with help overlay.
       tmux send-keys -t "${session}:${slug}" Escape 2>/dev/null || true
@@ -584,7 +748,7 @@ probe_skill_registry() {
 }
 
 escalate_blocked_to_slug() {
-  # On verification failure, inject the BLOCKED 8-section directive via
+  # On verification failure, inject the BLOCKED 8-field directive via
   # tmux send-keys. Send Escape first to dismiss any open typeahead / help
   # overlay so the message is delivered to a clean prompt.
   # Args: $1 = session, $2 = slug, $3 = missing skills (whitespace-joined)
@@ -596,10 +760,7 @@ escalate_blocked_to_slug() {
   local msg
   msg=$(build_blocked_escalation_message "$slug" "$missing")
   # Use `--` to terminate option parsing so tmux never reinterprets a leading
-  # dash or future option-like prefix in `$msg` as a flag. The 8-section
-  # escalation message contains literal `;` delimiters which are safe inside
-  # the quoted arg, but `--` is the belt-and-suspenders guard across tmux
-  # versions.
+  # dash or future option-like prefix in `$msg` as a flag.
   tmux send-keys -t "${session}:${slug}" -- "$msg" Enter 2>/dev/null || true
 }
 
@@ -639,13 +800,28 @@ wait_for_all_workers_ready() {
     echo "Warning: CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS must be integer; defaulting to 12" >&2
     probe_timeout=12
   fi
-  # Adversarial review fix (enforce MAX_WAIT_SECONDS as a real ceiling):
-  # max_wait must be >= min_wait + probe_timeout. If the operator set max_wait
-  # too low, raise it silently so the probe loop is not truncated below its
-  # own minimum useful duration.
-  local required_max=$((min_wait + probe_timeout))
+  local probe_poll_interval=2
+  if [[ "$probe_timeout" -lt "$probe_poll_interval" ]]; then
+    echo "Warning: CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS=$probe_timeout < poll interval ${probe_poll_interval}; raising to ${probe_poll_interval}" >&2
+    probe_timeout=$probe_poll_interval
+  fi
+  # Adversarial review fix (enforce MAX_WAIT_SECONDS without false-skipping
+  # later workers): probe_skill_registry polls in 2s chunks, so a timeout of 1
+  # still spends up to 2 real seconds. max_wait must cover the baseline plus
+  # one real probe ceiling per slug. If the operator set max_wait too low, raise
+  # it so every worker receives at least one probe before any MAX_WAIT branch
+  # can fire.
+  local probe_budget=0
+  if [[ "$probe_timeout" -gt 0 ]]; then
+    probe_budget=$(( ((probe_timeout + probe_poll_interval - 1) / probe_poll_interval) * probe_poll_interval ))
+  fi
+  local escalation_budget=0
+  if [[ "${CLAUDE_SKILL_VERIFY_ESCALATE:-1}" == "1" ]]; then
+    escalation_budget=1
+  fi
+  local required_max=$((min_wait + (probe_budget + escalation_budget) * ${#slugs[@]}))
   if [[ "$max_wait" -lt "$required_max" ]]; then
-    echo "Warning: CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=$max_wait < (MIN_WAIT $min_wait + VERIFY_TIMEOUT $probe_timeout); raising to $required_max" >&2
+    echo "Warning: CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=$max_wait < (MIN_WAIT $min_wait + (PROBE_BUDGET $probe_budget + ESCALATION_BUDGET $escalation_budget) * WORKERS ${#slugs[@]}); raising to $required_max" >&2
     max_wait=$required_max
   fi
 
@@ -684,7 +860,7 @@ wait_for_all_workers_ready() {
       __VERIFY_FAILED_SLUGS+=("$slug")
       if [[ "${CLAUDE_SKILL_VERIFY_ESCALATE:-1}" == "1" ]]; then
         escalate_blocked_to_slug "$session" "$slug" "${missing//$'\n'/ }"
-        echo "[verify] '$slug' escalation injected (BLOCKED 8-section)" >&2
+        echo "[verify] '$slug' escalation injected (BLOCKED 8-field)" >&2
       fi
     fi
   done
@@ -696,7 +872,9 @@ wait_for_all_workers_ready() {
 }
 
 resolve_session_name() {
-  printf '%s' "${TMUX_SESSION_NAME:-harness-parallel}"
+  local session="${TMUX_SESSION_NAME:-harness-parallel}"
+  validate_tmux_session_name "$session"
+  printf '%s' "$session"
 }
 
 resolve_worktree_parent_dir() {
@@ -717,6 +895,87 @@ resolve_claude_bin() {
   printf '%s' "${CLAUDE_BIN:-claude}"
 }
 
+generated_record_dir() {
+  local wt="$1"
+  git -C "$wt" rev-parse --git-dir 2>/dev/null
+}
+
+generated_branch_record_path() {
+  local wt="$1"
+  local record_dir
+  record_dir=$(generated_record_dir "$wt") || return 1
+  printf '%s/%s' "$record_dir" "$GENERATED_BRANCH_RECORD_FILE"
+}
+
+generated_session_record_path() {
+  local wt="$1"
+  local record_dir
+  record_dir=$(generated_record_dir "$wt") || return 1
+  printf '%s/%s' "$record_dir" "$GENERATED_SESSION_RECORD_FILE"
+}
+
+record_generated_branch_for_cleanup() {
+  local wt="$1"
+  local branch="$2"
+  if [[ $DRY_RUN -eq 1 ]]; then
+    emit "rollback_git_dir=\$(git -C '$wt' rev-parse --git-dir) && printf '%s\n' '$branch' > \"\${rollback_git_dir}/$GENERATED_BRANCH_RECORD_FILE\""
+    return 0
+  fi
+
+  local record_path
+  if ! record_path=$(generated_branch_record_path "$wt"); then
+    echo "Error: cannot resolve git dir for rollback branch record in '$wt'" >&2
+    return 1
+  fi
+  printf '%s\n' "$branch" > "$record_path"
+}
+
+record_generated_session_for_cleanup() {
+  local wt="$1"
+  local session="$2"
+  if [[ $DRY_RUN -eq 1 ]]; then
+    emit "rollback_git_dir=\$(git -C '$wt' rev-parse --git-dir) && printf '%s\n' '$session' > \"\${rollback_git_dir}/$GENERATED_SESSION_RECORD_FILE\""
+    return 0
+  fi
+
+  local record_path
+  if ! record_path=$(generated_session_record_path "$wt"); then
+    echo "Error: cannot resolve git dir for rollback session record in '$wt'" >&2
+    return 1
+  fi
+  printf '%s\n' "$session" > "$record_path"
+}
+
+read_generated_branch_record_for_cleanup() {
+  local wt="$1"
+  local record_path
+  record_path=$(generated_branch_record_path "$wt") || return 1
+  [[ -f "$record_path" ]] || return 1
+  head -n 1 "$record_path"
+}
+
+read_generated_session_record_for_cleanup() {
+  local wt="$1"
+  local record_path
+  record_path=$(generated_session_record_path "$wt") || return 1
+  [[ -f "$record_path" ]] || return 1
+  head -n 1 "$record_path"
+}
+
+is_safe_generated_branch_for_cleanup() {
+  local val="$1"
+  local slug="$2"
+  local recorded="$3"
+  [[ -n "$recorded" ]] || return 1
+  [[ "$val" == "$recorded" ]] || return 1
+  [[ "$val" == feature/* ]] || return 1
+  [[ "$val" == *-"$slug" ]] || return 1
+  [[ "$val" =~ ^[a-zA-Z0-9._/-]+$ ]] || return 1
+  [[ "$val" != *..* ]] || return 1
+  [[ "$val" != -* ]] || return 1
+  return 0
+}
+
 resolve_tmux_env_args() {
   # Build `-e KEY=VAL` args for `tmux new-session` so env vars the per-window
   # claude needs are forwarded into the new tmux session. Without this, tmux
@@ -733,7 +992,18 @@ resolve_tmux_env_args() {
   local keys=("CLAUDE_ONESHOT_LOG_DIR")
   local extra_keys=()
   if [[ -n "${TMUX_PASS_ENV:-}" ]]; then
-    read -r -a extra_keys <<< "${TMUX_PASS_ENV}"
+    local had_noglob=0
+    case "$-" in
+      *f*) had_noglob=1 ;;
+    esac
+    set -f
+    local extra_key
+    for extra_key in $TMUX_PASS_ENV; do
+      extra_keys+=("$extra_key")
+    done
+    if [[ "$had_noglob" -eq 0 ]]; then
+      set +f
+    fi
   fi
   local key
   for key in "${extra_keys[@]+"${extra_keys[@]}"}"; do
@@ -762,6 +1032,18 @@ resolve_tmux_env_args() {
   printf '%s' "$args"
 }
 
+rollback_started_worktrees() {
+  local parent="$1"
+  local prefix="$2"
+  shift 2
+
+  local cleanup_slug cleanup_wt
+  for cleanup_slug in "${@+"$@"}"; do
+    cleanup_wt="${parent}/${prefix}${cleanup_slug}"
+    emit_rollback_worktree_cleanup "$cleanup_wt" "$cleanup_slug"
+  done
+}
+
 cmd_start() {
   if [[ $# -lt 2 ]]; then
     echo "Error: start requires <feature_branch> and at least one <slug>" >&2
@@ -771,6 +1053,12 @@ cmd_start() {
   local feat="$1"
   validate_branch_name "$feat"
   shift
+  local requested_slugs=("$@")
+  local slug
+  for slug in "${requested_slugs[@]}"; do
+    validate_slug "$slug"
+  done
+
   local session parent prefix claude perm
   session="$(resolve_session_name)"
   parent="$(resolve_worktree_parent_dir)"
@@ -787,23 +1075,41 @@ cmd_start() {
   local tmux_env_args
   tmux_env_args="$(resolve_tmux_env_args)"
   emit "tmux new-session -d${tmux_env_args} -s '$session' -n coordinator"
-  local slug wt branch
+  local wt branch
   local spawned_slugs=()
-  for slug in "$@"; do
-    validate_identifier "slug" "$slug"
+  for slug in "${requested_slugs[@]}"; do
     wt="${parent}/${prefix}${slug}"
     branch="feature/${feat}-${slug}"
     emit "git worktree add '$wt' -b '$branch' '$feat'"
+    spawned_slugs+=("$slug")
+    if ! record_generated_branch_for_cleanup "$wt" "$branch"; then
+      echo "Error: rollback branch record failed for worktree '$wt'" >&2
+      rollback_started_worktrees "$parent" "$prefix" "${spawned_slugs[@]}"
+      tmux kill-session -t "$session" 2>/dev/null || true
+      exit 3
+    fi
+    if ! record_generated_session_for_cleanup "$wt" "$session"; then
+      echo "Error: rollback session record failed for worktree '$wt'" >&2
+      rollback_started_worktrees "$parent" "$prefix" "${spawned_slugs[@]}"
+      tmux kill-session -t "$session" 2>/dev/null || true
+      exit 3
+    fi
     # Layer 3 — order matters: handoff doc copy must run before plugin install
     # (some consumers reference handoff path from a plugin postinstall hook in
     # theory), and plugin install must run before tmux spawns so the new REPL
     # sees project-scoped plugins on launch. dry-run flows through `emit` so
     # the unit-test golden output captures every command without executing it.
-    copy_handoff_sources_to_worktree "$wt"
+    if ! copy_handoff_sources_to_worktree "$wt"; then
+      echo "Error: handoff copy failed for worktree '$wt' (Layer 3)" >&2
+      rollback_started_worktrees "$parent" "$prefix" "${spawned_slugs[@]}"
+      tmux kill-session -t "$session" 2>/dev/null || true
+      exit 3
+    fi
     if [[ $DRY_RUN -eq 0 ]]; then
       if ! install_plugins_for_worktree "$wt"; then
         echo "Error: plugin install failed for worktree '$wt' (Layer 3)" >&2
         echo "       Coordinator MUST stop before sending the initial /tdd-implement prompt." >&2
+        rollback_started_worktrees "$parent" "$prefix" "${spawned_slugs[@]}"
         # tmux new-session at the top of cmd_start has already created the
         # session, but only some worker windows are added. Kill the half-spawned
         # session so the next `start` invocation does not collide on
@@ -820,7 +1126,6 @@ cmd_start() {
       install_plugins_for_worktree "$wt" || true
     fi
     emit "tmux new-window -t '$session' -n '$slug' \"cd '$wt' && $claude -n '$slug' $model_flag --permission-mode $perm\""
-    spawned_slugs+=("$slug")
   done
   emit "tmux select-window -t '$session':0"
 
@@ -863,6 +1168,7 @@ cmd_verify() {
     usage >&2
     exit 2
   fi
+  validate_tmux_session_name "$session"
   shift
 
   # Slugs argument: when omitted, discover every window name in the session
@@ -871,7 +1177,7 @@ cmd_verify() {
   if [[ $# -gt 0 ]]; then
     local s
     for s in "$@"; do
-      validate_identifier "slug" "$s"
+      validate_slug "$s"
       slugs+=("$s")
     done
   else
@@ -931,16 +1237,76 @@ cmd_verify() {
   echo "verify: all ${#slugs[@]} slug(s) OK"
 }
 
+emit_rollback_worktree_cleanup() {
+  # Remove one generated worktree and then delete the generated local branch
+  # that was checked out inside it. The branch is captured before
+  # `git worktree remove` because Git cannot report the checked-out branch
+  # from a path after the worktree is gone.
+  #
+  # Branch deletion is intentionally restricted to `feature/*-<slug>`: this
+  # template creates `feature/<feature_branch>-<slug>` branches, and rollback
+  # must never infer that an arbitrary manually-created feature branch is safe
+  # to delete just because it happened to be checked out in the worktree. The
+  # current branch must also match the gitdir marker recorded immediately after
+  # `git worktree add`.
+  # `git branch -D -- "$branch"` keeps a branch value from being parsed as an
+  # option even though validate_branch_name already rejects leading dashes.
+  local wt="$1"
+  local slug="$2"
+  if [[ $DRY_RUN -eq 1 ]]; then
+    emit "rollback_git_dir=\$(git -C '$wt' rev-parse --git-dir 2>/dev/null || true); rollback_recorded_branch=\"\"; if [[ -n \"\$rollback_git_dir\" && -f \"\${rollback_git_dir}/$GENERATED_BRANCH_RECORD_FILE\" ]]; then rollback_recorded_branch=\$(head -n 1 \"\${rollback_git_dir}/$GENERATED_BRANCH_RECORD_FILE\"); fi; rollback_branch=\$(git -C '$wt' branch --show-current 2>/dev/null || true); if [[ -d '$wt' ]]; then git worktree remove '$wt' --force; if [[ -n \"\$rollback_branch\" && \"\$rollback_branch\" == \"\$rollback_recorded_branch\" && \"\$rollback_branch\" == feature/* && \"\$rollback_branch\" == *-'$slug' ]]; then git branch -D -- \"\$rollback_branch\"; else echo \"[cleanup] skip branch delete for '$wt' (branch not recorded generated feature/*-<slug>: \${rollback_branch:-none})\" >&2; fi; else echo \"[cleanup] worktree '$wt' missing (skip)\" >&2; fi"
+    return 0
+  fi
+
+  if [[ ! -d "$wt" ]]; then
+    echo "[cleanup] worktree '$wt' missing (skip)" >&2
+    return 0
+  fi
+
+  local rollback_branch=""
+  local recorded_branch=""
+  rollback_branch=$(git -C "$wt" branch --show-current 2>/dev/null || true)
+  recorded_branch=$(read_generated_branch_record_for_cleanup "$wt" 2>/dev/null || true)
+  emit "git worktree remove '$wt' --force"
+
+  if [[ -z "$rollback_branch" ]]; then
+    echo "[cleanup] skip branch delete for '$wt' (branch not found)" >&2
+    return 0
+  fi
+  if [[ -z "$recorded_branch" ]]; then
+    echo "[cleanup] skip branch delete for '$wt' (generated branch record not found)" >&2
+    return 0
+  fi
+  if ! is_safe_generated_branch_for_cleanup "$rollback_branch" "$slug" "$recorded_branch"; then
+    echo "[cleanup] skip branch delete for '$wt' (branch not recorded safe feature/*-<slug> for slug '$slug': $rollback_branch)" >&2
+    return 0
+  fi
+  emit "git branch -D -- '$rollback_branch'"
+}
+
 cmd_stop() {
+  if [[ "${1:-}" == "--rollback" ]]; then
+    shift
+    cmd_cleanup "$@"
+    return 0
+  fi
+  if [[ $# -gt 1 ]]; then
+    echo "Error: stop accepts at most one <session_name> unless --rollback is specified" >&2
+    usage >&2
+    exit 2
+  fi
   local session="${1:-$(resolve_session_name)}"
+  validate_tmux_session_name "$session"
   emit "tmux kill-session -t '$session'"
 }
 
 cmd_cleanup() {
   # Symmetric counterpart to cmd_start: per-slug `claude plugin uninstall
-  # --scope=project -y` + `git worktree remove --force` + final tmux
-  # kill-session. Kept separate from cmd_stop so the existing tmux-kill-only
-  # contract (used by older callers and CI smoke tests) is unchanged.
+  # --scope=project -y` + `git worktree remove --force` + generated branch
+  # cleanup + final tmux kill-session. Kept separate from default cmd_stop so
+  # the existing tmux-kill-only contract (used by older callers and CI smoke
+  # tests) is unchanged unless the operator explicitly passes `stop --rollback`
+  # or calls `cleanup`.
   #
   # Slug discovery:
   #   - With explicit slug args (`cleanup <session> <slug1> [slug2 ...]`),
@@ -954,8 +1320,15 @@ cmd_cleanup() {
   # assert on the emitted command sequence without invoking real tmux / git
   # / claude.
   local session="${1:-$(resolve_session_name)}"
-  shift || true
+  validate_tmux_session_name "$session"
+  if [[ $# -gt 0 ]]; then
+    shift
+  fi
   local explicit_slugs=("$@")
+  if [[ $DRY_RUN -eq 1 && ${#explicit_slugs[@]} -eq 0 ]]; then
+    echo "Error: dry-run rollback cleanup requires explicit slugs; dry-run does not inspect live tmux / git state" >&2
+    exit 2
+  fi
 
   local parent prefix
   parent="$(resolve_worktree_parent_dir)"
@@ -963,9 +1336,17 @@ cmd_cleanup() {
 
   local slugs=()
   if [[ ${#explicit_slugs[@]} -gt 0 ]]; then
-    local s
+    local s wt recorded_session
     for s in "${explicit_slugs[@]}"; do
-      validate_identifier "slug" "$s"
+      validate_slug "$s"
+      wt="${parent}/${prefix}${s}"
+      if [[ $DRY_RUN -eq 0 && -d "$wt" ]]; then
+        recorded_session=$(read_generated_session_record_for_cleanup "$wt" 2>/dev/null || true)
+        if [[ "$recorded_session" != "$session" ]]; then
+          echo "[cleanup] skip worktree '$wt' (session record mismatch: ${recorded_session:-none})" >&2
+          continue
+        fi
+      fi
       slugs+=("$s")
     done
   elif [[ $DRY_RUN -eq 0 ]]; then
@@ -974,7 +1355,11 @@ cmd_cleanup() {
     windows_out=$(tmux list-windows -t "$session" -F '#W' 2>/dev/null) || windows_out=""
     while IFS= read -r line; do
       [[ -z "$line" || "$line" == "coordinator" ]] && continue
-      slugs+=("$line")
+      if [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]; then
+        slugs+=("$line")
+      else
+        echo "[cleanup] skip unsafe tmux window name '$line'" >&2
+      fi
     done <<< "$windows_out"
     # Fallback: when the tmux session is already gone the primary discovery
     # returns an empty list and the cleanup would silently leak every worktree
@@ -988,15 +1373,33 @@ cmd_cleanup() {
     if [[ ${#slugs[@]} -eq 0 ]]; then
       echo "[cleanup] tmux session '$session' unreachable; falling back to git worktree list" >&2
       local base="${parent}/${prefix}"
-      local wt_line wt_path slug_from_path
+      local base_abs="$base"
+      if [[ "$parent" != /* ]]; then
+        local parent_abs
+        if parent_abs=$(cd "$parent" 2>/dev/null && pwd -P); then
+          base_abs="${parent_abs}/${prefix}"
+        fi
+      fi
+      local wt_line wt_path slug_from_path recorded_session
       while IFS= read -r wt_line; do
         [[ "$wt_line" =~ ^worktree[[:space:]]+(.+)$ ]] || continue
         wt_path="${BASH_REMATCH[1]}"
-        if [[ "$wt_path" == "$base"* ]]; then
+        if [[ "$wt_path" == "$base_abs"* ]]; then
+          slug_from_path="${wt_path#"$base_abs"}"
+        elif [[ "$wt_path" == "$base"* ]]; then
           slug_from_path="${wt_path#"$base"}"
-          if [[ "$slug_from_path" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-            slugs+=("$slug_from_path")
+        else
+          continue
+        fi
+        if [[ "$slug_from_path" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]; then
+          recorded_session=$(read_generated_session_record_for_cleanup "$wt_path" 2>/dev/null || true)
+          if [[ "$recorded_session" != "$session" ]]; then
+            echo "[cleanup] skip worktree '$wt_path' (session record mismatch: ${recorded_session:-none})" >&2
+            continue
           fi
+          slugs+=("$slug_from_path")
+        else
+          echo "[cleanup] skip unsafe worktree slug '$slug_from_path' from path '$wt_path'" >&2
         fi
       done < <(git worktree list --porcelain 2>/dev/null || true)
     fi
@@ -1010,16 +1413,21 @@ cmd_cleanup() {
     # path is gone (already removed) or settings.json is absent.
     if [[ -d "$wt" ]] && [[ -f "${wt}/.claude/settings.json" ]]; then
       local plugins
-      plugins=$(resolve_enabled_plugins "${wt}/.claude/settings.json" 2>/dev/null || true)
+      # See install_plugins_for_worktree comment: `tr -d '\r'` is required to
+      # strip Git Bash for Windows CRLF before the per-plugin loop matches the
+      # regex.
+      plugins=$(resolve_enabled_plugins "${wt}/.claude/settings.json" 2>/dev/null | tr -d '\r' || true)
       local plugin
+      local claude_bin
+      claude_bin=$(resolve_claude_bin)
       while IFS= read -r plugin; do
         [[ -z "$plugin" ]] && continue
         if [[ "$plugin" =~ ^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+$ ]]; then
-          emit "cd '$wt' && claude plugin uninstall '$plugin' --scope=project -y"
+          emit "cd '$wt' && $claude_bin plugin uninstall '$plugin' --scope=project -y"
         fi
       done <<< "$plugins"
     fi
-    emit "git worktree remove '$wt' --force"
+    emit_rollback_worktree_cleanup "$wt" "$slug"
   done
 
   emit "tmux kill-session -t '$session' 2>/dev/null || true"
@@ -1033,7 +1441,36 @@ cmd_cleanup() {
 
 cmd_status() {
   local session="${1:-$(resolve_session_name)}"
+  validate_tmux_session_name "$session"
   emit "tmux list-windows -t '$session'"
+}
+
+cmd_label_panes() {
+  if [[ $# -lt 2 ]]; then
+    echo "Error: label-panes requires <session_name> and at least one <slug=title> mapping" >&2
+    usage >&2
+    exit 2
+  fi
+  local session="$1"
+  validate_tmux_session_name "$session"
+  shift
+  local mapping slug title
+  for mapping in "$@"; do
+    if [[ "$mapping" != *=* ]]; then
+      echo "Error: label-panes mapping '$mapping' must use <slug=title>" >&2
+      exit 2
+    fi
+    slug="${mapping%%=*}"
+    title="${mapping#*=}"
+    validate_slug "$slug"
+    validate_pane_title "$title"
+  done
+
+  for mapping in "$@"; do
+    slug="${mapping%%=*}"
+    title="${mapping#*=}"
+    emit "tmux select-pane -t '$session:$slug.0' -T '$title'"
+  done
 }
 
 cmd_attach() {
@@ -1043,8 +1480,10 @@ cmd_attach() {
     exit 2
   fi
   local slug="$1"
-  validate_identifier "slug" "$slug"
+  validate_slug "$slug"
   local session="${2:-$(resolve_session_name)}"
+  validate_tmux_session_name "$session"
+  print_attach_operator_help "$session" "$slug"
   # `tmux attach` blocks until the user detaches, so chaining
   # `tmux attach ... \; select-window ...` would only run select-window
   # after the user exits. Use `select-window` first (or `switch-client`
@@ -1084,6 +1523,7 @@ main() {
     status) cmd_status "$@" ;;
     attach) cmd_attach "$@" ;;
     verify) cmd_verify "$@" ;;
+    label-panes) cmd_label_panes "$@" ;;
     "")
       usage
       ;;

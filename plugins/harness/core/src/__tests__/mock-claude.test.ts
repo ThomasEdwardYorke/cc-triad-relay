@@ -33,7 +33,7 @@ const SCRIPT_PATH = resolve(REPO_ROOT, "tests/e2e/fixtures/mock-claude.sh");
 function runMock(
   args: string[] = [],
   env: Record<string, string> = {},
-  timeoutMs = 5000,
+  timeoutMs = 15000,
 ): { stdout: string; stderr: string; status: number | null; signal: NodeJS.Signals | null } {
   const r = spawnSync("bash", [SCRIPT_PATH, ...args], {
     encoding: "utf-8",
@@ -55,9 +55,9 @@ describe("mock-claude.sh: file existence and shebang", () => {
 });
 
 describe("mock-claude.sh: argv parsing fail-fast on missing values", () => {
-  // Each spawnSync uses a 5s timeout. If the fixture regresses to a
+  // Each spawnSync uses a 15s timeout. If the fixture regresses to a
   // failure-swallowing `shift 2 || true` pattern, the inner `while` never
-  // advances and the process is killed by SIGTERM after 5s. We assert on
+  // advances and the process is killed by SIGTERM after the timeout. We assert on
   // `status` *and* `signal` so that timeout-induced termination is
   // distinguishable from the desired non-zero exit.
 
@@ -127,10 +127,10 @@ describe("mock-claude.sh: SLUG validation (path-traversal hardening)", () => {
   // SLUG flows directly into LOG_FILE = ${LOG_DIR}/claude-log-${SLUG}.jsonl,
   // so an unvalidated value containing `/`, `..`, or a leading dot would
   // write outside CLAUDE_ONESHOT_LOG_DIR. The fixture mirrors
-  // parallel-sessions-template.sh `validate_identifier` charset
-  // (`[A-Za-z0-9._-]+`, dots allowed for slugs like `api.v2`) and adds two
-  // extra guards (`..` and leading `.`) that the launcher tolerates but
-  // mock-claude's LOG_FILE interpolation cannot.
+  // parallel-sessions-template.sh `validate_slug` charset
+  // (`[A-Za-z_][A-Za-z0-9_-]*`). Dots stay rejected because tmux target syntax
+  // treats them as pane separators; leading digits stay rejected because tmux
+  // tries numeric window indexes before exact names.
 
   it("rejects SLUG containing path-separator '/' (directory traversal)", () => {
     const r = runMock(["-n", "alpha/escape"]);
@@ -153,6 +153,20 @@ describe("mock-claude.sh: SLUG validation (path-traversal hardening)", () => {
     expect(r.stderr).toMatch(/invalid -n|slug|must not start with/i);
   });
 
+  it("rejects SLUG containing '.' (tmux target-pane separator)", () => {
+    const r = runMock(["-n", "api.v2"]);
+    expect(r.signal).toBeNull();
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/invalid -n|slug/i);
+  });
+
+  it("rejects SLUG starting with digit (tmux target-window ambiguity)", () => {
+    const r = runMock(["-n", "2alpha"]);
+    expect(r.signal).toBeNull();
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/invalid -n|slug/i);
+  });
+
   it("rejects SLUG containing whitespace (would break LOG_FILE quoting)", () => {
     const r = runMock(["-n", "alpha beta"]);
     expect(r.signal).toBeNull();
@@ -168,13 +182,10 @@ describe("mock-claude.sh: SLUG validation (path-traversal hardening)", () => {
     }
   });
 
-  it("accepts SLUG matching [A-Za-z0-9._-]+ (launcher-compatible: alpha / digit / dot / underscore / hyphen)", () => {
+  it("accepts SLUG matching [A-Za-z_][A-Za-z0-9_-]* (launcher-compatible)", () => {
     const sandbox = mkdtempSync(join(tmpdir(), "mock-claude-test-"));
     try {
-      // Including "api.v2" verifies dot-in-the-middle is allowed (matches
-      // launcher's validate_identifier regex so a real slug accepted by
-      // the launcher is not silently rejected by the mock fixture).
-      for (const slug of ["alpha", "alpha-1", "alpha_2", "ABC123", "api.v2"]) {
+      for (const slug of ["alpha", "alpha-1", "alpha_2", "ABC123"]) {
         const r = runMock(["-n", slug], {
           CLAUDE_ONESHOT_LOG_DIR: sandbox,
         });

@@ -148,6 +148,525 @@ describe("bin/harness check — project state recommendations (onboarding gap de
   });
 });
 
+describe("bin/harness pr-metrics — PR metrics collection", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "harness-pr-metrics-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("root usage advertises the PR metrics command", () => {
+    const result = runHarness(["--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("harness pr-metrics --pr-range <from>..<to>");
+  });
+
+  it("requires --pr-range before collecting metrics", () => {
+    const result = runHarness(["pr-metrics"], { cwd: tmpDir });
+    const combined = result.stdout + result.stderr;
+
+    expect(result.exitCode).toBe(2);
+    expect(combined).toContain("harness pr-metrics");
+    expect(combined).toContain("--pr-range");
+  });
+
+  it("prints pr-metrics help to stdout", () => {
+    const result = runHarness(["pr-metrics", "--help"], { cwd: tmpDir });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("usage: harness pr-metrics");
+    expect(result.stdout).toContain("--input PATH");
+    expect(result.stdout).toContain("--manual-metrics PATH");
+  });
+
+  it("rejects excessively large pr-metrics ranges before expanding work", () => {
+    const result = runHarness(["pr-metrics", "--pr-range", "1..201"], { cwd: tmpDir });
+    const combined = result.stdout + result.stderr;
+
+    expect(result.exitCode).toBe(2);
+    expect(combined).toContain("--pr-range is too large");
+    expect(combined).toContain("max supported range is 200");
+  });
+
+  it("writes JSON and Markdown metrics reports from an offline PR fixture", () => {
+    const inputPath = join(tmpDir, "prs.json");
+    const jsonOut = join(tmpDir, "pr-metrics.json");
+    const mdOut = join(tmpDir, "pr-metrics-2026-05-12.md");
+    writeFileSync(
+      inputPath,
+      JSON.stringify(
+        {
+          repository: "example-org/my-project",
+          prs: [
+            {
+              number: 90,
+              title: "feat: add first pilot endpoint",
+              url: "https://github.com/example-org/my-project/pull/90",
+              state: "MERGED",
+              createdAt: "2026-05-10T00:00:00Z",
+              mergedAt: "2026-05-10T03:30:00Z",
+              reviews: [
+                { state: "CHANGES_REQUESTED", author: { login: "coderabbitai" } },
+                { state: "APPROVED", author: { login: "coderabbitai" } },
+                { state: "COMMENTED", author: { login: "reviewer" } },
+              ],
+            },
+            {
+              number: 91,
+              title: "fix: second pilot cleanup",
+              url: "https://github.com/example-org/my-project/pull/91",
+              state: "MERGED",
+              createdAt: "2026-05-10T04:00:00Z",
+              mergedAt: "2026-05-10T05:00:00Z",
+              reviews: [{ state: "APPROVED", author: { login: "coderabbitai[bot]" } }],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = runHarness(
+      [
+        "pr-metrics",
+        "--pr-range",
+        "90..91",
+        "--input",
+        inputPath,
+        "--output-json",
+        jsonOut,
+        "--output-md",
+        mdOut,
+      ],
+      { cwd: tmpDir },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(jsonOut)).toBe(true);
+    expect(existsSync(mdOut)).toBe(true);
+
+    const metrics = JSON.parse(readFileSync(jsonOut, "utf-8"));
+    expect(metrics.source.pr_range).toBe("90..91");
+    expect(metrics.summary.pr_count).toBe(2);
+    expect(metrics.summary.merged_pr_count).toBe(2);
+    expect(metrics.summary.wallclock_hours_median).toBe(2.25);
+    expect(metrics.summary.wallclock_hours_max).toBe(3.5);
+    expect(metrics.summary.coderabbit_reviews_total).toBe(3);
+    expect(metrics.summary.coderabbit_change_requests_total).toBe(1);
+    expect(metrics.summary.coderabbit_approvals_total).toBe(2);
+    expect(metrics.prs[0].manual_metrics.operator_load).toBeNull();
+
+    const md = readFileSync(mdOut, "utf-8");
+    expect(md).toContain("# PR Metrics Report");
+    expect(md).toContain("PR #90");
+    expect(md).toContain("Manual metrics");
+    expect(md).toContain("TBD");
+  });
+
+  it("overlays operator-supplied manual metrics from a sidecar fixture", () => {
+    const inputPath = join(tmpDir, "prs.json");
+    const manualPath = join(tmpDir, "manual-metrics.json");
+    const jsonOut = join(tmpDir, "pr-metrics.json");
+    const mdOut = join(tmpDir, "pr-metrics.md");
+    writeFileSync(
+      inputPath,
+      JSON.stringify(
+        {
+          repository: "example-org/my-project",
+          prs: [
+            {
+              number: 90,
+              title: "feat: first Model B slice",
+              url: "https://github.com/example-org/my-project/pull/90",
+              state: "MERGED",
+              createdAt: "2026-05-10T00:00:00Z",
+              mergedAt: "2026-05-10T01:00:00Z",
+              reviews: [],
+            },
+            {
+              number: 91,
+              title: "fix: second Model B slice",
+              url: "https://github.com/example-org/my-project/pull/91",
+              state: "MERGED",
+              createdAt: "2026-05-10T02:00:00Z",
+              mergedAt: "2026-05-10T03:00:00Z",
+              reviews: [],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(
+      manualPath,
+      JSON.stringify(
+        {
+          "90": {
+            api_token_cost: "42.5",
+            independent_review_rework_rounds: 2,
+            post_merge_hotfixes_7d: 0,
+            operator_load: 3,
+          },
+          "91": {
+            operator_load: "review reply x1",
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = runHarness(
+      [
+        "pr-metrics",
+        "--pr-range",
+        "90..91",
+        "--input",
+        inputPath,
+        "--manual-metrics",
+        manualPath,
+        "--output-json",
+        jsonOut,
+        "--output-md",
+        mdOut,
+      ],
+      { cwd: tmpDir },
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    const metrics = JSON.parse(readFileSync(jsonOut, "utf-8"));
+    expect(metrics.source.manual_metrics).toBe(resolve(manualPath));
+    expect(metrics.prs[0].manual_metrics).toEqual({
+      api_token_cost: 42.5,
+      independent_review_rework_rounds: 2,
+      post_merge_hotfixes_7d: 0,
+      operator_load: 3,
+    });
+    expect(metrics.prs[1].manual_metrics.operator_load).toBe("review reply x1");
+    expect(metrics.prs[1].manual_metrics.api_token_cost).toBeNull();
+
+    const md = readFileSync(mdOut, "utf-8");
+    expect(md).toContain("PR #90 | 42.5 | 2 | 0 | 3");
+    expect(md).toContain("PR #91 | TBD | TBD | TBD | review reply x1");
+  });
+
+  it("rejects non-numeric manual values for numeric metrics", () => {
+    const inputPath = join(tmpDir, "prs.json");
+    const manualPath = join(tmpDir, "manual-metrics.json");
+    writeFileSync(
+      inputPath,
+      JSON.stringify({
+        prs: [
+          {
+            number: 90,
+            title: "feat: first Model B slice",
+            state: "MERGED",
+            createdAt: "2026-05-10T00:00:00Z",
+            mergedAt: "2026-05-10T01:00:00Z",
+            reviews: [],
+          },
+        ],
+      }),
+    );
+    writeFileSync(
+      manualPath,
+      JSON.stringify({
+        "90": {
+          api_token_cost: "n/a",
+        },
+      }),
+    );
+
+    const result = runHarness(
+      ["pr-metrics", "--pr-range", "90..90", "--input", inputPath, "--manual-metrics", manualPath],
+      { cwd: tmpDir },
+    );
+    const combined = result.stdout + result.stderr;
+
+    expect(result.exitCode).toBe(1);
+    expect(combined).toContain("api_token_cost");
+    expect(combined).toContain("must be numeric");
+  });
+
+  it("rejects unknown manual metrics fields instead of silently dropping typos", () => {
+    const inputPath = join(tmpDir, "prs.json");
+    const manualPath = join(tmpDir, "manual-metrics.json");
+    writeFileSync(
+      inputPath,
+      JSON.stringify({
+        prs: [
+          {
+            number: 90,
+            title: "feat: first Model B slice",
+            state: "MERGED",
+            createdAt: "2026-05-10T00:00:00Z",
+            mergedAt: "2026-05-10T01:00:00Z",
+            reviews: [],
+          },
+        ],
+      }),
+    );
+    writeFileSync(
+      manualPath,
+      JSON.stringify({
+        "90": {
+          api_token_costs: 42.5,
+        },
+      }),
+    );
+
+    const result = runHarness(
+      ["pr-metrics", "--pr-range", "90..90", "--input", inputPath, "--manual-metrics", manualPath],
+      { cwd: tmpDir },
+    );
+    const combined = result.stdout + result.stderr;
+
+    expect(result.exitCode).toBe(1);
+    expect(combined).toContain("unknown field 'api_token_costs'");
+  });
+
+  it("fails closed when the offline fixture is missing requested PR numbers", () => {
+    const inputPath = join(tmpDir, "prs-missing.json");
+    writeFileSync(
+      inputPath,
+      JSON.stringify(
+        {
+          prs: [
+            {
+              number: 90,
+              title: "feat: only one PR",
+              state: "MERGED",
+              createdAt: "2026-05-10T00:00:00Z",
+              mergedAt: "2026-05-10T01:00:00Z",
+              reviews: [],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const result = runHarness(
+      ["pr-metrics", "--pr-range", "90..91", "--input", inputPath],
+      { cwd: tmpDir },
+    );
+    const combined = result.stdout + result.stderr;
+
+    expect(result.exitCode).toBe(1);
+    expect(combined).toContain("missing PR data for requested range");
+    expect(combined).toContain("#91");
+  });
+
+  it("fails closed with aggregated missing PR numbers when gh cannot fetch a requested PR", () => {
+    const fakeGhHook = join(tmpDir, "fake-gh-hook.cjs");
+    writeFileSync(
+      fakeGhHook,
+      [
+        "const childProcess = require('node:child_process');",
+        "const { syncBuiltinESMExports } = require('node:module');",
+        "const originalExecFileSync = childProcess.execFileSync;",
+        "childProcess.execFileSync = function fakeGhExecFileSync(file, args = [], options) {",
+        "  if ((file === 'which' || file === 'where') && args[0] === 'gh') {",
+        "    return '';",
+        "  }",
+        "  if (file !== 'gh') {",
+        "    return originalExecFileSync.apply(this, arguments);",
+        "  }",
+        "  if (args[0] === 'repo' && args[1] === 'view') {",
+        "    return JSON.stringify({ nameWithOwner: 'example-org/my-project' });",
+        "  }",
+        "  if (args[0] === 'pr' && args[1] === 'view') {",
+        "    const number = args[2];",
+        "    if (number === '90') {",
+        "      return JSON.stringify({",
+        "        number: 90,",
+        "        title: 'feat: first PR',",
+        "        url: 'https://github.com/example-org/my-project/pull/90',",
+        "        state: 'MERGED',",
+        "        createdAt: '2026-05-10T00:00:00Z',",
+        "        mergedAt: '2026-05-10T01:00:00Z',",
+        "        reviews: []",
+        "      });",
+        "    }",
+        "    throw new Error(`missing PR ${number}`);",
+        "  }",
+        "  throw new Error(`unexpected gh args: ${args.join(' ')}`);",
+        "}",
+        "syncBuiltinESMExports();",
+        "",
+      ].join("\n"),
+    );
+
+    const jsonOut = join(tmpDir, "pr-metrics.json");
+    const mdOut = join(tmpDir, "pr-metrics.md");
+    const result = runHarness(
+      [
+        "pr-metrics",
+        "--pr-range",
+        "90..91",
+        "--output-json",
+        jsonOut,
+        "--output-md",
+        mdOut,
+      ],
+      {
+        cwd: tmpDir,
+        env: {
+          NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --require=${fakeGhHook}`.trim(),
+        },
+      },
+    );
+    const combined = result.stdout + result.stderr;
+
+    expect(result.exitCode).toBe(1);
+    expect(combined).toContain("missing PR data for requested range");
+    expect(combined).toContain("#91");
+    expect(existsSync(jsonOut)).toBe(false);
+    expect(existsSync(mdOut)).toBe(false);
+  });
+});
+
+describe("bin/harness session-manager — dashboard refresh", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "harness-session-manager-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("root usage advertises the session-manager watch command", () => {
+    const result = runHarness(["--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("harness session-manager watch");
+  });
+
+  it("prints session-manager help to stdout", () => {
+    const result = runHarness(["session-manager", "--help"], { cwd: tmpDir });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("usage: harness session-manager");
+    expect(result.stdout).toContain("once");
+    expect(result.stdout).toContain("watch");
+    expect(result.stdout).toContain("--interval-seconds");
+  });
+
+  it("requires slugs before rendering a session-manager dashboard", () => {
+    const result = runHarness(["session-manager", "watch"], { cwd: tmpDir });
+    const combined = result.stdout + result.stderr;
+
+    expect(result.exitCode).toBe(2);
+    expect(combined).toContain("--slugs");
+  });
+
+  it("allows an explicit empty worktree prefix for projects without prefixed worktrees", () => {
+    const result = runHarness(
+      [
+        "session-manager",
+        "once",
+        "--slugs",
+        "frontend",
+        "--worktree-parent",
+        tmpDir,
+        "--worktree-prefix",
+        "",
+      ],
+      { cwd: tmpDir },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("| frontend |");
+  });
+
+  it("renders a one-shot dashboard from offline session logs", () => {
+    const logDir = join(tmpDir, "logs");
+    mkdirSync(logDir, { recursive: true });
+    writeFileSync(
+      join(logDir, "claude-log-frontend.jsonl"),
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-05-15T00:00:00.000Z",
+        message: {
+          content: [{ type: "text", text: "Phase 5 GREEN complete" }],
+        },
+      }) + "\n",
+    );
+
+    const result = runHarness(
+      [
+        "session-manager",
+        "once",
+        "--slugs",
+        "frontend",
+        "--log-dir",
+        logDir,
+        "--now",
+        "2026-05-15T00:01:00.000Z",
+      ],
+      { cwd: tmpDir },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("| slug | branch | phase | last commit | status |");
+    expect(result.stdout).toContain("| frontend |");
+    expect(result.stdout).toContain("Phase 5");
+    expect(result.stdout).toContain("| running |");
+  });
+
+  it("watch mode can run a deterministic bounded refresh loop without platform watch", () => {
+    const logDir = join(tmpDir, "logs");
+    mkdirSync(logDir, { recursive: true });
+    writeFileSync(
+      join(logDir, "claude-log-api.jsonl"),
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-05-15T00:00:00.000Z",
+        message: {
+          content: [{ type: "text", text: "Phase 6 Real CR approved" }],
+        },
+      }) + "\n",
+    );
+
+    const result = runHarness(
+      [
+        "session-manager",
+        "watch",
+        "--slugs",
+        "api",
+        "--log-dir",
+        logDir,
+        "--interval-seconds",
+        "1",
+        "--iterations",
+        "2",
+        "--now",
+        "2026-05-15T00:01:00.000Z",
+      ],
+      {
+        cwd: tmpDir,
+        env: { HARNESS_SESSION_MANAGER_SLEEP_MS: "0" },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("session-manager watch: refresh every 1s");
+    expect((result.stdout.match(/\| api \|/g) ?? []).length).toBe(2);
+    expect(result.stdout).toContain("Phase 6");
+  });
+});
+
 describe("bin/harness init — extended bootstrap (template-driven)", () => {
   let tmpDir: string;
 

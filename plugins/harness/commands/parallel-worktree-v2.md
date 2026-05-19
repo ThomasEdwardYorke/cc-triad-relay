@@ -69,7 +69,7 @@ This skill depends on three companion primitives shipped with the harness:
 | primitive | path | role |
 |---|---|---|
 | tmux launcher script | `plugins/harness/scripts/parallel-sessions-template.sh` | `start N <slugs>` creates N worktrees + N tmux windows + N independent claude sessions |
-| progress aggregator | `plugins/harness/core/src/session-manager.ts` | reads each window's git log + tmux pane state and renders a single coordinator dashboard |
+| progress aggregator | `plugins/harness/core/src/session-manager.ts` | reads each worktree's git log + optional stream-json logs and renders a single coordinator dashboard |
 | headless one-shot wrapper | `plugins/harness/commands/claude-oneshot.md` | wraps `claude -p <instruction> --output-format stream-json`; useful when a worktree needs a deterministic non-interactive task with a structured event stream |
 
 All three primitives must be present in the installed plugin tree before
@@ -158,18 +158,45 @@ Fields specific to v2:
 `--max-parallel=N` caps concurrent tmux windows (default = number of
 sub-tasks). When N is below the sub-task count, the coordinator dispatches
 the remaining sub-tasks as earlier windows finish (semaphore-style).
+Slug values must match `^[A-Za-z_][A-Za-z0-9_-]*$`; dots are intentionally
+rejected because tmux target syntax treats `.` as the window/pane separator,
+and leading digits are rejected because tmux tries numeric window indexes
+before exact window names.
 
 ### Subcommands
 
 ```text
 /parallel-worktree-v2 status            # phase / latest commit / status per window
 /parallel-worktree-v2 attach <slug>     # tmux attach to the window for <slug>
-/parallel-worktree-v2 stop [--rollback] # stop all sessions; --rollback also removes worktrees
+/parallel-worktree-v2 stop [<session>] # stop tmux only
+/parallel-worktree-v2 stop --rollback [<session>] [<slug>...] # also remove generated worktrees + branches
 /parallel-worktree-v2 verify [<slug>...] # re-run skill-registry probe + escalate
 ```
 
+Use `status` to list worker windows and their latest known state before
+attaching. Use `attach <slug>` to focus one worker; the operator tmux quickref
+for detach, window listing, pane capture, verify, stop, and rollback preview is
+shipped at `plugins/harness/docs/operator/tmux-quickref.md` in this repository
+and `docs/operator/tmux-quickref.md` under the installed harness plugin root.
+
+Default `stop` is intentionally tmux-only (`tmux kill-session`) for backward
+compatibility. `stop --rollback` is the explicit destructive recovery path: it
+delegates to `parallel-sessions-template.sh stop --rollback`, captures each
+worktree's checked-out branch before `git worktree remove --force`, deletes only
+branches that were recorded by `start` and still match `feature/*-<slug>`, and
+then kills the tmux session.
+Pass explicit slug overrides when the tmux session is already gone; otherwise the
+script can discover slugs from tmux windows or from worktree paths that match the
+configured prefix and carry the same recorded session marker. Run
+`--dry-run stop --rollback <session> <slug...>` first when validating cleanup
+scope; dry-run requires explicit slugs and does not inspect live tmux / git
+state.
+Explicit slug cleanup is also session-scoped: if a matching worktree carries a
+different or missing session marker, it is skipped, and explicit slugs with no
+matching worktree are a safe no-op.
+
 The `verify` subcommand re-runs the harness skill-registry probe against a
-running tmux session and re-injects the 8-section BLOCKED escalation prompt
+running tmux session and re-injects the 8-field BLOCKED escalation prompt
 into any worker whose registry is incomplete. This is the operator-driven
 **repush path** for the overlay-load race (see Phase 0 + Phase 1
 Skill registry verify section below).
@@ -274,8 +301,8 @@ with `harness skill registry not loaded` 1 turn later.
 | stage | name | mechanism | env override |
 |---|---|---|---|
 | 1 | baseline sleep | wait for overlay registration | `CLAUDE_OVERLAY_LOAD_MIN_WAIT_SECONDS` (default 5) |
-| 2 | skill registry probe | `tmux send-keys /help` + `capture-pane` scan for 6 required skills | `CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS` (default 12) |
-| 3 | escalate BLOCKED | inject 8-section BLOCKED final report prompt on probe failure | `CLAUDE_SKILL_VERIFY_ESCALATE` (default 1) |
+| 2 | skill registry probe | `tmux send-keys /help` + `capture-pane` scan for 6 required skills | `CLAUDE_SKILL_VERIFY_TIMEOUT_SECONDS` (default 12, minimum 2) |
+| 3 | escalate BLOCKED | inject 8-field BLOCKED final report prompt on probe failure | `CLAUDE_SKILL_VERIFY_ESCALATE` (default 1) |
 | 4 | operator repush | `/parallel-worktree-v2 verify` subcommand re-runs Stages 2-3 on a live session | n/a |
 
 Defaults:
@@ -283,21 +310,25 @@ Defaults:
 - `CLAUDE_OVERLAY_LOAD_VERIFY=1` — set `0` to skip Stages 1-3 entirely (used
   by mock-claude e2e fixture and any non-interactive test path where the
   per-window binary cannot service `/help`).
-- `CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=20` — hard ceiling on the total
-  wait (baseline + probe) per worker.
+- `CLAUDE_OVERLAY_LOAD_MAX_WAIT_SECONDS=20` — total launch wait budget for
+  Stage 1+2. If it is lower than
+  `MIN_WAIT + ceil(VERIFY_TIMEOUT / 2s_poll_interval) * 2s * worker_count`,
+  plus the 1s escalation delay per worker when escalation is enabled, the
+  launcher raises it so every worker receives at least one registry probe
+  before any MAX_WAIT skip.
 - `CLAUDE_REQUIRED_SKILLS` — whitespace-separated list of skill identifiers
   the probe demands. Default is the 6 harness Phase-1-to-7 skills:
   `harness:tdd-implement harness:codex-sync harness:pseudo-coderabbit-loop`
   `harness:coderabbit-review harness:codex-team harness:session-handoff`.
 
-The 8-section escalation prompt is single-line, semicolon-delimited, and
-exactly matches the dispatcher's Step 5 8-field schema verifier (`STATUS:
-BLOCKED` + `CHANGED_FILES: (none)` + `COMMIT: (none)` + ... +
-`FORBIDDEN_ACTIONS_USED: no`). The coordinator side of `/parallel-worktree-v2`
-parses the failed-slug list from launcher stderr and routes those slugs
-into the **coordinator-takeover regime** by spawning a parallel
-`general-purpose` Agent fan-out instead of waiting for the BLOCKED worker
-final.
+The injected prompt itself is delivered as one `tmux send-keys` submission, but
+it instructs the worker to return the canonical 8-field final report as
+newline-separated fields (`STATUS: BLOCKED`, `CHANGED_FILES: (none)`,
+`COMMIT: (none)`, ... `FORBIDDEN_ACTIONS_USED: no`). The coordinator side of
+`/parallel-worktree-v2` parses the failed-slug list from launcher stderr and
+routes those slugs into the **coordinator-takeover regime** by spawning a
+parallel `general-purpose` Agent fan-out instead of waiting for the BLOCKED
+worker final.
 
 ---
 
@@ -339,10 +370,24 @@ While workers run, the coordinator does **not** hold an active reasoning
 loop. It runs the progress aggregator instead:
 
 ```bash
-node plugins/harness/core/src/session-manager.ts \
-     --tmux-session "${TMUX_SESSION_NAME}" \
+WORKTREE_PARENT_DIR="${WORKTREE_PARENT_DIR:-..}"
+WORKTREE_PREFIX="${WORKTREE_PREFIX:-$(basename "$PWD")-wt-}"
+harness session-manager watch \
+     --slugs frontend,backend,shared,docs \
+     --worktree-parent "${WORKTREE_PARENT_DIR}" \
+     --worktree-prefix "${WORKTREE_PREFIX}" \
      --log-dir /tmp \
-     --refresh-interval 30
+     --interval-seconds 30
+```
+
+`harness session-manager watch` is a portable Node refresh loop. It works
+without live tmux access or the platform `watch` binary; it only reads the
+declared slug list, optional worktree paths, and any
+`<log_dir>/claude-log-<slug>.jsonl` files. Use `once` when a single
+deterministic snapshot is enough:
+
+```bash
+harness session-manager once --slugs frontend,backend --log-dir /tmp
 ```
 
 Sample dashboard:
@@ -353,23 +398,29 @@ Sample dashboard:
   | slug      | branch              | phase | last commit          | status                          |
   |-----------|---------------------|-------|----------------------|----------------------------------|
   | frontend  | feature/main-fe     | 5.5   | a1b2c3d 2 min ago    | actionable=0, Pseudo CR clean    |
-  | backend   | feature/main-be     | 5     | e4f5g6h 6 min ago    | running Codex review (Phase 5)   |
+  | backend   | feature/main-be     | 5     | e4f5g6h 11 min ago   | running (WARN-idle 11m)          |
   | shared    | feature/main-shared | 7     | i7j8k9l 12 min ago   | Codex Phase 7 SHIP               |
   | docs      | feature/main-docs   | 8     | m0n1o2p 18 min ago   | merged ✓                         |
 ```
 
-session-manager aggregates per-worktree signal from sources that are
-available for **interactive** claude sessions:
+session-manager aggregates per-worktree signal from sources available to
+the dashboard path:
 
 - **git commit log** — which slug landed which commit and when (`git log --oneline -1` in each worktree path).
-- **tmux pane state** — `tmux capture-pane -t "${session}:${slug}"` extracts the visible buffer for that window. Phase markers, status messages, and last-tool-call hints are read from there.
-- **idle detection** — derived from "no new commit + no new tmux pane content" within the configured threshold (WARN at 10 min, FAIL at 30 min).
+- **stream-json logs** — when present at `<log_dir>/claude-log-<slug>.jsonl`, phase markers, tool calls, and completion events are parsed from the event stream.
+- **idle detection** — derived first from the latest parsed stream-json event timestamp, then falls back to the latest git commit timestamp when no event stream exists; `running` / unknown-active sessions render `WARN-idle` after 10 min and `FAIL-idle` after 30 min without activity.
+- **idle pane labels** — wrappers may call `renderIdlePaneTitle()` /
+  `planIdlePaneLabels()` from `session-manager.ts` to apply convenience
+  tmux pane labels such as `<slug>-IDLE-11m`, then pass the resulting
+  `slug=title` pairs to
+  `parallel-sessions-template.sh label-panes <session> ...`. The dashboard
+  status cell remains the source of truth; pane labels are a presentation
+  hint only, and tmux window names remain stable slug targets.
 
 When a worktree explicitly opts into a headless one-shot run, it can use
 the `claude-oneshot` primitive to obtain `claude -p '<prompt>' --output-format stream-json`
 output and write it to `<log_dir>/claude-log-<slug>.jsonl`. session-manager
-reads any such jsonl files when present, in addition to the always-on
-git + tmux signals.
+reads any such jsonl files when present, in addition to the git fallback.
 
 ---
 
@@ -391,7 +442,9 @@ The merge train:
 4. squash-merges PRs in sequence; the coordinator resolves rebase
    conflicts when they appear,
 5. tears the tmux session down and removes worktrees once every PR has
-   landed (`tmux kill-session` + `git worktree remove` + `git branch -d`).
+   landed (`parallel-sessions-template.sh stop --rollback`, which keeps
+   default `stop` tmux-only but removes generated worktrees and generated
+   recorded `feature/*-<slug>` branches when rollback is explicitly requested).
 
 ---
 
@@ -399,11 +452,11 @@ The merge train:
 
 | symptom | detection | action |
 |---|---|---|
-| 10 min without new commit / pane activity in a window | session-manager WARN | operator runs `/parallel-worktree-v2 attach <slug>` and inspects |
-| 30 min without activity | session-manager FAIL | operator kills the window (`tmux kill-window`), then resumes manually with `claude -r <session-id>` after fixing the underlying cause |
+| 10 min without parsed stream-json events or new commits in a running window | session-manager `WARN-idle` | operator runs `/parallel-worktree-v2 attach <slug>` and inspects |
+| 30 min without parsed stream-json events or new commits in a running window | session-manager `FAIL-idle` | operator kills the window (`tmux kill-window`), then resumes manually with `claude -r <session-id>` after fixing the underlying cause |
 | `claude-oneshot` stream-json reports `subtype: "error_max_turns"` | jsonl parsed by session-manager | raise budget, retry; consider splitting the sub-task into smaller acceptance criteria |
 | `claude-oneshot` stream-json reports `subtype: "error_during_execution"` | jsonl parsed by session-manager | inspect crash log, fix bug, retry |
-| tmux session disappears (host reboot etc.) | session lookup fails | use `--rollback` to remove worktrees, or resume each branch manually |
+| tmux session disappears (host reboot etc.) | session lookup fails | use `--dry-run stop --rollback <session> <slug...>` to preview explicit cleanup, then `stop --rollback <session> <slug...>` to remove generated worktrees / recorded generated `feature/*-<slug>` branches; or resume each branch manually |
 
 Automatic restart is **disabled by default** — autonomous restarts of
 LLM-driven tasks require explicit operator confirmation.

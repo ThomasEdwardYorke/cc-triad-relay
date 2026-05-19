@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 jobs:
   test:
@@ -20,6 +20,15 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
+      - uses: actions/setup-python@v5
+        # Required by plugins/harness/scripts/parallel-sessions-template.sh's
+        # `resolve_enabled_plugins` helper, which parses .claude/settings.json
+        # via `python3 -c '...'`. Ubuntu / macOS runners include python3 by
+        # default, but windows-latest does not — without this step the bash
+        # unit test Test 8b (install_plugins_for_worktree dry-run) fails on
+        # windows because resolve_enabled_plugins returns rc=2.
+        with:
+          python-version: '3.11'
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build

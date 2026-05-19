@@ -34,8 +34,11 @@ Claude Code が decision を適用
 
 1. **ガードレール** — R01-R13 の宣言的ルール。R10/R11/R13 は `harness.config.json`
    でパラメータ化
-2. **5 動詞スキル** — plan / work / review / release / setup
-3. **3 汎用エージェント** — worker / reviewer / scaffolder + helpers（security-auditor / codex-sync）
+2. **スキル** — 19 コマンド: 5 動詞コマンド (plan / work / review / release / setup)
+   と 14 workflow コマンド
+3. **エージェント** — 7 エージェント: 5 native agents (worker / reviewer /
+   scaffolder / security-auditor / context-audit-agent) と 2 optional
+   Codex-backed helpers (codex-sync / coderabbit-mimic)
 
 ## 設定優先順位
 

@@ -6,7 +6,8 @@
   "workspaces": ["plugins/harness/core"],
   "scripts": {
     "build": "npm run build --workspace=plugins/harness/core",
-    "test": "npm test --workspace=plugins/harness/core",
+    "test": "npm test --workspace=plugins/harness/core && npm run test:unit-shell",
+    "test:unit-shell": "bash tests/unit/launcher-skill-verify.test.sh",
     "test:coverage": "npm run test:coverage --workspace=plugins/harness/core",
     "typecheck": "npm run typecheck --workspace=plugins/harness/core",
     "smoke": "node tests/e2e/smoke.test.mjs",

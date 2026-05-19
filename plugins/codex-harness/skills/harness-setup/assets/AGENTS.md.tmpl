@@ -1,0 +1,31 @@
+# AGENTS.md
+
+Keep this file short. Put stable repository expectations here, then point
+Codex to task-specific references instead of pasting long runbooks.
+
+## Repository Expectations
+
+- Verify the current branch, upstream, and dirty status before editing.
+- Keep public plugin files generic and project-portable.
+- Prefer the repository's existing package manager, test runner, and style.
+- Do not add new production dependencies without an explicit task reason.
+
+## Harness Workflow
+
+- Start implementation work from the integration branch and a clean feature branch.
+- Use RED, GREEN, review, and verification gates before reporting work clear.
+- Run the targeted tests for changed behavior, then the broader checks required by the task.
+- Record PR, CI, CodeRabbit, and remaining-task state in the handoff workflow before ending long sessions.
+- Treat Codex CI automation as local-only or CI-optional until maintainers explicitly make it release-blocking.
+
+## Task-Specific References
+
+- Product or domain rules: add a project-relative pointer here.
+- Security or data-handling rules: add a project-relative pointer here.
+- Release or deployment rules: add a project-relative pointer here.
+
+## Local-Only State
+
+- Keep active handoff state under `.docs/handoff/` unless the project explicitly publishes a sanitized handoff template.
+- Keep live `harness.config.json` local-only unless the project explicitly treats it as public config.
+- Do not paste personal machine paths, private branch names, access tokens, or one-session restart notes into this file.

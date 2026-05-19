@@ -1,0 +1,52 @@
+# Copy to .github/workflows/codex-review.yml only after the project has chosen
+# whether this check is CI-optional or release-blocking.
+name: Codex pull request review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  codex-review:
+    if: ${{ github.event.pull_request.head.repo.fork == false }}
+    runs-on: ubuntu-latest
+    env:
+      CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          fetch-depth: 0
+
+      - name: Pre-fetch base and head refs
+        run: |
+          git fetch --no-tags origin \
+            ${{ github.event.pull_request.base.ref }} \
+            +refs/pull/${{ github.event.pull_request.number }}/head
+
+      - name: Run Codex review
+        id: run_codex
+        if: ${{ env.CODEX_API_KEY != '' }}
+        # Official Codex GitHub Action reference:
+        # https://developers.openai.com/codex/github-action
+        # Referenced directly by repository tag; it does not require GitHub Marketplace discovery.
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ env.CODEX_API_KEY }}
+          prompt-file: .github/codex/prompts/review.md
+          output-file: codex-output.md
+          safety-strategy: drop-sudo
+          sandbox: read-only
+          codex-args: '["--json"]'
+          # allow-users: "trusted-maintainer"
+
+      - name: Upload Codex output
+        if: ${{ steps.run_codex.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-review
+          path: codex-output.md

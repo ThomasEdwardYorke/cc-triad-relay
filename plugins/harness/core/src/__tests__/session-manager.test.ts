@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +28,8 @@ import {
   readGitCommits,
   buildSessionSummary,
   renderDashboard,
+  renderIdlePaneTitle,
+  planIdlePaneLabels,
   type SessionEvent,
   type SessionSummary,
 } from "../session-manager.js";
@@ -250,6 +252,7 @@ describe("readGitCommits", () => {
     expect(commits[0]!.message).toBe("second commit"); // newest first
     expect(commits[0]!.hash).toMatch(/^[0-9a-f]{7,40}$/);
     expect(commits[0]!.relativeTime).toMatch(/ago|second|minute/);
+    expect(commits[0]!.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   it("respects the limit argument", () => {
@@ -278,6 +281,7 @@ describe("readGitCommits", () => {
     expect(commits).toHaveLength(1);
     expect(commits[0]!.message).toBe("subject\twith\tembedded\ttabs");
     expect(commits[0]!.relativeTime).toMatch(/ago|second|minute/);
+    expect(commits[0]!.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(commits[0]!.hash).toMatch(/^[0-9a-f]{7,40}$/);
   });
 });
@@ -342,6 +346,328 @@ describe("buildSessionSummary", () => {
     );
     const summary = buildSessionSummary("foxtrot", { logDir: workdir });
     expect(summary.status).toBe("running");
+  });
+
+  it("marks a running summary fresh before the idle warning threshold", () => {
+    writeFileSync(
+      join(workdir, "claude-log-fresh.jsonl"),
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "tool_use", name: "Read", input: {} }] },
+        timestamp: "2026-04-28T11:00:01Z",
+      }),
+    );
+    const summary = buildSessionSummary("fresh", {
+      logDir: workdir,
+      now: "2026-04-28T11:09:59Z",
+    });
+    expect(summary.status).toBe("running");
+    expect(summary.idle).toEqual({
+      severity: "fresh",
+      ageMinutes: 9,
+      latestActivityTimestamp: "2026-04-28T11:00:01Z",
+      latestEventTimestamp: "2026-04-28T11:00:01Z",
+      source: "event",
+    });
+  });
+
+  it("marks a running summary WARN-idle after 10 minutes without events", () => {
+    writeFileSync(
+      join(workdir, "claude-log-warn.jsonl"),
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "tool_use", name: "Edit", input: {} }] },
+        timestamp: "2026-04-28T11:00:00Z",
+      }),
+    );
+    const summary = buildSessionSummary("warn", {
+      logDir: workdir,
+      now: "2026-04-28T11:10:00Z",
+    });
+    expect(summary.status).toBe("running");
+    expect(summary.idle).toEqual({
+      severity: "warn",
+      ageMinutes: 10,
+      latestActivityTimestamp: "2026-04-28T11:00:00Z",
+      latestEventTimestamp: "2026-04-28T11:00:00Z",
+      source: "event",
+    });
+  });
+
+  it("uses the log file mtime as a stable fallback for timestampless events", () => {
+    const file = join(workdir, "claude-log-timestampless.jsonl");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "tool_use", name: "Read", input: {} }] },
+      }),
+    );
+    const eventTime = new Date("2026-04-28T11:00:00Z");
+    utimesSync(file, eventTime, eventTime);
+
+    const summary = buildSessionSummary("timestampless", {
+      logDir: workdir,
+      now: "2026-04-28T11:10:00Z",
+    });
+    expect(summary.status).toBe("running");
+    expect(summary.idle).toEqual({
+      severity: "warn",
+      ageMinutes: 10,
+      latestActivityTimestamp: "2026-04-28T11:00:00.000Z",
+      latestEventTimestamp: "2026-04-28T11:00:00.000Z",
+      source: "event",
+    });
+  });
+
+  it("marks a running summary FAIL-idle after 30 minutes without events", () => {
+    writeFileSync(
+      join(workdir, "claude-log-fail.jsonl"),
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "tool_use", name: "Bash", input: {} }] },
+        timestamp: "2026-04-28T11:00:00Z",
+      }),
+    );
+    const summary = buildSessionSummary("fail", {
+      logDir: workdir,
+      now: "2026-04-28T11:30:00Z",
+    });
+    expect(summary.status).toBe("running");
+    expect(summary.idle).toEqual({
+      severity: "fail",
+      ageMinutes: 30,
+      latestActivityTimestamp: "2026-04-28T11:00:00Z",
+      latestEventTimestamp: "2026-04-28T11:00:00Z",
+      source: "event",
+    });
+  });
+
+  it("falls back to latest commit timestamp when no event timestamps exist", () => {
+    const repo = join(workdir, "interactive-repo");
+    mkdirSync(repo);
+    spawnSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: repo });
+    spawnSync("git", ["config", "user.name", "Test"], { cwd: repo });
+    spawnSync("git", ["config", "commit.gpgsign", "false"], { cwd: repo });
+    writeFileSync(join(repo, "x.txt"), "1");
+    spawnSync("git", ["add", "."], { cwd: repo });
+    const commitEnv = {
+      ...process.env,
+      GIT_AUTHOR_DATE: "2026-04-28T11:00:00Z",
+      GIT_COMMITTER_DATE: "2026-04-28T11:00:00Z",
+    };
+    const c = spawnSync("git", ["commit", "-q", "-m", "feat: checkpoint"], {
+      cwd: repo,
+      env: commitEnv,
+    });
+    expect(c.status).toBe(0);
+
+    const summary = buildSessionSummary("interactive", {
+      logDir: workdir,
+      worktreePath: repo,
+      now: "2026-04-28T11:10:00Z",
+    });
+    expect(summary.status).toBe("unknown");
+    expect(summary.idle).not.toBeNull();
+    expect(summary.idle?.severity).toBe("warn");
+    expect(summary.idle?.ageMinutes).toBe(10);
+    expect(Date.parse(summary.idle!.latestActivityTimestamp)).toBe(
+      Date.parse("2026-04-28T11:00:00Z"),
+    );
+    expect(summary.idle?.latestEventTimestamp).toBeNull();
+    expect(summary.idle?.source).toBe("commit");
+  });
+
+  it("uses the latest commit as running activity when stream events are stale", () => {
+    const repo = join(workdir, "running-repo");
+    mkdirSync(repo);
+    spawnSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: repo });
+    spawnSync("git", ["config", "user.name", "Test"], { cwd: repo });
+    spawnSync("git", ["config", "commit.gpgsign", "false"], { cwd: repo });
+    writeFileSync(join(repo, "x.txt"), "1");
+    spawnSync("git", ["add", "."], { cwd: repo });
+    const commitEnv = {
+      ...process.env,
+      GIT_AUTHOR_DATE: "2026-04-28T11:50:00Z",
+      GIT_COMMITTER_DATE: "2026-04-28T11:50:00Z",
+    };
+    const c = spawnSync("git", ["commit", "-q", "-m", "feat: active checkpoint"], {
+      cwd: repo,
+      env: commitEnv,
+    });
+    expect(c.status).toBe(0);
+
+    writeFileSync(
+      join(workdir, "claude-log-running-commit.jsonl"),
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "tool_use", name: "Read", input: {} }] },
+        timestamp: "2026-04-28T10:00:00Z",
+      }),
+    );
+
+    const summary = buildSessionSummary("running-commit", {
+      logDir: workdir,
+      worktreePath: repo,
+      now: "2026-04-28T12:00:00Z",
+    });
+    expect(summary.status).toBe("running");
+    expect(summary.idle).not.toBeNull();
+    expect(summary.idle?.severity).toBe("warn");
+    expect(summary.idle?.ageMinutes).toBe(10);
+    expect(Date.parse(summary.idle!.latestActivityTimestamp)).toBe(
+      Date.parse("2026-04-28T11:50:00Z"),
+    );
+    expect(summary.idle?.latestEventTimestamp).toBe("2026-04-28T10:00:00Z");
+    expect(summary.idle?.source).toBe("commit");
+  });
+
+  it("does not mark terminal summaries idle even when their last event is old", () => {
+    writeFileSync(
+      join(workdir, "claude-log-terminal.jsonl"),
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "Phase 7 SHIP" }] },
+        timestamp: "2026-04-28T11:00:00Z",
+      }),
+    );
+    const summary = buildSessionSummary("terminal", {
+      logDir: workdir,
+      now: "2026-04-28T11:45:00Z",
+    });
+    expect(summary.status).toBe("ship");
+    expect(summary.idle).toBeNull();
+  });
+
+  it("does not mark a completed one-shot idle without a terminal phase marker", () => {
+    writeFileSync(
+      join(workdir, "claude-log-completed.jsonl"),
+      [
+        JSON.stringify({
+          type: "assistant",
+          message: { content: [{ type: "tool_use", name: "Read", input: {} }] },
+          timestamp: "2026-04-28T11:00:00Z",
+        }),
+        JSON.stringify({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          timestamp: "2026-04-28T11:01:00Z",
+        }),
+      ].join("\n"),
+    );
+    const summary = buildSessionSummary("completed", {
+      logDir: workdir,
+      now: "2026-04-28T11:45:00Z",
+    });
+    expect(summary.status).toBe("unknown");
+    expect(summary.idle).toBeNull();
+  });
+
+  it("preserves a terminal phase when a successful completion follows it", () => {
+    writeFileSync(
+      join(workdir, "claude-log-ship-completed.jsonl"),
+      [
+        JSON.stringify({
+          type: "assistant",
+          message: { content: [{ type: "text", text: "Phase 7 SHIP — review passed" }] },
+          timestamp: "2026-04-28T11:00:00Z",
+        }),
+        JSON.stringify({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          timestamp: "2026-04-28T11:01:00Z",
+        }),
+      ].join("\n"),
+    );
+    const summary = buildSessionSummary("ship-completed", {
+      logDir: workdir,
+      now: "2026-04-28T11:45:00Z",
+    });
+    expect(summary.status).toBe("ship");
+    expect(summary.idle).toBeNull();
+  });
+
+  it("surfaces errored completion results as error status", () => {
+    writeFileSync(
+      join(workdir, "claude-log-error-result.jsonl"),
+      [
+        JSON.stringify({
+          type: "assistant",
+          message: { content: [{ type: "tool_use", name: "Read", input: {} }] },
+          timestamp: "2026-04-28T11:00:00Z",
+        }),
+        JSON.stringify({
+          type: "result",
+          subtype: "error_max_turns",
+          is_error: true,
+          timestamp: "2026-04-28T11:01:00Z",
+        }),
+      ].join("\n"),
+    );
+    const summary = buildSessionSummary("error-result", {
+      logDir: workdir,
+      now: "2026-04-28T11:45:00Z",
+    });
+    expect(summary.status).toBe("error");
+    expect(summary.idle).toBeNull();
+  });
+
+  it("does not let an older errored completion override a later terminal phase", () => {
+    writeFileSync(
+      join(workdir, "claude-log-recovered-result.jsonl"),
+      [
+        JSON.stringify({
+          type: "result",
+          subtype: "error_max_turns",
+          is_error: true,
+          timestamp: "2026-04-28T11:01:00Z",
+        }),
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            content: [{ type: "text", text: "Phase 7 SHIP — retry completed cleanly" }],
+          },
+          timestamp: "2026-04-28T11:02:00Z",
+        }),
+      ].join("\n"),
+    );
+    const summary = buildSessionSummary("recovered-result", {
+      logDir: workdir,
+      now: "2026-04-28T11:45:00Z",
+    });
+    expect(summary.status).toBe("ship");
+    expect(summary.idle).toBeNull();
+  });
+
+  it("uses a later errored completion over an earlier terminal phase", () => {
+    writeFileSync(
+      join(workdir, "claude-log-late-error-result.jsonl"),
+      [
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            content: [{ type: "text", text: "Phase 7 SHIP — initial review passed" }],
+          },
+          timestamp: "2026-04-28T11:00:00Z",
+        }),
+        JSON.stringify({
+          type: "result",
+          subtype: "error_during_cleanup",
+          is_error: true,
+          timestamp: "2026-04-28T11:01:00Z",
+        }),
+      ].join("\n"),
+    );
+    const summary = buildSessionSummary("late-error-result", {
+      logDir: workdir,
+      now: "2026-04-28T11:45:00Z",
+    });
+    expect(summary.status).toBe("error");
+    expect(summary.idle).toBeNull();
   });
 });
 
@@ -444,6 +770,149 @@ describe("renderDashboard", () => {
     const md = renderDashboard([summary]);
     expect(md).toMatch(/lone/);
     expect(md).toMatch(/—|\bN\/A\b|--|unknown/i);
+  });
+
+  it("renders WARN-idle and FAIL-idle in the status cell without changing table shape", () => {
+    const summaries: SessionSummary[] = [
+      {
+        slug: "warn",
+        branch: "feature/warn",
+        phase: null,
+        lastCommit: null,
+        status: "running",
+        events: [],
+        idle: {
+          severity: "warn",
+          ageMinutes: 10,
+          latestActivityTimestamp: "2026-04-28T11:00:00Z",
+          latestEventTimestamp: "2026-04-28T11:00:00Z",
+          source: "event",
+        },
+      },
+      {
+        slug: "fail",
+        branch: "feature/fail",
+        phase: null,
+        lastCommit: null,
+        status: "running",
+        events: [],
+        idle: {
+          severity: "fail",
+          ageMinutes: 30,
+          latestActivityTimestamp: "2026-04-28T11:00:00Z",
+          latestEventTimestamp: "2026-04-28T11:00:00Z",
+          source: "event",
+        },
+      },
+    ];
+    const md = renderDashboard(summaries);
+    expect(md).toMatch(/running \(WARN-idle 10m\)/);
+    expect(md).toMatch(/running \(FAIL-idle 30m\)/);
+    const rows = md.split("\n").slice(2);
+    for (const row of rows) {
+      const stripped = row.replace(/\\\|/g, "");
+      const cellCount = stripped.split("|").length - 1;
+      expect(cellCount).toBe(6);
+    }
+  });
+});
+
+describe("idle tmux pane label helpers", () => {
+  it("keeps non-idle and fresh summaries on the canonical slug title", () => {
+    const noIdle: SessionSummary = {
+      slug: "fresh",
+      branch: null,
+      phase: null,
+      lastCommit: null,
+      status: "running",
+      events: [],
+    };
+    const freshIdle: SessionSummary = {
+      ...noIdle,
+      slug: "recent",
+      idle: {
+        severity: "fresh",
+        ageMinutes: 9,
+        latestActivityTimestamp: "2026-04-28T11:00:00Z",
+        latestEventTimestamp: "2026-04-28T11:00:00Z",
+        source: "event",
+      },
+    };
+
+    expect(renderIdlePaneTitle(noIdle)).toBe("fresh");
+    expect(renderIdlePaneTitle(freshIdle)).toBe("recent");
+  });
+
+  it("adds a compact IDLE marker to warn/fail summaries without replacing dashboard status", () => {
+    const warn: SessionSummary = {
+      slug: "api",
+      branch: null,
+      phase: null,
+      lastCommit: null,
+      status: "running",
+      events: [],
+      idle: {
+        severity: "warn",
+        ageMinutes: 10,
+        latestActivityTimestamp: "2026-04-28T11:00:00Z",
+        latestEventTimestamp: "2026-04-28T11:00:00Z",
+        source: "event",
+      },
+    };
+    const fail: SessionSummary = {
+      ...warn,
+      slug: "worker",
+      idle: {
+        ...warn.idle!,
+        severity: "fail",
+        ageMinutes: 30,
+      },
+    };
+
+    expect(renderIdlePaneTitle(warn)).toBe("api-IDLE-10m");
+    expect(renderIdlePaneTitle(fail)).toBe("worker-IDLE-30m");
+    expect(renderDashboard([warn])).toMatch(/running \(WARN-idle 10m\)/);
+  });
+
+  it("returns structured tmux pane-label operations without mutating stable window names", () => {
+    const summaries: SessionSummary[] = [
+      {
+        slug: "api",
+        branch: null,
+        phase: null,
+        lastCommit: null,
+        status: "running",
+        events: [],
+        idle: {
+          severity: "warn",
+          ageMinutes: 12,
+          latestActivityTimestamp: "2026-04-28T11:00:00Z",
+          latestEventTimestamp: "2026-04-28T11:00:00Z",
+          source: "event",
+        },
+      },
+      {
+        slug: "frontend",
+        branch: null,
+        phase: null,
+        lastCommit: null,
+        status: "ship",
+        events: [],
+      },
+    ];
+
+    expect(planIdlePaneLabels(summaries, { sessionName: "harness-parallel" })).toEqual([
+      {
+        slug: "api",
+        target: "harness-parallel:api.0",
+        title: "api-IDLE-12m",
+      },
+      {
+        slug: "frontend",
+        target: "harness-parallel:frontend.0",
+        title: "frontend",
+      },
+    ]);
   });
 });
 

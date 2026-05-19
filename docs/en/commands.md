@@ -1,9 +1,19 @@
 # Commands
 
-The harness ships 13 commands: 5 verb skills that define the overall
-lifecycle, plus 8 workflow skills for git, PR review, Codex collaboration,
-TDD enforcement, worktree parallelization, session handoff, and the local
-pseudo-CodeRabbit loop.
+The harness ships 19 slash-invoked skills: 5 verb skills that define the
+overall lifecycle, plus 14 workflow skills for planning support, git, PR
+review, Codex collaboration, TDD enforcement, worktree parallelization,
+session handoff, context audit, and local pseudo-CodeRabbit loops.
+
+## Claude Code official skills model
+
+Claude Code's current skills documentation says "Custom commands have been
+merged into skills" and existing `.claude/commands/` files keep working. The
+Harness therefore uses skill-first terminology for its Claude adapter: these
+entrypoints are slash-invoked skills, packaged under `commands/` for
+compatibility, not command-only files.
+
+Primary source: https://code.claude.com/docs/en/skills
 
 ## Verb skills
 
@@ -20,10 +30,16 @@ pseudo-CodeRabbit loop.
 | Skill | Purpose |
 |-------|---------|
 | `/branch-merge`          | feature → dev → main merge with test gates + dev re-sync |
+| `/clarify`               | Depth-first requirements and design clarification before planning or implementation |
+| `/claude-oneshot`        | Non-interactive `claude -p` wrapper for isolated parallel orchestration |
 | `/new-feature-branch`    | Create a new feature branch after verifying main/dev sync |
 | `/coderabbit-review`     | Background-watch a CodeRabbit review on a PR and auto-respond |
 | `/codex-team`            | Use Codex CLI as a teammate (review / dev / adversarial) |
+| `/context-audit`         | Run the context-budget 3-gate audit manually |
+| `/harness-merge-train`   | Orchestrate multi-PR clear checks, merge ordering, and cleanup |
+| `/harness-self-improve`  | Extract retrospective learnings into harness improvement candidates |
 | `/parallel-worktree`     | Orchestrate 2+ sub-tasks in parallel via `git worktree` with coordinator / worker dispatch |
+| `/parallel-worktree-v2`  | Model B orchestrator for independent top-level Claude sessions per worktree |
 | `/pseudo-coderabbit-loop`| Local pseudo-CodeRabbit review loop via Codex CLI (rate-limit hedge for real CodeRabbit) |
 | `/session-handoff`       | 3-layer handoff doc structure (current / backlog / design-decisions + archive) with `init` / `update` / `archive` / `check` subcommands |
 | `/tdd-implement`         | Strict TDD + Codex parallel + pseudo-CodeRabbit + real CodeRabbit + Codex second-opinion quality gate |

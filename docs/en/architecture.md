@@ -38,10 +38,10 @@ Claude Code enforces the decision
 
 1. **Guardrails** — 13 declarative rules. Domain-neutral defaults plus 3
    parameter-driven rules (R10 / R11 / R13) that can be enabled per project.
-2. **Skills** — 5 verb commands (`plan` / `work` / `review` / `release` /
-   `setup`) that live under `commands/`.
-3. **Agents** — 3 general-purpose agents (`worker` / `reviewer` /
-   `scaffolder`) plus 2 helpers (`security-auditor`, `codex-sync`).
+2. **Skills** — 19 slash-invoked skills: 5 verb skills (`plan` / `work` / `review` / `release` / `setup`) plus 14 workflow skills, packaged under `commands/` for compatibility with Claude Code's command-file loading.
+3. **Agents** — 7 specialised agents: 5 native agents (`worker` / `reviewer` /
+   `scaffolder` / `security-auditor` / `context-audit-agent`) plus 2 optional
+   Codex-backed helpers (`codex-sync`, `coderabbit-mimic`).
 4. **State** — pure-JS JSON file at `<projectRoot>/.claude/state/harness.json`.
    No native SQLite. Single-process safe.
 
@@ -72,6 +72,28 @@ Unknown fields in `harness.config.json` are ignored (forward compatibility).
 
 ## Official reference patterns used
 
+- https://code.claude.com/docs/en/skills — Claude Code official skills model:
+  Custom commands have been merged into skills, and existing
+  `.claude/commands/` files keep working. Harness docs should stay
+  skill-first and not command-only.
+- https://code.claude.com/docs/en/plugins — create plugins; plugins can include skills, agents, hooks, MCP servers, LSP servers, and monitors.
+- https://code.claude.com/docs/en/plugins-reference — manifest and component
+  reference for plugin-packaged skills, agents, hooks, MCP, LSP, monitors,
+  themes, output styles, and marketplace behavior.
+- https://code.claude.com/docs/en/worktrees — worktree isolation, including
+  `--worktree`, `.worktreeinclude`, subagent worktrees, and worktree lifecycle.
+- https://code.claude.com/docs/en/sub-agents — custom subagents, scopes,
+  frontmatter, CLI-defined agents, and plugin agents.
+- https://code.claude.com/docs/en/hooks — lifecycle hooks, command hook
+  contract, and worktree hook behavior.
+- https://code.claude.com/docs/en/mcp — MCP configuration, scopes,
+  plugin-provided MCP servers, tool search, and managed MCP policy.
+- https://code.claude.com/docs/en/settings — managed, user, project, and local
+  settings; permissions; sandboxing; plugin and subagent configuration.
+- https://code.claude.com/docs/en/github-actions — Claude Code CI and GitHub
+  Actions automation surface.
+- https://code.claude.com/docs/en/agent-sdk/overview — Agent SDK orchestration
+  for custom automation beyond the plugin runtime.
 - `.claude-plugin/plugin.json` — manifest
 - `hooks/hooks.json` — per-tool matchers (one entry per tool to avoid
   relying on unverified regex-OR behaviour)
