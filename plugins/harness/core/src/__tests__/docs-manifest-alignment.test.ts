@@ -164,6 +164,42 @@ describe("public docs stay aligned with plugin manifests", () => {
     }
   });
 
+  it("README.md presents the final bilingual release surface without ASCII diagrams", () => {
+    const readme = readRepoFile("README.md");
+
+    for (const phrase of [
+      "# cc-triad-relay Harness",
+      "## English",
+      "## 日本語",
+      "### Quality parity verdict",
+      "### Claude Code adapter",
+      "### Codex local adapter",
+      "### New project installation",
+      "### Existing project installation",
+      "### Release readiness",
+      "### 品質同等性の判定",
+      "### 新規プロジェクトへの導入",
+      "### 進行中プロジェクトへの導入",
+      "### リリース準備",
+      "Claude Code official skills model",
+      "CodeRabbit CLI",
+      "PR CodeRabbit",
+      "claude plugin marketplace add ThomasEdwardYorke/cc-triad-relay",
+      "codex plugin marketplace add /path/to/cc-triad-relay",
+      "`git ls-files -- harness.config.json docs/maintainer/handoff .docs/handoff`",
+      "```mermaid",
+      "flowchart LR",
+    ]) {
+      expect(readme, `missing ${phrase}`).toContain(phrase);
+    }
+
+    for (const forbidden of ["┌", "┐", "└", "┘", "│"]) {
+      expect(readme, `README still contains box-drawing character ${forbidden}`).not.toContain(
+        forbidden,
+      );
+    }
+  });
+
   it("public Claude adapter docs follow the official skill-first feature model", () => {
     const readme = readRepoFile("README.md");
     const commandsDoc = readRepoFile("docs/en/commands.md");
