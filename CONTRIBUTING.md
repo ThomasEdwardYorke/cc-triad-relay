@@ -368,7 +368,7 @@ Rules:
 
 - Do not commit live self-hosting config or handoff state.
 - Do not move private handoff notes into `docs/maintainer/**` unless they have been rewritten as generic public maintainer guidance.
-- Release PRs must keep `git ls-files -- harness.config.json docs/maintainer/handoff` empty.
+- Release PRs must keep `git ls-files -- harness.config.json docs/maintainer/handoff .docs/handoff` empty.
 - `content-integrity.test.ts` enforces this boundary in CI.
 
 ---

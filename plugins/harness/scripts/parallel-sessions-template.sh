@@ -451,12 +451,14 @@ USAGE
 print_attach_operator_help() {
   local session="$1"
   local slug="$2"
+  local script_name
+  script_name="$(basename "$0")"
   {
-    echo "[tmux quickref] /parallel-worktree-v2 attach <slug> selects worker '$slug' in session '$session'."
+    echo "[tmux quickref] ${script_name} attach '$slug' '$session' selects worker '$slug'."
     echo "[tmux quickref] Detach without stopping work: Ctrl-b d"
     echo "[tmux quickref] List windows: tmux list-windows -t '$session'"
     echo "[tmux quickref] Capture pane: tmux capture-pane -p -t '$session:$slug.0'"
-    echo "[tmux quickref] Re-check after attach: /parallel-worktree-v2 verify <slug>"
+    echo "[tmux quickref] Re-check after attach: ${script_name} verify '$session' '$slug'"
   } >&2
 }
 
@@ -1016,6 +1018,22 @@ resolve_tmux_env_args() {
   printf '%s' "$args"
 }
 
+rollback_started_worktrees() {
+  local parent="$1"
+  local prefix="$2"
+  local current_slug="$3"
+  shift 3
+
+  local cleanup_slug cleanup_wt
+  for cleanup_slug in "${@+"$@"}"; do
+    cleanup_wt="${parent}/${prefix}${cleanup_slug}"
+    emit_rollback_worktree_cleanup "$cleanup_wt" "$cleanup_slug"
+  done
+
+  cleanup_wt="${parent}/${prefix}${current_slug}"
+  emit_rollback_worktree_cleanup "$cleanup_wt" "$current_slug"
+}
+
 cmd_start() {
   if [[ $# -lt 2 ]]; then
     echo "Error: start requires <feature_branch> and at least one <slug>" >&2
@@ -1060,11 +1078,17 @@ cmd_start() {
     # theory), and plugin install must run before tmux spawns so the new REPL
     # sees project-scoped plugins on launch. dry-run flows through `emit` so
     # the unit-test golden output captures every command without executing it.
-    copy_handoff_sources_to_worktree "$wt"
+    if ! copy_handoff_sources_to_worktree "$wt"; then
+      echo "Error: handoff copy failed for worktree '$wt' (Layer 3)" >&2
+      rollback_started_worktrees "$parent" "$prefix" "$slug" "${spawned_slugs[@]}"
+      tmux kill-session -t "$session" 2>/dev/null || true
+      exit 3
+    fi
     if [[ $DRY_RUN -eq 0 ]]; then
       if ! install_plugins_for_worktree "$wt"; then
         echo "Error: plugin install failed for worktree '$wt' (Layer 3)" >&2
         echo "       Coordinator MUST stop before sending the initial /tdd-implement prompt." >&2
+        rollback_started_worktrees "$parent" "$prefix" "$slug" "${spawned_slugs[@]}"
         # tmux new-session at the top of cmd_start has already created the
         # session, but only some worker windows are added. Kill the half-spawned
         # session so the next `start` invocation does not collide on

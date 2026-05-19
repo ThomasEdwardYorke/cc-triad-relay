@@ -863,8 +863,21 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
     expect(r.stderr).toMatch(/Ctrl-b d/i);
     expect(r.stderr).toMatch(/list-windows/i);
     expect(r.stderr).toMatch(/review_session/);
-    expect(r.stderr).toMatch(/parallel-worktree-v2 attach <slug>/);
+    expect(r.stderr).toMatch(/parallel-sessions-template\.sh attach 'frontend' 'review_session'/);
+    expect(r.stderr).toMatch(/parallel-sessions-template\.sh verify 'review_session' 'frontend'/);
+    expect(r.stderr).not.toMatch(/parallel-worktree-v2/);
     expect(r.stderr).not.toContain("docs/operator/tmux-quickref.md");
+  });
+
+  it("start failure paths roll back generated worktrees before exiting", () => {
+    const content = readFileSync(SCRIPT_PATH, "utf-8");
+    expect(content).toMatch(/rollback_started_worktrees\(\)/);
+    expect(content).toMatch(
+      /if\s+!\s+copy_handoff_sources_to_worktree\s+"\$wt";\s+then[\s\S]{0,800}rollback_started_worktrees\s+"\$parent"\s+"\$prefix"\s+"\$slug"/,
+    );
+    expect(content).toMatch(
+      /if\s+!\s+install_plugins_for_worktree\s+"\$wt";\s+then[\s\S]{0,800}rollback_started_worktrees\s+"\$parent"\s+"\$prefix"\s+"\$slug"/,
+    );
   });
 });
 

@@ -1,7 +1,7 @@
 {
-  "name": "cc-triad-relay",
+  "name": "local-plugins",
   "interface": {
-    "displayName": "cc-triad-relay"
+    "displayName": "Local Plugin Marketplace"
   },
   "plugins": [
     {

@@ -181,9 +181,9 @@ describe("Codex plugin platform surface", () => {
     expect(isRecord(marketplace)).toBe(true);
     if (!isRecord(marketplace)) return;
 
-    expect(marketplace.name).toBe("cc-triad-relay");
+    expect(marketplace.name).toBe("local-plugins");
     expect(marketplace.interface).toMatchObject({
-      displayName: "cc-triad-relay",
+      displayName: "Local Plugin Marketplace",
     });
 
     expect(Array.isArray(marketplace.plugins)).toBe(true);
@@ -366,6 +366,8 @@ describe("Codex plugin platform surface", () => {
 
     for (const actionPhrase of [
       "openai/codex-action@v1",
+      "https://developers.openai.com/codex/github-action",
+      "repository tag",
       "prompt-file",
       "output-file",
       "safety-strategy: drop-sudo",

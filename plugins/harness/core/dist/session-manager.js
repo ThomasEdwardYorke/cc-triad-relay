@@ -250,12 +250,25 @@ function classifyIdle(events, status, now = new Date(), fallbackTimestamp) {
     const eventActivity = latestEventActivity(events);
     const fallbackMs = fallbackTimestamp === undefined ? Number.NaN : Date.parse(fallbackTimestamp);
     const canUseFallback = fallbackTimestamp !== undefined && Number.isFinite(fallbackMs);
-    const activity = status === "running"
-        ? eventActivity ??
-            (canUseFallback ? { timestamp: fallbackTimestamp, time: fallbackMs } : null)
-        : status === "unknown" && !eventActivity && canUseFallback
-            ? { timestamp: fallbackTimestamp, time: fallbackMs }
-            : null;
+    const commitActivity = canUseFallback
+        ? { timestamp: fallbackTimestamp, time: fallbackMs }
+        : null;
+    let activity = null;
+    let source = null;
+    if (status === "running") {
+        if (eventActivity && commitActivity) {
+            activity = commitActivity.time > eventActivity.time ? commitActivity : eventActivity;
+            source = activity === commitActivity ? "commit" : "event";
+        }
+        else {
+            activity = eventActivity ?? commitActivity;
+            source = eventActivity ? "event" : commitActivity ? "commit" : null;
+        }
+    }
+    else if (status === "unknown" && !eventActivity && commitActivity) {
+        activity = commitActivity;
+        source = "commit";
+    }
     if (!activity)
         return null;
     const nowMs = now instanceof Date ? now.getTime() : typeof now === "number" ? now : Date.parse(now);
@@ -268,7 +281,7 @@ function classifyIdle(events, status, now = new Date(), fallbackTimestamp) {
         ageMinutes: Math.floor(ageMs / 60000),
         latestActivityTimestamp: activity.timestamp,
         latestEventTimestamp: eventActivity?.timestamp ?? null,
-        source: eventActivity ? "event" : "commit",
+        source: source ?? "event",
     };
 }
 export function buildSessionSummary(slug, opts) {

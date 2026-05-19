@@ -31,6 +31,9 @@ jobs:
       - name: Run Codex review
         id: run_codex
         if: ${{ env.CODEX_API_KEY != '' }}
+        # Official Codex GitHub Action reference:
+        # https://developers.openai.com/codex/github-action
+        # Referenced directly by repository tag; it does not require GitHub Marketplace discovery.
         uses: openai/codex-action@v1
         with:
           openai-api-key: ${{ env.CODEX_API_KEY }}

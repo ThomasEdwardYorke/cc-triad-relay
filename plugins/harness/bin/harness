@@ -1305,6 +1305,7 @@ function parsePrMetricsArgs(rest) {
 }
 
 function parsePrRange(prRange) {
+  const MAX_PR_METRICS_RANGE_SIZE = 200;
   const match = String(prRange ?? "").trim().match(/^(\d+)\.\.(\d+)$/);
   if (!match) {
     throw new Error("--pr-range expects '<from>..<to>' with numeric PR numbers");
@@ -1314,7 +1315,13 @@ function parsePrRange(prRange) {
   if (!Number.isInteger(from) || !Number.isInteger(to) || from <= 0 || to <= 0 || from > to) {
     throw new Error("--pr-range expects '<from>..<to>' where from <= to");
   }
-  return { from, to, numbers: Array.from({ length: to - from + 1 }, (_, idx) => from + idx) };
+  const size = to - from + 1;
+  if (size > MAX_PR_METRICS_RANGE_SIZE) {
+    throw new Error(
+      `--pr-range is too large (${size}); max supported range is ${MAX_PR_METRICS_RANGE_SIZE}`,
+    );
+  }
+  return { from, to, numbers: Array.from({ length: size }, (_, idx) => from + idx) };
 }
 
 function resolvePrMetricsNow() {

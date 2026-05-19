@@ -479,6 +479,50 @@ describe("buildSessionSummary", () => {
     expect(summary.idle?.source).toBe("commit");
   });
 
+  it("uses the latest commit as running activity when stream events are stale", () => {
+    const repo = join(workdir, "running-repo");
+    mkdirSync(repo);
+    spawnSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: repo });
+    spawnSync("git", ["config", "user.name", "Test"], { cwd: repo });
+    spawnSync("git", ["config", "commit.gpgsign", "false"], { cwd: repo });
+    writeFileSync(join(repo, "x.txt"), "1");
+    spawnSync("git", ["add", "."], { cwd: repo });
+    const commitEnv = {
+      ...process.env,
+      GIT_AUTHOR_DATE: "2026-04-28T11:50:00Z",
+      GIT_COMMITTER_DATE: "2026-04-28T11:50:00Z",
+    };
+    const c = spawnSync("git", ["commit", "-q", "-m", "feat: active checkpoint"], {
+      cwd: repo,
+      env: commitEnv,
+    });
+    expect(c.status).toBe(0);
+
+    writeFileSync(
+      join(workdir, "claude-log-running-commit.jsonl"),
+      JSON.stringify({
+        type: "assistant",
+        message: { content: [{ type: "tool_use", name: "Read", input: {} }] },
+        timestamp: "2026-04-28T10:00:00Z",
+      }),
+    );
+
+    const summary = buildSessionSummary("running-commit", {
+      logDir: workdir,
+      worktreePath: repo,
+      now: "2026-04-28T12:00:00Z",
+    });
+    expect(summary.status).toBe("running");
+    expect(summary.idle).toEqual({
+      severity: "warn",
+      ageMinutes: 10,
+      latestActivityTimestamp: "2026-04-28T11:50:00+00:00",
+      latestEventTimestamp: "2026-04-28T10:00:00Z",
+      source: "commit",
+    });
+  });
+
   it("does not mark terminal summaries idle even when their last event is old", () => {
     writeFileSync(
       join(workdir, "claude-log-terminal.jsonl"),

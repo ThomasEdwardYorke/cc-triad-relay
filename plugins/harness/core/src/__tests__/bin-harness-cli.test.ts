@@ -184,6 +184,15 @@ describe("bin/harness pr-metrics — PR metrics collection", () => {
     expect(result.stdout).toContain("--manual-metrics PATH");
   });
 
+  it("rejects excessively large pr-metrics ranges before expanding work", () => {
+    const result = runHarness(["pr-metrics", "--pr-range", "1..201"], { cwd: tmpDir });
+    const combined = result.stdout + result.stderr;
+
+    expect(result.exitCode).toBe(2);
+    expect(combined).toContain("--pr-range is too large");
+    expect(combined).toContain("max supported range is 200");
+  });
+
   it("writes JSON and Markdown metrics reports from an offline PR fixture", () => {
     const inputPath = join(tmpDir, "prs.json");
     const jsonOut = join(tmpDir, "pr-metrics.json");

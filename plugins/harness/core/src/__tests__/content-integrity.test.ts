@@ -5340,7 +5340,8 @@ describe("commands/parallel-worktree-v2.md — Model B v2 skill anchors", () => 
   it("interactive と headless の signal 経路を明示する (interactive=git log、headless=stream-json)", () => {
     // CR PR #68 round 1 Critical 指摘: interactive `claude -n` は stream-json を
     // 出さない。spec body で interactive と headless の経路を区別する drift guard。
-    expect(skill).toMatch(/git\s*(?:commit\s*)?log|interactive/i);
+    expect(skill).toMatch(/interactive/i);
+    expect(skill).toMatch(/git\s*(?:commit\s*)?log/i);
     // headless 経路 (claude-oneshot 経由) で stream-json が取得できることを記述
     expect(skill).toMatch(/stream-json/);
     expect(skill).toMatch(/-p\b|--print|headless|claude-oneshot/);
@@ -5534,7 +5535,7 @@ describe("Caller Scoping Guidance (tool_uses budget) — anchor lock-in", () => 
 describe("public repository surface guard", () => {
   it("does not track live self-hosting config or handoff state", () => {
     expect(
-      gitLines(["ls-files", "--", "harness.config.json", "docs/maintainer/handoff"]),
+      gitLines(["ls-files", "--", "harness.config.json", "docs/maintainer/handoff", ".docs/handoff"]),
     ).toEqual([]);
   });
 
@@ -5589,7 +5590,7 @@ describe("public repository surface guard", () => {
     expect(raw).not.toMatch(/\.docs\/handoff\/cc-triad-relay-/);
     expect(raw).not.toMatch(/plugins\/harness\/core/);
     expect(raw).not.toMatch(/docs\/maintainer\/handoff/);
-    expect(raw).not.toMatch(/\/Users\/kosukekunii/);
+    expect(raw).not.toMatch(/\/Users\/[^/\s]+/);
     expect(raw).not.toMatch(new RegExp("script" + "_generate"));
   });
 
@@ -5605,7 +5606,7 @@ describe("public repository surface guard", () => {
 
     const offenders = trackedDocs.filter((path) => {
       const raw = readRepoFile(path);
-      return /\/Users\/kosukekunii/.test(raw);
+      return /\/Users\/[^/\s]+/.test(raw);
     });
 
     expect(offenders).toEqual([]);
