@@ -874,10 +874,13 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
     const content = readFileSync(SCRIPT_PATH, "utf-8");
     expect(content).toMatch(/rollback_started_worktrees\(\)/);
     expect(content).toMatch(
-      /if\s+!\s+copy_handoff_sources_to_worktree\s+"\$wt";\s+then[\s\S]{0,800}rollback_started_worktrees\s+"\$parent"\s+"\$prefix"\s+"\$slug"/,
+      /if\s+!\s+record_generated_branch_for_cleanup\s+"\$wt"\s+"\$branch";\s+then[\s\S]{0,800}rollback_started_worktrees\s+"\$parent"\s+"\$prefix"\s+"\$\{spawned_slugs\[@\]\}"/,
     );
     expect(content).toMatch(
-      /if\s+!\s+install_plugins_for_worktree\s+"\$wt";\s+then[\s\S]{0,800}rollback_started_worktrees\s+"\$parent"\s+"\$prefix"\s+"\$slug"/,
+      /if\s+!\s+copy_handoff_sources_to_worktree\s+"\$wt";\s+then[\s\S]{0,800}rollback_started_worktrees\s+"\$parent"\s+"\$prefix"\s+"\$\{spawned_slugs\[@\]\}"/,
+    );
+    expect(content).toMatch(
+      /if\s+!\s+install_plugins_for_worktree\s+"\$wt";\s+then[\s\S]{0,800}rollback_started_worktrees\s+"\$parent"\s+"\$prefix"\s+"\$\{spawned_slugs\[@\]\}"/,
     );
   });
 });

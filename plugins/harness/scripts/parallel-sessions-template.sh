@@ -222,6 +222,10 @@ resolve_handoff_copy_sources() {
       echo "Error: HANDOFF_COPY_SOURCES entry '$entry' must be an ABSOLUTE path" >&2
       return 1
     fi
+    if [[ ! "$entry" =~ ^/[A-Za-z0-9._/=@,+-]+$ ]]; then
+      echo "Error: HANDOFF_COPY_SOURCES entry contains unsafe characters" >&2
+      return 1
+    fi
     if [[ ! -e "$entry" ]]; then
       echo "Warning: HANDOFF_COPY_SOURCES entry '$entry' does not exist (skipping)" >&2
       continue
@@ -234,7 +238,13 @@ resolve_handoff_copy_sources() {
       echo "Error: HANDOFF_COPY_SOURCES entry '$entry' could not be resolved" >&2
       return 1
     }
-    printf '%s/%s\n' "$real_dir" "$(basename "$entry")"
+    local normalized
+    normalized="${real_dir}/$(basename "$entry")"
+    if [[ ! "$normalized" =~ ^/[A-Za-z0-9._/=@,+-]+$ ]]; then
+      echo "Error: HANDOFF_COPY_SOURCES entry resolved to an unsafe path" >&2
+      return 1
+    fi
+    printf '%s\n' "$normalized"
   done
 }
 
@@ -282,7 +292,11 @@ copy_handoff_sources_to_worktree() {
   local src
   while IFS= read -r src; do
     [[ -z "$src" ]] && continue
-    emit "cp -RP '$src' '${wt_path}/'"
+    if [[ $DRY_RUN -eq 1 ]]; then
+      emit "cp -RP -- '$src' '${wt_path}/'"
+    else
+      cp -RP -- "$src" "${wt_path}/"
+    fi
   done <<< "$sources"
 }
 
@@ -1021,17 +1035,13 @@ resolve_tmux_env_args() {
 rollback_started_worktrees() {
   local parent="$1"
   local prefix="$2"
-  local current_slug="$3"
-  shift 3
+  shift 2
 
   local cleanup_slug cleanup_wt
   for cleanup_slug in "${@+"$@"}"; do
     cleanup_wt="${parent}/${prefix}${cleanup_slug}"
     emit_rollback_worktree_cleanup "$cleanup_wt" "$cleanup_slug"
   done
-
-  cleanup_wt="${parent}/${prefix}${current_slug}"
-  emit_rollback_worktree_cleanup "$cleanup_wt" "$current_slug"
 }
 
 cmd_start() {
@@ -1071,8 +1081,19 @@ cmd_start() {
     wt="${parent}/${prefix}${slug}"
     branch="feature/${feat}-${slug}"
     emit "git worktree add '$wt' -b '$branch' '$feat'"
-    record_generated_branch_for_cleanup "$wt" "$branch"
-    record_generated_session_for_cleanup "$wt" "$session"
+    spawned_slugs+=("$slug")
+    if ! record_generated_branch_for_cleanup "$wt" "$branch"; then
+      echo "Error: rollback branch record failed for worktree '$wt'" >&2
+      rollback_started_worktrees "$parent" "$prefix" "${spawned_slugs[@]}"
+      tmux kill-session -t "$session" 2>/dev/null || true
+      exit 3
+    fi
+    if ! record_generated_session_for_cleanup "$wt" "$session"; then
+      echo "Error: rollback session record failed for worktree '$wt'" >&2
+      rollback_started_worktrees "$parent" "$prefix" "${spawned_slugs[@]}"
+      tmux kill-session -t "$session" 2>/dev/null || true
+      exit 3
+    fi
     # Layer 3 — order matters: handoff doc copy must run before plugin install
     # (some consumers reference handoff path from a plugin postinstall hook in
     # theory), and plugin install must run before tmux spawns so the new REPL
@@ -1080,7 +1101,7 @@ cmd_start() {
     # the unit-test golden output captures every command without executing it.
     if ! copy_handoff_sources_to_worktree "$wt"; then
       echo "Error: handoff copy failed for worktree '$wt' (Layer 3)" >&2
-      rollback_started_worktrees "$parent" "$prefix" "$slug" "${spawned_slugs[@]}"
+      rollback_started_worktrees "$parent" "$prefix" "${spawned_slugs[@]}"
       tmux kill-session -t "$session" 2>/dev/null || true
       exit 3
     fi
@@ -1088,7 +1109,7 @@ cmd_start() {
       if ! install_plugins_for_worktree "$wt"; then
         echo "Error: plugin install failed for worktree '$wt' (Layer 3)" >&2
         echo "       Coordinator MUST stop before sending the initial /tdd-implement prompt." >&2
-        rollback_started_worktrees "$parent" "$prefix" "$slug" "${spawned_slugs[@]}"
+        rollback_started_worktrees "$parent" "$prefix" "${spawned_slugs[@]}"
         # tmux new-session at the top of cmd_start has already created the
         # session, but only some worker windows are added. Kill the half-spawned
         # session so the next `start` invocation does not collide on
@@ -1105,7 +1126,6 @@ cmd_start() {
       install_plugins_for_worktree "$wt" || true
     fi
     emit "tmux new-window -t '$session' -n '$slug' \"cd '$wt' && $claude -n '$slug' $model_flag --permission-mode $perm\""
-    spawned_slugs+=("$slug")
   done
   emit "tmux select-window -t '$session':0"
 

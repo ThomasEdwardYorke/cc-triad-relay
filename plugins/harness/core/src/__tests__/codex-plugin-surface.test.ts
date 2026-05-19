@@ -885,7 +885,7 @@ describe("Codex plugin platform surface", () => {
     }
 
     expect("feature/my-feature").not.toMatch(SESSION_BRANCH_PATTERN);
-    expect("feature/T-016-codex-guidance").toMatch(SESSION_BRANCH_PATTERN);
+    expect("feature/abcdef0-codex-guidance").toMatch(SESSION_BRANCH_PATTERN);
     expect("feature/86182b2-codex-guidance").toMatch(SESSION_BRANCH_PATTERN);
     expectNoActiveSessionState(setupSurface);
     expect(templateSurface).not.toContain("docs/maintainer/handoff");

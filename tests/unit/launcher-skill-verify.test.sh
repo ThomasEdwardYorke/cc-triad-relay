@@ -356,7 +356,7 @@ cat > "$tmp_settings_6a" <<'JSON'
 {
   "enabledPlugins": {
     "codex@openai-codex": true,
-    "harness@cc-triad-relay": true,
+    "harness@local-marketplace": true,
     "disabled-plugin@unknown": false,
     "document-skills@anthropic-agent-skills": true
   }
@@ -371,7 +371,7 @@ JSON
 #     without the trailing space that `tr '\n' ' '` would have added.
 out=$(resolve_enabled_plugins "$tmp_settings_6a" 2>/dev/null | tr -d '\r' | sort | paste -sd ' ' -)
 assert_eq "6a enabled plugins extracted (3 true values, sorted)" \
-  "codex@openai-codex document-skills@anthropic-agent-skills harness@cc-triad-relay" \
+  "codex@openai-codex document-skills@anthropic-agent-skills harness@local-marketplace" \
   "$out"
 rm -f "$tmp_settings_6a"
 unset tmp_settings_6a out
@@ -427,6 +427,14 @@ out=$(resolve_handoff_copy_sources 2>/dev/null) || rc=$?
 assert_rc "7c relative path → rc=1" "1" "$rc"
 unset HANDOFF_COPY_SOURCES rc out
 
+# 7d: unsafe shell characters are rejected before cp command construction.
+export HANDOFF_COPY_SOURCES="/tmp/unsafe'path"
+rc=0
+out=$(resolve_handoff_copy_sources 2>&1) || rc=$?
+assert_rc "7d unsafe handoff path → rc=1" "1" "$rc"
+assert_contains "7d unsafe handoff path explains rejection" "unsafe characters" "$out"
+unset HANDOFF_COPY_SOURCES rc out
+
 echo
 echo "=== Test 8: install_plugins_for_worktree (Layer 3, dry-run) ==="
 # install_plugins_for_worktree <wt_path> [<settings_json_path>]: enumerates enabled
@@ -450,7 +458,7 @@ cat > "${tmp_wt_8b}/.claude/settings.json" <<'JSON'
 {
   "enabledPlugins": {
     "codex@openai-codex": true,
-    "harness@cc-triad-relay": true
+    "harness@local-marketplace": true
   }
 }
 JSON
@@ -463,7 +471,7 @@ DRY_RUN=1
 # setup-python step) so this branch is rarely exercised.
 out=$(install_plugins_for_worktree "$tmp_wt_8b" 2>&1) || true
 assert_contains "8b emits codex install" "claude plugin install 'codex@openai-codex' --scope=project" "$out"
-assert_contains "8b emits harness install" "claude plugin install 'harness@cc-triad-relay' --scope=project" "$out"
+assert_contains "8b emits harness install" "claude plugin install 'harness@local-marketplace' --scope=project" "$out"
 DRY_RUN=0
 rm -rf "$tmp_wt_8b"
 unset out tmp_wt_8b
@@ -494,7 +502,7 @@ export HANDOFF_COPY_SOURCES="$tmp_src_9b"
 DRY_RUN=1
 out=$(copy_handoff_sources_to_worktree "$tmp_wt_9b" 2>&1)
 assert_contains "9b dry-run emits cp -RP" \
-  "cp -RP '$tmp_src_9b_resolved' '${tmp_wt_9b}/'" "$out"
+  "cp -RP -- '$tmp_src_9b_resolved' '${tmp_wt_9b}/'" "$out"
 DRY_RUN=0
 rmdir "$tmp_src_9b" "$tmp_wt_9b"
 unset HANDOFF_COPY_SOURCES out tmp_src_9b tmp_src_9b_resolved tmp_wt_9b
