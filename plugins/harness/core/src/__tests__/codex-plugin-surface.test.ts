@@ -950,6 +950,12 @@ describe("Codex plugin platform surface", () => {
       expect(parsedTemplate.sandbox_mode).toBe(
         expectedRoles.get(String(parsedTemplate.name)),
       );
+      if (String(parsedTemplate.name) === "handoff_docs_checker") {
+        // Handoff checks are narrow docs/readiness scans, so the template keeps a smaller model.
+        expect(parsedTemplate.model).toBe("gpt-5.4-mini");
+      } else {
+        expect(parsedTemplate.model).toBe("gpt-5.3-codex");
+      }
       expect(String(parsedTemplate.developer_instructions)).toMatch(
         /owned_files|forbidden_files|read-only|handoff/i,
       );
