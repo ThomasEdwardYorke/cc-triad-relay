@@ -5562,7 +5562,25 @@ describe("public repository surface guard", () => {
     ]);
 
     const raw = readRepoFile("harness.config.example.json");
+    const parsed = JSON.parse(raw) as {
+      projectName?: unknown;
+      repoKind?: unknown;
+      work?: {
+        handoffPaths?: Record<string, unknown>;
+      };
+    };
+
+    expect(parsed.projectName).toBe("my-project");
+    expect(parsed.repoKind).toBe("consumer");
+    expect(parsed.work?.handoffPaths).toEqual({
+      current: ".docs/handoff/my-project-current.md",
+      backlog: ".docs/handoff/my-project-backlog.md",
+      decisions: ".docs/handoff/my-project-decisions.md",
+      roadmap: ".docs/handoff/my-project-roadmap.md",
+    });
     expect(raw).toContain(".docs/handoff/");
+    expect(raw).not.toMatch(/cc-triad-relay-local/);
+    expect(raw).not.toMatch(/\.docs\/handoff\/cc-triad-relay-/);
     expect(raw).not.toMatch(/docs\/maintainer\/handoff/);
     expect(raw).not.toMatch(/\/Users\/kosukekunii/);
     expect(raw).not.toMatch(new RegExp("script" + "_generate"));
@@ -5581,6 +5599,26 @@ describe("public repository surface guard", () => {
     const offenders = trackedDocs.filter((path) => {
       const raw = readRepoFile(path);
       return /\/Users\/kosukekunii/.test(raw);
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("tracked shipped scripts do not carry internal review tracker comments", () => {
+    const trackedScripts = gitLines([
+      "ls-files",
+      "--",
+      "plugins/harness/scripts",
+      "scripts",
+    ]).filter((path) => /\.(sh|mjs|js|ts)$/.test(path));
+    const internalReviewPattern = new RegExp(
+      ["chatgpt-codex-connector", "review", "P\\d"].join("\\s+"),
+      "i",
+    );
+
+    const offenders = trackedScripts.filter((path) => {
+      const raw = readRepoFile(path);
+      return internalReviewPattern.test(raw);
     });
 
     expect(offenders).toEqual([]);

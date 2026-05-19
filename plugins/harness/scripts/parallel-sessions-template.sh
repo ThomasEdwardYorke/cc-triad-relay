@@ -253,7 +253,7 @@ copy_handoff_sources_to_worktree() {
   # function's rc to the caller — a malformed entry produced a stderr
   # warning but the while loop saw an empty stream and continued silently.
   # Capturing into `$sources` lets us observe the rc via `|| rc=$?` and
-  # return it to cmd_start (chatgpt-codex-connector review P2 fix).
+  # return it to cmd_start.
   #
   # Why `cp -RP` (preserve symlinks) instead of `cp -r` (default follow):
   # resolve_handoff_copy_sources already normalizes the ENTRY path via
@@ -321,8 +321,8 @@ install_plugins_for_worktree() {
   fi
   # Use the operator-resolved CLAUDE_BIN (same binary that worker tmux windows
   # spawn) so a non-default claude binary path is honoured here too. This is a
-  # chatgpt-codex-connector review P1 fix: hard-coding `claude` here was
-  # inconsistent with cmd_start's resolve_claude_bin() usage for worker spawn.
+  # functional requirement: hard-coding `claude` here would ignore
+  # cmd_start's resolve_claude_bin() usage for worker spawn.
   local claude_bin
   claude_bin=$(resolve_claude_bin)
   local plugin
