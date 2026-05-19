@@ -33,12 +33,12 @@
       "decisions": ".docs/handoff/my-project-decisions.md",
       "roadmap": ".docs/handoff/my-project-roadmap.md"
     },
-    "testCommand": "npm test --workspace=plugins/harness/core"
+    "testCommand": "npm test"
   },
   "release": {
     "strategy": "three-branch",
     "integrationBranch": "dev",
     "productionBranch": "main",
-    "testCommand": "npm test --workspace=plugins/harness/core"
+    "testCommand": "npm test"
   }
 }

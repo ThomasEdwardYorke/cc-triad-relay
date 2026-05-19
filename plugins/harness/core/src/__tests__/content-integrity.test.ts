@@ -5567,6 +5567,10 @@ describe("public repository surface guard", () => {
       repoKind?: unknown;
       work?: {
         handoffPaths?: Record<string, unknown>;
+        testCommand?: unknown;
+      };
+      release?: {
+        testCommand?: unknown;
       };
     };
 
@@ -5578,9 +5582,12 @@ describe("public repository surface guard", () => {
       decisions: ".docs/handoff/my-project-decisions.md",
       roadmap: ".docs/handoff/my-project-roadmap.md",
     });
+    expect(parsed.work?.testCommand).toBe("npm test");
+    expect(parsed.release?.testCommand).toBe("npm test");
     expect(raw).toContain(".docs/handoff/");
     expect(raw).not.toMatch(/cc-triad-relay-local/);
     expect(raw).not.toMatch(/\.docs\/handoff\/cc-triad-relay-/);
+    expect(raw).not.toMatch(/plugins\/harness\/core/);
     expect(raw).not.toMatch(/docs\/maintainer\/handoff/);
     expect(raw).not.toMatch(/\/Users\/kosukekunii/);
     expect(raw).not.toMatch(new RegExp("script" + "_generate"));
