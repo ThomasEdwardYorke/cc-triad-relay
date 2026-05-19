@@ -392,7 +392,7 @@ Normal feature PRs target `dev`. `main` receives changes only through a release 
 Before starting work:
 
 ```bash
-cd /path/to/cc-triad-relay
+cd /path/to/project
 git switch dev
 git pull --ff-only
 git status --short --branch

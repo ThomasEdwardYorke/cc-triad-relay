@@ -1301,7 +1301,9 @@ cmd_cleanup() {
   # / claude.
   local session="${1:-$(resolve_session_name)}"
   validate_tmux_session_name "$session"
-  shift || true
+  if [[ $# -gt 0 ]]; then
+    shift
+  fi
   local explicit_slugs=("$@")
   if [[ $DRY_RUN -eq 1 && ${#explicit_slugs[@]} -eq 0 ]]; then
     echo "Error: dry-run rollback cleanup requires explicit slugs; dry-run does not inspect live tmux / git state" >&2

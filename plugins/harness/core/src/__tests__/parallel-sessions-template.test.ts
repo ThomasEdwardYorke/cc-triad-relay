@@ -602,6 +602,7 @@ describe("parallel-sessions-template.sh: dry-run stop / status / attach", () => 
     const r = runScript(["--dry-run", "stop", "--rollback", "harness-parallel"]);
     expect(r.status).not.toBe(0);
     expect(r.stderr).toMatch(/dry-run rollback cleanup requires explicit slugs/i);
+    expect(r.stderr).not.toMatch(/shift/i);
     expect(r.stdout).not.toMatch(/no slugs discovered|worktree remove|branch -D|kill-session/);
   });
 
