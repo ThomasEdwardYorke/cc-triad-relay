@@ -186,12 +186,15 @@ describe("public docs stay aligned with plugin manifests", () => {
       "PR CodeRabbit",
       "claude plugin marketplace add ThomasEdwardYorke/cc-triad-relay",
       "codex plugin marketplace add /path/to/cc-triad-relay",
+      "/session-handoff init",
       "`git ls-files -- harness.config.json docs/maintainer/handoff .docs/handoff`",
       "```mermaid",
       "flowchart LR",
     ]) {
       expect(readme, `missing ${phrase}`).toContain(phrase);
     }
+
+    expect(readme).not.toContain("/harness:session-handoff init");
 
     for (const forbidden of ["┌", "┐", "└", "┘", "│"]) {
       expect(readme, `README still contains box-drawing character ${forbidden}`).not.toContain(

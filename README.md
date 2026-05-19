@@ -170,7 +170,7 @@ Inside Claude Code:
 ```text
 /harness-setup init
 /harness-setup doctor
-/harness:session-handoff init
+/session-handoff init
 ```
 
 Codex:
@@ -341,7 +341,7 @@ multi_agent = true
 
 新規 project は Handoff-mode を推奨します。Claude Code では marketplace から
 install し、`/harness-setup init`、`/harness-setup doctor`、
-`/harness:session-handoff init` を実行します。
+`/session-handoff init` を実行します。
 
 Codex では local checkout を marketplace として追加し、`codex-harness` を有効化
 します。`harness-setup` で `AGENTS.md` と `.codex/config.toml` を確認し、個人
