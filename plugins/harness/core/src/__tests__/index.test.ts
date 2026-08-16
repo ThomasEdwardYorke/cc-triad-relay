@@ -1368,6 +1368,76 @@ describe("main() safe-fallback diagnostic surfacing", () => {
   );
 
   it.skipIf(!distExists)(
+    "pre-tool ask/deny emit modern hookSpecificOutput.permissionDecision (PreToolUse enforcement, not legacy {decision})",
+    () => {
+      // Regression for the fail-open bug: current Claude Code honours ONLY the
+      // modern `hookSpecificOutput.permissionDecision` envelope for PreToolUse
+      // permission control. The legacy top-level `{ decision: "ask" | "deny" }`
+      // is silently ignored (the legacy `decision` field only ever accepted
+      // approve|block) → the guarded action ran unprompted (fail-open). main()
+      // must translate ask/deny into the modern shape so the guardrail enforces.
+
+      // ask: a dangerous `rm -rf` (R05 dangerous-delete, config-free).
+      const ask = spawnSync(process.execPath, [distPath, "pre-tool"], {
+        input: JSON.stringify({
+          tool_name: "Bash",
+          tool_input: { command: "rm -rf /tmp/harness_fmt_probe" },
+        }),
+        encoding: "utf-8",
+        timeout: 5_000,
+      });
+      expect(ask.status).toBe(0);
+      const askOut = JSON.parse(ask.stdout.trim()) as Record<string, unknown>;
+      expect(askOut["decision"]).toBeUndefined(); // no legacy envelope
+      expect(askOut["hookSpecificOutput"]).toMatchObject({
+        hookEventName: "PreToolUse",
+        permissionDecision: "ask",
+      });
+      expect(
+        (askOut["hookSpecificOutput"] as Record<string, unknown>)[
+          "permissionDecisionReason"
+        ],
+      ).toContain("Dangerous delete");
+
+      // deny: `sudo` (R01, config-free).
+      const deny = spawnSync(process.execPath, [distPath, "pre-tool"], {
+        input: JSON.stringify({
+          tool_name: "Bash",
+          tool_input: { command: "sudo rm -rf /tmp/x" },
+        }),
+        encoding: "utf-8",
+        timeout: 5_000,
+      });
+      expect(deny.status).toBe(0);
+      const denyOut = JSON.parse(deny.stdout.trim()) as Record<string, unknown>;
+      expect(denyOut["decision"]).toBeUndefined();
+      expect(denyOut["hookSpecificOutput"]).toMatchObject({
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+      });
+
+      // approve: a safe command stays on the legacy `{ decision: "approve" }`
+      // wire shape — behaviour-preserving, the existing fail-open contract
+      // (malformed stdin → approve) must remain unchanged.
+      const approve = spawnSync(process.execPath, [distPath, "pre-tool"], {
+        input: JSON.stringify({
+          tool_name: "Bash",
+          tool_input: { command: "ls -la" },
+        }),
+        encoding: "utf-8",
+        timeout: 5_000,
+      });
+      expect(approve.status).toBe(0);
+      const approveOut = JSON.parse(approve.stdout.trim()) as Record<
+        string,
+        unknown
+      >;
+      expect(approveOut["decision"]).toBe("approve");
+      expect(approveOut["hookSpecificOutput"]).toBeUndefined();
+    },
+  );
+
+  it.skipIf(!distExists)(
     "safe-fallback reason sanitised: ANSI escape sequences + DEL + NUL stripped out of stderr / systemMessage",
     () => {
       // Claude Code hooks spec notes that `systemMessage` is delivered to

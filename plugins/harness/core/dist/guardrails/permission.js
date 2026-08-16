@@ -135,9 +135,17 @@ export function formatPermissionOutput(result) {
             }
         }
         catch {
-            // パース失敗時は通常の HookResult として出力
+            // パース失敗時は defer（空オブジェクト）として出力
         }
     }
-    return JSON.stringify(result);
+    // systemMessage に妥当な PermissionResponse が無い場合は **defer** する。
+    // PermissionRequest フックが空オブジェクト `{}` を返すと、Claude Code は
+    // 通常の許可フロー（＝ユーザー確認、または PreToolUse が出した
+    // permissionDecision）に委ねる。ここで旧実装のように `{"decision":"approve"}`
+    // を返すと Claude Code は legacy approve として **auto-approve** し、PreToolUse
+    // が dangerous delete 等に対して出した `ask` を握り潰してしまう（fail-open）。
+    // evaluatePermission の設計意図（安全でないコマンドはユーザーに確認を委ねる、
+    // 本ファイル冒頭および各 return 直前のコメント参照）に合わせ `{}` を返す。
+    return JSON.stringify({});
 }
 //# sourceMappingURL=permission.js.map
