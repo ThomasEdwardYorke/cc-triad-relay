@@ -13,6 +13,7 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { dirname, resolve, posix as pathPosix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
+import { DEFAULT_CONFIG } from "../config.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1476,6 +1477,34 @@ describe("harness.config.schema.json の work / qualityGates 対応 (CodeRabbit 
     expect(props).toHaveProperty("worktree");
     expect(props).toHaveProperty("tddEnforce");
     expect(props).toHaveProperty("codeRabbit");
+  });
+
+  // The assertion above names the keys it checks, so a section added to
+  // DEFAULT_CONFIG and forgotten in the schema stays invisible: the list
+  // and the omission are written by the same hand at the same time.
+  // `contextBudget`, `configChange` and `repoKind` were each absent for
+  // exactly that reason. Derive the expectation from DEFAULT_CONFIG
+  // instead, so the next added section fails here until it is declared.
+  //
+  // One direction only. The schema may legitimately declare optional
+  // sections that carry no runtime default (`clarify`,
+  // `environmentManifest`, `models`), plus the `$schema` meta key.
+  it("DEFAULT_CONFIG の全 top-level キーが schema properties に存在する", () => {
+    const declared = new Set(Object.keys(schema.properties));
+    const missing = Object.keys(DEFAULT_CONFIG).filter(
+      (key) => !declared.has(key),
+    );
+    expect(
+      missing,
+      `harness.config.schema.json is missing: ${missing.join(", ")}. ` +
+        "The schema is additionalProperties:false, so an undeclared key " +
+        "makes a valid config fail validation.",
+    ).toEqual([]);
+  });
+
+  it("schema は additionalProperties:false のまま", () => {
+    // The parity test above only matters while unknown keys are rejected.
+    expect(schema.additionalProperties).toBe(false);
   });
 
   it("work.qualityGates に 4 つの enforce* フラグが定義されている", () => {
