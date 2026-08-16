@@ -112,13 +112,34 @@ let failed = 0;
 for (const tc of cases) {
   try {
     const out = run(tc.hook, tc.input);
-    if (out.decision !== tc.expect) {
+    // PreToolUse carries `ask` / `deny` in the modern
+    // `hookSpecificOutput.permissionDecision` envelope. The legacy top-level
+    // `decision` only ever accepted `approve` / `block` for this event, so a
+    // verdict emitted there is ignored and the guarded call runs unprompted.
+    // `approve` deliberately stays on the legacy shape. Read whichever the
+    // hook actually used.
+    const hso = out.hookSpecificOutput;
+    const decision =
+      hso && typeof hso.permissionDecision === "string"
+        ? hso.permissionDecision
+        : out.decision;
+    if (decision !== tc.expect) {
       throw new Error(
-        `expected decision=${tc.expect}, got ${out.decision} (payload=${JSON.stringify(out)})`,
+        `expected decision=${tc.expect}, got ${decision} (payload=${JSON.stringify(out)})`,
       );
     }
+    if (tc.expect === "deny" || tc.expect === "ask") {
+      // Pin the point of the envelope: a legacy-only payload would be silently
+      // ignored, which is the regression this whole change exists to prevent.
+      if (!hso || hso.hookEventName !== "PreToolUse") {
+        throw new Error(
+          `expected modern hookSpecificOutput envelope for ${tc.expect}, got ${JSON.stringify(out)}`,
+        );
+      }
+    }
     if (tc.expectMessage) {
-      const m = out.systemMessage ?? out.reason ?? "";
+      const m =
+        out.systemMessage ?? hso?.permissionDecisionReason ?? out.reason ?? "";
       if (!tc.expectMessage.test(m)) {
         throw new Error(
           `expected message match ${tc.expectMessage}, got "${m}"`,
