@@ -575,6 +575,30 @@ describe("R13: protected-file direct access", () => {
     );
     expect(result.decision).toBe("approve");
   });
+
+  it("does not reach across a command separator into an unrelated command", () => {
+    // The reader command never touches the protected suffix here: the
+    // suffix token belongs to a *separate* command chained after `;`,
+    // `&&`, or `|`. Matching across the separator denies commands that
+    // merely mention a protected suffix without reading one.
+    for (const cmd of [
+      'echo "listing"; find . -name "*.env*"',
+      "echo start && ls -la config.env.example",
+      "echo scan | grep -c .env",
+    ]) {
+      const result = evaluateRules(makeCtx("Bash", { command: cmd }));
+      expect(result.decision, `command=${cmd}`).toBe("approve");
+    }
+  });
+
+  it("still blocks a protected read that follows a separator", () => {
+    // Each chained segment is evaluated on its own, so a genuine read after
+    // a separator must stay blocked.
+    for (const cmd of ["echo start; cat .env", "ls && head .env"]) {
+      const result = evaluateRules(makeCtx("Bash", { command: cmd }));
+      expect(result.decision, `command=${cmd}`).toBe("deny");
+    }
+  });
 });
 
 // ============================================================

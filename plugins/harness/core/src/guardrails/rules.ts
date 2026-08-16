@@ -356,8 +356,17 @@ export const GUARD_RULES: readonly GuardRule[] = [
       // Match the dangerous-read command names even when invoked by absolute
       // path (`/bin/cat`, `/usr/bin/head`, …) or via backslash-escape
       // (`\cat`). `\b` boundary keeps the suffix match strict.
+      //
+      // The gap between the command name and the suffix must not cross a
+      // command separator (`;`, `&`, `|`). With a bare `.*` the rule reads
+      // one physical line as a single command, so an unrelated segment that
+      // merely mentions a protected suffix is denied — e.g.
+      // `echo "listing"; find . -name "*.env*"` never reads `.env`, but the
+      // `echo` and the suffix share a line. Excluding separators evaluates
+      // each chained segment on its own: a genuine read after `;` still
+      // matches, because the separator class also opens the prefix group.
       const re = new RegExp(
-        `(?:^|[\\s;&|(\\\\])(?:/\\S+/)?(cat|head|tail|less|more|open|echo)\\b\\s+.*(${sufAlt})\\b`,
+        `(?:^|[\\s;&|(\\\\])(?:/\\S+/)?(cat|head|tail|less|more|open|echo)\\b\\s+[^;&|\\n]*(${sufAlt})\\b`,
       );
       const m = re.exec(command);
       if (m === null) return null;
