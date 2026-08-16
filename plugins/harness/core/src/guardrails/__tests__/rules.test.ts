@@ -382,6 +382,24 @@ describe("R10: protected-directory deletion (parameterized)", () => {
     expect(result.reason).toContain("training-data");
   });
 
+  it("blocks `rm -rf scripts_out/x` even WITHOUT workMode — R05 ask defers to R10 deny (no shadow)", () => {
+    // Regression: R05 (rm -rf → ask) is ordered before R10 (protected-dir →
+    // deny). Without the defer in R05, its ask shadowed R10 in normal mode, so
+    // a protected-directory delete was only "confirmed" — and an ASK is
+    // auto-approvable by the permission flow / non-interactive modes, never a
+    // terminal block. R05 must decline for protected targets so R10's deny
+    // wins regardless of permission mode.
+    const result = evaluateRules(
+      makeCtx(
+        "Bash",
+        { command: "rm -rf scripts_out/__guardtest" },
+        { config: configWith(["scripts_out", ".venv"]) /* no workMode */ },
+      ),
+    );
+    expect(result.decision).toBe("deny");
+    expect(result.reason).toContain("scripts_out");
+  });
+
   it("blocks multiple protected dirs (alternation)", () => {
     const cfg = configWith(["foo", "bar/baz"]);
     const result = evaluateRules(
