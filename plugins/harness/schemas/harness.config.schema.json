@@ -583,9 +583,10 @@
       "properties": {
         "enabled": { "type": "boolean", "default": false },
         "budgetBytes": {
-          "type": "number",
+          "type": "integer",
+          "minimum": 1,
           "default": 35000,
-          "description": "Byte ceiling summed across markdown under `autoLoadDirs`."
+          "description": "Byte ceiling summed across markdown under `autoLoadDirs`. The audit compares file totals against this value directly and does not normalize it, so 0 / negative / fractional values would report every non-empty project as over budget. No upper bound is declared because the runtime enforces none — the schema must not claim a constraint the loader does not apply."
         },
         "autoLoadDirs": {
           "type": "array",
@@ -618,12 +619,22 @@
       "description": "ConfigChange hook behaviour.",
       "properties": {
         "enabled": { "type": "boolean", "default": true },
-        "maxFilePathLength": { "type": "number", "default": 256 },
+        "maxFilePathLength": {
+          "type": "integer",
+          "minimum": 32,
+          "maximum": 4096,
+          "default": 256,
+          "description": "Bounds match `resolveConfig()`: below 32 it silently falls back to 256, above 4096 it is clamped. Declaring the range keeps the schema and the runtime from disagreeing."
+        },
         "detectSensitivePaths": { "type": "boolean", "default": true },
         "blockOnSources": {
           "type": "array",
-          "items": { "type": "string" },
-          "default": []
+          "items": {
+            "type": "string",
+            "enum": ["user_settings", "project_settings", "local_settings", "policy_settings", "skills"]
+          },
+          "default": [],
+          "description": "`resolveConfig()` drops entries outside this set without warning, so an unconstrained string would let a typo such as `policy_setting` validate while the hook silently approves the very changes the consumer meant to block."
         }
       }
     }
