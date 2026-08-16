@@ -223,10 +223,15 @@ describe("formatPermissionOutput", () => {
     expect(parsed.hookSpecificOutput.decision.behavior).toBe("allow");
   });
 
-  it("systemMessage がない場合は通常の HookResult を出力する", () => {
+  it("systemMessage がない場合は defer（空オブジェクト = ユーザーに確認を委ねる）を出力する", () => {
+    // PermissionRequest フックが {} を返すと Claude Code は通常の許可フロー
+    // （ユーザー確認 / PreToolUse の permissionDecision）に委ねる。旧実装は
+    // {"decision":"approve"} を返し、PreToolUse の ask を握り潰して dangerous
+    // delete を auto-approve するバグがあった（fail-open）。
     const result = evaluatePermission(makeInput("Bash", { command: "rm -rf /" }));
     const output = formatPermissionOutput(result);
     const parsed = JSON.parse(output);
-    expect(parsed.decision).toBe("approve");
+    expect(parsed).toEqual({});
+    expect(parsed.decision).toBeUndefined();
   });
 });

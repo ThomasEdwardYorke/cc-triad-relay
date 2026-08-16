@@ -163,6 +163,17 @@ export const GUARD_RULES = [
                 return null;
             if (!hasDangerousRmRf(command))
                 return null;
+            // A delete that targets a configured protected directory must be a
+            // *terminal* DENY (R10), not a bypassable ASK — otherwise R05's ask
+            // (and its workMode bypass) shadows R10 and the protected directory is
+            // only "confirmed", never blocked. Decline here so the later,
+            // higher-severity R10 decides. R10's `rm|rmdir|unlink` match is a
+            // superset of R05's `rm -rf`, so any command deferred here is caught by
+            // R10 (no protected delete can slip through to a silent approve).
+            const protectedDirAlt = anyOfLiteral(ctx.config.protectedDirectories);
+            if (protectedDirAlt !== null && protectedDirAlt.exec(command) !== null) {
+                return null;
+            }
             if (ctx.workMode)
                 return null;
             return {
