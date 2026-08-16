@@ -62,6 +62,50 @@ function hasForcePush(command) {
 function hasSudo(command) {
     return /(?:^|\s)sudo\s/.test(command);
 }
+/**
+ * Split a command line into segments on shell separators (`;`, `&`, `|`),
+ * ignoring separators that are quoted or backslash-escaped.
+ *
+ * A lexical split would treat `cat 'prod;backup.env'` as two commands and let
+ * a genuine protected read through, so quoting has to be tracked. This is a
+ * boundary finder, not a shell parser: it only needs to know where one command
+ * ends, and it errs toward keeping text together (an unterminated quote yields
+ * a single segment, which is the conservative direction for a deny rule).
+ */
+export function splitOnUnquotedSeparators(command) {
+    const segments = [];
+    let current = "";
+    let quote = null;
+    for (let i = 0; i < command.length; i += 1) {
+        const ch = command[i];
+        // Backslash escapes the next character outside quotes and inside double
+        // quotes; inside single quotes it is literal.
+        if (ch === "\\" && quote !== "'" && i + 1 < command.length) {
+            current += ch + command[i + 1];
+            i += 1;
+            continue;
+        }
+        if (quote === null && (ch === '"' || ch === "'")) {
+            quote = ch;
+            current += ch;
+            continue;
+        }
+        if (quote !== null) {
+            if (ch === quote)
+                quote = null;
+            current += ch;
+            continue;
+        }
+        if (ch === ";" || ch === "&" || ch === "|") {
+            segments.push(current);
+            current = "";
+            continue;
+        }
+        current += ch;
+    }
+    segments.push(current);
+    return segments;
+}
 // ============================================================
 // Rule table
 // ============================================================
@@ -350,8 +394,27 @@ export const GUARD_RULES = [
             // Match the dangerous-read command names even when invoked by absolute
             // path (`/bin/cat`, `/usr/bin/head`, …) or via backslash-escape
             // (`\cat`). `\b` boundary keeps the suffix match strict.
-            const re = new RegExp(`(?:^|[\\s;&|(\\\\])(?:/\\S+/)?(cat|head|tail|less|more|open|echo)\\b\\s+.*(${sufAlt})\\b`);
-            const m = re.exec(command);
+            //
+            // Applied per command segment, not per physical line. A bare `.*` over
+            // the whole line treats a chain as one command, so a segment that merely
+            // mentions a protected suffix is denied — `echo "listing"; find . -name
+            // "*.env*"` reads nothing, but the reader name and the suffix share a
+            // line.
+            //
+            // The split respects shell quoting. `;`, `&`, `|` inside quotes or
+            // behind a backslash belong to a filename, not to the shell grammar;
+            // excluding those characters lexically would approve
+            // `cat 'prod;backup.env'` and `cat prod\;.env`, both of which do read a
+            // protected file.
+            const re = new RegExp(`(?:^|[\\s(\\\\])(?:/\\S+/)?(cat|head|tail|less|more|open|echo)\\b\\s+.*(${sufAlt})\\b`);
+            let m = null;
+            for (const segment of splitOnUnquotedSeparators(command)) {
+                // Probe with a leading space so a segment that begins with the reader
+                // name still satisfies the leading-character class.
+                m = re.exec(` ${segment}`);
+                if (m !== null)
+                    break;
+            }
             if (m === null)
                 return null;
             const matched = m[2] ?? m[0];

@@ -9,7 +9,11 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { GUARD_RULES, evaluateRules } from "../rules.js";
+import {
+  GUARD_RULES,
+  evaluateRules,
+  splitOnUnquotedSeparators,
+} from "../rules.js";
 import type { RuleContext, HookInput } from "../../types.js";
 import { DEFAULT_CONFIG, type HarnessConfig } from "../../config.js";
 
@@ -598,6 +602,54 @@ describe("R13: protected-file direct access", () => {
       const result = evaluateRules(makeCtx("Bash", { command: cmd }));
       expect(result.decision, `command=${cmd}`).toBe("deny");
     }
+  });
+
+  it("blocks reads whose filename contains a quoted or escaped separator", () => {
+    // These are single commands reading one protected file. A lexical split
+    // on `;` / `&` / `|` would stop before the suffix and approve them, which
+    // is strictly worse than the over-match it was meant to fix.
+    for (const cmd of [
+      "cat 'prod;backup.env'",
+      'cat "prod&backup.env"',
+      "cat 'prod|backup.env'",
+      "cat prod\\;backup.env",
+      "head -n1 'a;b.env'",
+    ]) {
+      const result = evaluateRules(makeCtx("Bash", { command: cmd }));
+      expect(result.decision, `command=${cmd}`).toBe("deny");
+    }
+  });
+
+  it("an unterminated quote keeps the line as one segment (fail-closed)", () => {
+    const result = evaluateRules(
+      makeCtx("Bash", { command: "cat 'unterminated .env" }),
+    );
+    expect(result.decision).toBe("deny");
+  });
+});
+
+describe("splitOnUnquotedSeparators", () => {
+  it("splits on bare separators", () => {
+    expect(splitOnUnquotedSeparators("a; b && c | d")).toEqual([
+      "a",
+      " b ",
+      "",
+      " c ",
+      " d",
+    ]);
+  });
+
+  it("keeps quoted and escaped separators inside the segment", () => {
+    expect(splitOnUnquotedSeparators("cat 'a;b'")).toEqual(["cat 'a;b'"]);
+    expect(splitOnUnquotedSeparators('cat "a|b"')).toEqual(['cat "a|b"']);
+    expect(splitOnUnquotedSeparators("cat a\\&b")).toEqual(["cat a\\&b"]);
+  });
+
+  it("treats a backslash inside single quotes as literal", () => {
+    expect(splitOnUnquotedSeparators("echo 'a\\'; cat .env")).toEqual([
+      "echo 'a\\'",
+      " cat .env",
+    ]);
   });
 });
 
