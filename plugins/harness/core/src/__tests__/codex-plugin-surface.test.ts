@@ -216,7 +216,7 @@ describe("Codex plugin platform surface", () => {
 
     expect(manifest).toMatchObject({
       name: "codex-harness",
-      version: "0.4.0-rc.2",
+      version: "0.4.0",
       license: "MIT",
       skills: "./skills/",
       mcpServers: "./.mcp.json",

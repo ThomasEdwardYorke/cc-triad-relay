@@ -3304,9 +3304,9 @@ describe("release guard — version consistency (Phase μ)", () => {
   const SEMVER_VERSION_REGEX =
     /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
-  const EXPECTED_VERSION = "0.4.0-rc.2";
-  const EXPECTED_PREV_VERSION = "0.4.0-rc.1";
-  const EXPECTED_RELEASE_DATE = "2026-04-28";
+  const EXPECTED_VERSION = "0.4.0";
+  const EXPECTED_PREV_VERSION = "0.4.0-rc.2";
+  const EXPECTED_RELEASE_DATE = "2026-08-17";
 
   if (!SEMVER_VERSION_REGEX.test(EXPECTED_VERSION)) {
     throw new Error(
