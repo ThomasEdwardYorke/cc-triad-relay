@@ -223,11 +223,11 @@ describe("formatPermissionOutput", () => {
     expect(parsed.hookSpecificOutput.decision.behavior).toBe("allow");
   });
 
-  it("systemMessage がない場合は defer（空オブジェクト = ユーザーに確認を委ねる）を出力する", () => {
-    // PermissionRequest フックが {} を返すと Claude Code は通常の許可フロー
-    // （ユーザー確認 / PreToolUse の permissionDecision）に委ねる。旧実装は
-    // {"decision":"approve"} を返し、PreToolUse の ask を握り潰して dangerous
-    // delete を auto-approve するバグがあった（fail-open）。
+  it("defers with an empty object when systemMessage is absent", () => {
+    // An empty object hands the decision back to the normal permission flow.
+    // The previous implementation returned {"decision":"approve"}, which read
+    // as a legacy auto-approve and swallowed the `ask` PreToolUse raised for a
+    // dangerous delete — fail-open.
     const result = evaluatePermission(makeInput("Bash", { command: "rm -rf /" }));
     const output = formatPermissionOutput(result);
     const parsed = JSON.parse(output);

@@ -1489,7 +1489,7 @@ describe("harness.config.schema.json の work / qualityGates 対応 (CodeRabbit 
   // One direction only. The schema may legitimately declare optional
   // sections that carry no runtime default (`clarify`,
   // `environmentManifest`, `models`), plus the `$schema` meta key.
-  it("DEFAULT_CONFIG の全 top-level キーが schema properties に存在する", () => {
+  it("every DEFAULT_CONFIG top-level key is declared in schema properties", () => {
     const declared = new Set(Object.keys(schema.properties));
     const missing = Object.keys(DEFAULT_CONFIG).filter(
       (key) => !declared.has(key),
@@ -1502,7 +1502,7 @@ describe("harness.config.schema.json の work / qualityGates 対応 (CodeRabbit 
     ).toEqual([]);
   });
 
-  it("schema は additionalProperties:false のまま", () => {
+  it("schema keeps additionalProperties: false", () => {
     // The parity test above only matters while unknown keys are rejected.
     expect(schema.additionalProperties).toBe(false);
   });

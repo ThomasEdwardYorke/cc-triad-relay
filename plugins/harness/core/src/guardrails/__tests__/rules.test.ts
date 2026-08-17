@@ -638,6 +638,49 @@ describe("R13: protected-file direct access", () => {
     }
   });
 
+  it("blocks reads that hide a separator in ANSI-C quoting or an expansion", () => {
+    // Each of these is a single command reading one protected file, and each
+    // was approved before the splitter tracked the construct.
+    //
+    //   $'…'          a backslash escapes there, unlike a plain '…', so a
+    //                 naive splitter closes the quote early
+    //   $( … ), ` … ` a separator inside an expansion is not a top-level
+    //                 command boundary
+    //   $(( … ))      same, for arithmetic
+    for (const cmd of [
+      "cat $'prod\\';backup.env'",
+      "cat $(printf foo | tr o a) .env",
+      "cat $((1|2)) .env",
+      "cat `printf a | tr a b` .env",
+    ]) {
+      const result = evaluateRules(makeCtx("Bash", { command: cmd }));
+      expect(result.decision, `command=${cmd}`).toBe("deny");
+    }
+  });
+
+  it("still splits a command list nested inside a subshell or substitution", () => {
+    // A substitution is an argument to the command around it, so the outer
+    // segment keeps it whole. Its contents are still a command list, and a
+    // bare `( … )` is a command list in place — in both, the reader and the
+    // unrelated suffix belong to different commands.
+    for (const cmd of [
+      '(cat README.md; find . -name "*.env*")',
+      'echo $(cat README.md; find . -name "*.env*")',
+      'cat README.md && find . -name "*.env*"',
+    ]) {
+      const result = evaluateRules(makeCtx("Bash", { command: cmd }));
+      expect(result.decision, `command=${cmd}`).toBe("approve");
+    }
+  });
+
+  it("still denies a protected read nested inside a substitution", () => {
+    // Splitting the inner list must not lose the read itself.
+    for (const cmd of ["echo $(cat .env)", "echo $(ls; cat .env)"]) {
+      const result = evaluateRules(makeCtx("Bash", { command: cmd }));
+      expect(result.decision, `command=${cmd}`).toBe("deny");
+    }
+  });
+
   it("an unterminated quote keeps the line as one segment (fail-closed)", () => {
     const result = evaluateRules(
       makeCtx("Bash", { command: "cat 'unterminated .env" }),

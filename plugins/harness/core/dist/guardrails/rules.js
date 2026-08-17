@@ -69,42 +69,154 @@ function hasSudo(command) {
  * A lexical split would treat `cat 'prod;backup.env'` as two commands and let
  * a genuine protected read through, so quoting has to be tracked. This is a
  * boundary finder, not a shell parser: it only needs to know where one command
- * ends, and it errs toward keeping text together (an unterminated quote yields
- * a single segment, which is the conservative direction for a deny rule).
+ * ends, and it errs toward keeping text together (an unterminated quote or an
+ * unbalanced `(` yields one segment, which is the conservative direction for a
+ * deny rule — fewer splits can only widen a deny, never open one).
+ *
+ * Three constructs make a separator character not a boundary:
+ *
+ * | construct | example that must stay one segment |
+ * |---|---|
+ * | quoted / escaped | `cat 'prod;backup.env'`, `cat prod\;backup.env` |
+ * | ANSI-C quoting `$'…'` | `cat $'prod\';backup.env'` |
+ * | expansion `$( … )`, `$(( … ))`, `` ` … ` `` | `cat $(printf foo \| tr o a) .env` |
+ *
+ * A substitution is an argument to the command around it, so the outer segment
+ * replaces it with an opaque token and its contents are split separately. A
+ * bare `( … )` is a command list in place, so its separators are real
+ * boundaries.
  */
+/**
+ * Read a command substitution starting at `start` — either `$( … )` (which
+ * also covers `$(( … ))`) or `` ` … ` ``. Returns the raw text including the
+ * delimiters, the inner text, and the index of the closing delimiter.
+ *
+ * Unterminated input returns the remainder with an empty inner text, so the
+ * caller keeps it in one piece rather than splitting on something it cannot
+ * parse.
+ */
+function readSubstitution(command, start) {
+    const backtick = command[start] === "`";
+    const open = backtick ? start : start + 1;
+    let depth = 0;
+    let quote = null;
+    for (let i = open; i < command.length; i += 1) {
+        const ch = command[i];
+        const next = command[i + 1];
+        if (ch === "\\" && quote !== "'" && i + 1 < command.length) {
+            i += 1;
+            continue;
+        }
+        if (quote !== null) {
+            if ((quote === "ansi" && ch === "'") || ch === quote)
+                quote = null;
+            continue;
+        }
+        if (ch === "$" && next === "'") {
+            quote = "ansi";
+            i += 1;
+            continue;
+        }
+        if (ch === '"' || ch === "'") {
+            quote = ch;
+            continue;
+        }
+        if (backtick) {
+            if (ch === "`" && i > open) {
+                return {
+                    raw: command.slice(start, i + 1),
+                    inner: command.slice(open + 1, i),
+                    end: i,
+                };
+            }
+            continue;
+        }
+        if (ch === "(")
+            depth += 1;
+        else if (ch === ")") {
+            depth -= 1;
+            if (depth === 0) {
+                return {
+                    raw: command.slice(start, i + 1),
+                    inner: command.slice(open + 1, i),
+                    end: i,
+                };
+            }
+        }
+    }
+    return { raw: command.slice(start), inner: "", end: command.length - 1 };
+}
 export function splitOnUnquotedSeparators(command) {
     const segments = [];
+    // A command substitution is an *argument* to the command around it, so the
+    // outer segment keeps it whole — otherwise `cat $(printf foo | tr o a) .env`
+    // splits and the read is approved. Its contents are still a command list of
+    // their own, so they are split separately and evaluated as extra segments.
+    const nested = [];
     let current = "";
+    // `ansi` is `$'...'`, where a backslash escapes — unlike a plain `'...'`,
+    // where it is literal. Treating them alike lets `cat $'prod\';backup.env'`
+    // close the quote early, so the `;` splits and the read is approved.
     let quote = null;
     for (let i = 0; i < command.length; i += 1) {
         const ch = command[i];
-        // Backslash escapes the next character outside quotes and inside double
-        // quotes; inside single quotes it is literal.
+        const next = command[i + 1];
+        // Backslash escapes the next character everywhere except inside a plain
+        // single-quoted string, where it is literal.
         if (ch === "\\" && quote !== "'" && i + 1 < command.length) {
             current += ch + command[i + 1];
             i += 1;
             continue;
         }
-        if (quote === null && (ch === '"' || ch === "'")) {
-            quote = ch;
+        if (quote === null) {
+            if (ch === "$" && next === "'") {
+                quote = "ansi";
+                current += ch + next;
+                i += 1;
+                continue;
+            }
+            if (ch === "$" && next === '"') {
+                quote = '"';
+                current += ch + next;
+                i += 1;
+                continue;
+            }
+            if (ch === '"' || ch === "'") {
+                quote = ch;
+                current += ch;
+                continue;
+            }
+            if ((ch === "$" && next === "(") || ch === "`") {
+                const { inner, end } = readSubstitution(command, i);
+                // The outer command sees the substitution's *result*, not its text, so
+                // it becomes an opaque token. Keeping the raw text would let a suffix
+                // mentioned inside it match against the outer command name — the same
+                // cross-command false positive, one level down.
+                current += " ";
+                if (inner.length > 0)
+                    nested.push(...splitOnUnquotedSeparators(inner));
+                i = end;
+                continue;
+            }
+            // A bare `( … )` is a command list in place, not an argument, so its
+            // separators are real boundaries and it needs no special handling.
+            if (ch === ";" || ch === "&" || ch === "|") {
+                segments.push(current);
+                current = "";
+                continue;
+            }
             current += ch;
             continue;
         }
-        if (quote !== null) {
-            if (ch === quote)
-                quote = null;
-            current += ch;
-            continue;
-        }
-        if (ch === ";" || ch === "&" || ch === "|") {
-            segments.push(current);
-            current = "";
-            continue;
+        // Inside a quote. `ansi` ends on its own delimiter; the escape case above
+        // already consumed any escaped one.
+        if ((quote === "ansi" && ch === "'") || ch === quote) {
+            quote = null;
         }
         current += ch;
     }
     segments.push(current);
-    return segments;
+    return [...segments, ...nested];
 }
 // ============================================================
 // Rule table
