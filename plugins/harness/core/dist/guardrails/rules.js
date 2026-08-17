@@ -144,7 +144,15 @@ function readSubstitution(command, start) {
             }
         }
     }
-    return { raw: command.slice(start), inner: "", end: command.length - 1 };
+    // Unterminated. Hand the text after the opener back as `inner` so it is
+    // still split and checked. Returning an empty `inner` would drop everything
+    // after the opener from every segment, leaving a genuine read with nothing
+    // to match against.
+    return {
+        raw: command.slice(start),
+        inner: command.slice(open + 1),
+        end: command.length - 1,
+    };
 }
 export function splitOnUnquotedSeparators(command) {
     const segments = [];

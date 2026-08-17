@@ -658,6 +658,20 @@ describe("R13: protected-file direct access", () => {
     }
   });
 
+  it("still denies when the substitution is never closed", () => {
+    // An unterminated opener must not swallow the rest of the line. Dropping
+    // it leaves the outer segment with nothing to match, which approves a
+    // genuine read.
+    for (const cmd of [
+      "cat $(foo; cat .env",
+      "cat `foo; cat .env",
+      "cat $(cat .env",
+    ]) {
+      const result = evaluateRules(makeCtx("Bash", { command: cmd }));
+      expect(result.decision, `command=${cmd}`).toBe("deny");
+    }
+  });
+
   it("still splits a command list nested inside a subshell or substitution", () => {
     // A substitution is an argument to the command around it, so the outer
     // segment keeps it whole. Its contents are still a command list, and a
