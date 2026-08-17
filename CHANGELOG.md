@@ -33,7 +33,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **`session-handoff` skill S-18 threshold wording** — `commands/session-handoff.md` row for S-18 had `3 件超過` / `5 件超過` which contradicted the `WARN (3+) / FAIL (5+)` severity column (`超過` strictly means "more than"). Reworded to `3 件以上 (count >= 3)` / `5 件以上 (count >= 5)` so the description matches the test boundary. content-integrity test regex for the threshold wording broadened to accept `件超 / 件以上 / 件+ / ≥ / >= / count >=` equivalence so future spec wording adjustments do not produce false fails.
 
-## [Unreleased — pre-rc.2 staging area]
 
 ### Added
 
