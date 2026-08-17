@@ -79,38 +79,92 @@ function hasSudo(command: string): boolean {
  * A lexical split would treat `cat 'prod;backup.env'` as two commands and let
  * a genuine protected read through, so quoting has to be tracked. This is a
  * boundary finder, not a shell parser: it only needs to know where one command
- * ends, and it errs toward keeping text together (an unterminated quote yields
- * a single segment, which is the conservative direction for a deny rule).
+ * ends, and it errs toward keeping text together (an unterminated quote or an
+ * unbalanced `(` yields one segment, which is the conservative direction for a
+ * deny rule — fewer splits can only widen a deny, never open one).
+ *
+ * Three constructs make a separator character not a boundary:
+ *
+ * | construct | example that must stay one segment |
+ * |---|---|
+ * | quoted / escaped | `cat 'prod;backup.env'`, `cat prod\;backup.env` |
+ * | ANSI-C quoting `$'…'` | `cat $'prod\';backup.env'` |
+ * | expansion `$( … )`, `$(( … ))`, `` ` … ` `` | `cat $(printf foo \| tr o a) .env` |
  */
 export function splitOnUnquotedSeparators(command: string): string[] {
   const segments: string[] = [];
   let current = "";
-  let quote: '"' | "'" | null = null;
+  // `ansi` is `$'...'`, where a backslash escapes — unlike a plain `'...'`,
+  // where it is literal. Treating them alike lets `cat $'prod\';backup.env'`
+  // close the quote early, so the `;` splits and the read is approved.
+  let quote: '"' | "'" | "ansi" | "backtick" | null = null;
+  // `$( … )`, `$(( … ))`, `( … )`. Separators inside an expansion are not
+  // top-level command boundaries: `cat $(printf foo | tr o a) .env` reads
+  // `.env` with one command, and splitting on that `|` approves it.
+  let depth = 0;
 
   for (let i = 0; i < command.length; i += 1) {
     const ch = command[i] as string;
+    const next = command[i + 1];
 
-    // Backslash escapes the next character outside quotes and inside double
-    // quotes; inside single quotes it is literal.
+    // Backslash escapes the next character everywhere except inside a plain
+    // single-quoted string, where it is literal.
     if (ch === "\\" && quote !== "'" && i + 1 < command.length) {
       current += ch + command[i + 1];
       i += 1;
       continue;
     }
-    if (quote === null && (ch === '"' || ch === "'")) {
-      quote = ch;
+
+    if (quote === null) {
+      if (ch === "$" && next === "'") {
+        quote = "ansi";
+        current += ch + next;
+        i += 1;
+        continue;
+      }
+      if (ch === "$" && next === '"') {
+        quote = '"';
+        current += ch + next;
+        i += 1;
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+        current += ch;
+        continue;
+      }
+      if (ch === "`") {
+        quote = "backtick";
+        current += ch;
+        continue;
+      }
+      if (ch === "(") {
+        depth += 1;
+        current += ch;
+        continue;
+      }
+      if (ch === ")") {
+        if (depth > 0) depth -= 1;
+        current += ch;
+        continue;
+      }
+      if (depth === 0 && (ch === ";" || ch === "&" || ch === "|")) {
+        segments.push(current);
+        current = "";
+        continue;
+      }
       current += ch;
       continue;
     }
-    if (quote !== null) {
-      if (ch === quote) quote = null;
-      current += ch;
-      continue;
-    }
-    if (ch === ";" || ch === "&" || ch === "|") {
-      segments.push(current);
-      current = "";
-      continue;
+
+    // Inside a quote. `ansi` and `backtick` both end on their own delimiter;
+    // the escape case above already consumed any escaped one.
+    if (
+      (quote === "ansi" && ch === "'") ||
+      (quote === "backtick" && ch === "`") ||
+      ch === quote
+    ) {
+      quote = null;
     }
     current += ch;
   }

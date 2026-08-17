@@ -17,8 +17,17 @@ import type { GuardRule, HookResult, RuleContext } from "../types.js";
  * A lexical split would treat `cat 'prod;backup.env'` as two commands and let
  * a genuine protected read through, so quoting has to be tracked. This is a
  * boundary finder, not a shell parser: it only needs to know where one command
- * ends, and it errs toward keeping text together (an unterminated quote yields
- * a single segment, which is the conservative direction for a deny rule).
+ * ends, and it errs toward keeping text together (an unterminated quote or an
+ * unbalanced `(` yields one segment, which is the conservative direction for a
+ * deny rule — fewer splits can only widen a deny, never open one).
+ *
+ * Three constructs make a separator character not a boundary:
+ *
+ * | construct | example that must stay one segment |
+ * |---|---|
+ * | quoted / escaped | `cat 'prod;backup.env'`, `cat prod\;backup.env` |
+ * | ANSI-C quoting `$'…'` | `cat $'prod\';backup.env'` |
+ * | expansion `$( … )`, `$(( … ))`, `` ` … ` `` | `cat $(printf foo \| tr o a) .env` |
  */
 export declare function splitOnUnquotedSeparators(command: string): string[];
 export declare const GUARD_RULES: readonly GuardRule[];

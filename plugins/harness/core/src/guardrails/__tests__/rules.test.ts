@@ -638,6 +638,27 @@ describe("R13: protected-file direct access", () => {
     }
   });
 
+  it("blocks reads that hide a separator in ANSI-C quoting or an expansion", () => {
+    // Each of these is a single command reading one protected file, and each
+    // was approved before the splitter tracked the construct.
+    //
+    //   $'…'          a backslash escapes there, unlike a plain '…', so a
+    //                 naive splitter closes the quote early
+    //   $( … ), ` … ` a separator inside an expansion is not a top-level
+    //                 command boundary
+    //   $(( … ))      same, for arithmetic
+    for (const cmd of [
+      "cat $'prod\\';backup.env'",
+      "cat $(printf foo | tr o a) .env",
+      "cat $((1|2)) .env",
+      "cat `printf a | tr a b` .env",
+      "cat (a;b) .env",
+    ]) {
+      const result = evaluateRules(makeCtx("Bash", { command: cmd }));
+      expect(result.decision, `command=${cmd}`).toBe("deny");
+    }
+  });
+
   it("an unterminated quote keeps the line as one segment (fail-closed)", () => {
     const result = evaluateRules(
       makeCtx("Bash", { command: "cat 'unterminated .env" }),

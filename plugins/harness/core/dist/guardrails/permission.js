@@ -135,17 +135,18 @@ export function formatPermissionOutput(result) {
             }
         }
         catch {
-            // パース失敗時は defer（空オブジェクト）として出力
+            // Parse failure falls through to the defer below.
         }
     }
-    // systemMessage に妥当な PermissionResponse が無い場合は **defer** する。
-    // PermissionRequest フックが空オブジェクト `{}` を返すと、Claude Code は
-    // 通常の許可フロー（＝ユーザー確認、または PreToolUse が出した
-    // permissionDecision）に委ねる。ここで旧実装のように `{"decision":"approve"}`
-    // を返すと Claude Code は legacy approve として **auto-approve** し、PreToolUse
-    // が dangerous delete 等に対して出した `ask` を握り潰してしまう（fail-open）。
-    // evaluatePermission の設計意図（安全でないコマンドはユーザーに確認を委ねる、
-    // 本ファイル冒頭および各 return 直前のコメント参照）に合わせ `{}` を返す。
+    // Defer when `systemMessage` carries no valid PermissionResponse. Returning
+    // an empty object hands the decision back to the normal permission flow —
+    // the user prompt, or whatever `permissionDecision` PreToolUse emitted.
+    //
+    // Returning `{"decision":"approve"}` here, as the previous implementation
+    // did, is read as a legacy auto-approve and swallows the `ask` PreToolUse
+    // had just raised for a dangerous delete. That is fail-open, and it is the
+    // opposite of what `evaluatePermission` is for (see the file header and the
+    // comment above each return): an unsafe command is the user's call.
     return JSON.stringify({});
 }
 //# sourceMappingURL=permission.js.map
