@@ -652,8 +652,30 @@ describe("R13: protected-file direct access", () => {
       "cat $(printf foo | tr o a) .env",
       "cat $((1|2)) .env",
       "cat `printf a | tr a b` .env",
-      "cat (a;b) .env",
     ]) {
+      const result = evaluateRules(makeCtx("Bash", { command: cmd }));
+      expect(result.decision, `command=${cmd}`).toBe("deny");
+    }
+  });
+
+  it("still splits a command list nested inside a subshell or substitution", () => {
+    // A substitution is an argument to the command around it, so the outer
+    // segment keeps it whole. Its contents are still a command list, and a
+    // bare `( … )` is a command list in place — in both, the reader and the
+    // unrelated suffix belong to different commands.
+    for (const cmd of [
+      '(cat README.md; find . -name "*.env*")',
+      'echo $(cat README.md; find . -name "*.env*")',
+      'cat README.md && find . -name "*.env*"',
+    ]) {
+      const result = evaluateRules(makeCtx("Bash", { command: cmd }));
+      expect(result.decision, `command=${cmd}`).toBe("approve");
+    }
+  });
+
+  it("still denies a protected read nested inside a substitution", () => {
+    // Splitting the inner list must not lose the read itself.
+    for (const cmd of ["echo $(cat .env)", "echo $(ls; cat .env)"]) {
       const result = evaluateRules(makeCtx("Bash", { command: cmd }));
       expect(result.decision, `command=${cmd}`).toBe("deny");
     }

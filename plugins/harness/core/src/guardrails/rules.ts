@@ -90,18 +90,88 @@ function hasSudo(command: string): boolean {
  * | quoted / escaped | `cat 'prod;backup.env'`, `cat prod\;backup.env` |
  * | ANSI-C quoting `$'…'` | `cat $'prod\';backup.env'` |
  * | expansion `$( … )`, `$(( … ))`, `` ` … ` `` | `cat $(printf foo \| tr o a) .env` |
+ *
+ * A substitution is an argument to the command around it, so the outer segment
+ * replaces it with an opaque token and its contents are split separately. A
+ * bare `( … )` is a command list in place, so its separators are real
+ * boundaries.
  */
+
+/**
+ * Read a command substitution starting at `start` — either `$( … )` (which
+ * also covers `$(( … ))`) or `` ` … ` ``. Returns the raw text including the
+ * delimiters, the inner text, and the index of the closing delimiter.
+ *
+ * Unterminated input returns the remainder with an empty inner text, so the
+ * caller keeps it in one piece rather than splitting on something it cannot
+ * parse.
+ */
+function readSubstitution(
+  command: string,
+  start: number,
+): { raw: string; inner: string; end: number } {
+  const backtick = command[start] === "`";
+  const open = backtick ? start : start + 1;
+  let depth = 0;
+  let quote: '"' | "'" | "ansi" | null = null;
+
+  for (let i = open; i < command.length; i += 1) {
+    const ch = command[i] as string;
+    const next = command[i + 1];
+    if (ch === "\\" && quote !== "'" && i + 1 < command.length) {
+      i += 1;
+      continue;
+    }
+    if (quote !== null) {
+      if ((quote === "ansi" && ch === "'") || ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "$" && next === "'") {
+      quote = "ansi";
+      i += 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (backtick) {
+      if (ch === "`" && i > open) {
+        return {
+          raw: command.slice(start, i + 1),
+          inner: command.slice(open + 1, i),
+          end: i,
+        };
+      }
+      continue;
+    }
+    if (ch === "(") depth += 1;
+    else if (ch === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        return {
+          raw: command.slice(start, i + 1),
+          inner: command.slice(open + 1, i),
+          end: i,
+        };
+      }
+    }
+  }
+  return { raw: command.slice(start), inner: "", end: command.length - 1 };
+}
+
 export function splitOnUnquotedSeparators(command: string): string[] {
   const segments: string[] = [];
+  // A command substitution is an *argument* to the command around it, so the
+  // outer segment keeps it whole — otherwise `cat $(printf foo | tr o a) .env`
+  // splits and the read is approved. Its contents are still a command list of
+  // their own, so they are split separately and evaluated as extra segments.
+  const nested: string[] = [];
   let current = "";
   // `ansi` is `$'...'`, where a backslash escapes — unlike a plain `'...'`,
   // where it is literal. Treating them alike lets `cat $'prod\';backup.env'`
   // close the quote early, so the `;` splits and the read is approved.
-  let quote: '"' | "'" | "ansi" | "backtick" | null = null;
-  // `$( … )`, `$(( … ))`, `( … )`. Separators inside an expansion are not
-  // top-level command boundaries: `cat $(printf foo | tr o a) .env` reads
-  // `.env` with one command, and splitting on that `|` approves it.
-  let depth = 0;
+  let quote: '"' | "'" | "ansi" | null = null;
 
   for (let i = 0; i < command.length; i += 1) {
     const ch = command[i] as string;
@@ -133,22 +203,20 @@ export function splitOnUnquotedSeparators(command: string): string[] {
         current += ch;
         continue;
       }
-      if (ch === "`") {
-        quote = "backtick";
-        current += ch;
+      if ((ch === "$" && next === "(") || ch === "`") {
+        const { inner, end } = readSubstitution(command, i);
+        // The outer command sees the substitution's *result*, not its text, so
+        // it becomes an opaque token. Keeping the raw text would let a suffix
+        // mentioned inside it match against the outer command name — the same
+        // cross-command false positive, one level down.
+        current += " ";
+        if (inner.length > 0) nested.push(...splitOnUnquotedSeparators(inner));
+        i = end;
         continue;
       }
-      if (ch === "(") {
-        depth += 1;
-        current += ch;
-        continue;
-      }
-      if (ch === ")") {
-        if (depth > 0) depth -= 1;
-        current += ch;
-        continue;
-      }
-      if (depth === 0 && (ch === ";" || ch === "&" || ch === "|")) {
+      // A bare `( … )` is a command list in place, not an argument, so its
+      // separators are real boundaries and it needs no special handling.
+      if (ch === ";" || ch === "&" || ch === "|") {
         segments.push(current);
         current = "";
         continue;
@@ -157,19 +225,15 @@ export function splitOnUnquotedSeparators(command: string): string[] {
       continue;
     }
 
-    // Inside a quote. `ansi` and `backtick` both end on their own delimiter;
-    // the escape case above already consumed any escaped one.
-    if (
-      (quote === "ansi" && ch === "'") ||
-      (quote === "backtick" && ch === "`") ||
-      ch === quote
-    ) {
+    // Inside a quote. `ansi` ends on its own delimiter; the escape case above
+    // already consumed any escaped one.
+    if ((quote === "ansi" && ch === "'") || ch === quote) {
       quote = null;
     }
     current += ch;
   }
   segments.push(current);
-  return segments;
+  return [...segments, ...nested];
 }
 
 // ============================================================
