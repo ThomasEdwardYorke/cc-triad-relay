@@ -1,6 +1,6 @@
 {
   "name": "codex-harness",
-  "version": "0.4.0-rc.2",
+  "version": "0.4.0",
   "description": "Codex-native skill adapter for cc-triad-relay Harness workflows.",
   "author": {
     "name": "cc-triad-relay contributors"

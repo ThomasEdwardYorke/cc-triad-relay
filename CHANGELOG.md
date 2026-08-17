@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-17
+
 ### Added
 
 - **`parallel-sessions-template.sh stop --rollback`** — adds an explicit rollback path for Model B parallel sessions. Default `stop` remains tmux-only, while `stop --rollback [session] [slug...]` delegates to cleanup, removes generated worktrees, deletes only launcher-recorded generated `feature/*-<slug>` branches discovered from those worktrees before removal, filters explicit and tmux-gone fallback worktrees by recorded session marker, handles missing explicit worktrees as no-op cleanup, and keeps dry-run rollback previews explicit-scope-only without live tmux or destructive git state.
@@ -31,7 +33,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **`session-handoff` skill S-18 threshold wording** — `commands/session-handoff.md` row for S-18 had `3 件超過` / `5 件超過` which contradicted the `WARN (3+) / FAIL (5+)` severity column (`超過` strictly means "more than"). Reworded to `3 件以上 (count >= 3)` / `5 件以上 (count >= 5)` so the description matches the test boundary. content-integrity test regex for the threshold wording broadened to accept `件超 / 件以上 / 件+ / ≥ / >= / count >=` equivalence so future spec wording adjustments do not produce false fails.
 
-## [Unreleased — pre-rc.2 staging area]
 
 ### Added
 
@@ -212,8 +213,9 @@ Additional hardening driven by Codex second-opinion (pre-merge) review:
 - Added explicit guidance on log sensitivity in `docs/en/security.md`.
 - `.gitignore` template excludes `.claude/logs/`, `.claude/state/`, `.claude/worktrees/`.
 
-[Unreleased]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.4.0-rc.2...HEAD
-[0.4.0-rc.2]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.4.0-rc.1...v0.4.0-rc.2
+[Unreleased]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.4.0-rc.2...v0.4.0
+[0.4.0-rc.2]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.4.0-rc.2
 [0.4.0-rc.1]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.4.0-rc.1
 [0.3.3]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.3.3
 [0.3.2]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.3.2
