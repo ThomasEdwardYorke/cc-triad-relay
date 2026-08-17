@@ -223,10 +223,15 @@ describe("formatPermissionOutput", () => {
     expect(parsed.hookSpecificOutput.decision.behavior).toBe("allow");
   });
 
-  it("systemMessage がない場合は通常の HookResult を出力する", () => {
+  it("defers with an empty object when systemMessage is absent", () => {
+    // An empty object hands the decision back to the normal permission flow.
+    // The previous implementation returned {"decision":"approve"}, which read
+    // as a legacy auto-approve and swallowed the `ask` PreToolUse raised for a
+    // dangerous delete — fail-open.
     const result = evaluatePermission(makeInput("Bash", { command: "rm -rf /" }));
     const output = formatPermissionOutput(result);
     const parsed = JSON.parse(output);
-    expect(parsed.decision).toBe("approve");
+    expect(parsed).toEqual({});
+    expect(parsed.decision).toBeUndefined();
   });
 });

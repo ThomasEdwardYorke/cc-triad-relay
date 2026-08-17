@@ -62,6 +62,170 @@ function hasForcePush(command) {
 function hasSudo(command) {
     return /(?:^|\s)sudo\s/.test(command);
 }
+/**
+ * Split a command line into segments on shell separators (`;`, `&`, `|`),
+ * ignoring separators that are quoted or backslash-escaped.
+ *
+ * A lexical split would treat `cat 'prod;backup.env'` as two commands and let
+ * a genuine protected read through, so quoting has to be tracked. This is a
+ * boundary finder, not a shell parser: it only needs to know where one command
+ * ends, and it errs toward keeping text together (an unterminated quote or an
+ * unbalanced `(` yields one segment, which is the conservative direction for a
+ * deny rule — fewer splits can only widen a deny, never open one).
+ *
+ * Three constructs make a separator character not a boundary:
+ *
+ * | construct | example that must stay one segment |
+ * |---|---|
+ * | quoted / escaped | `cat 'prod;backup.env'`, `cat prod\;backup.env` |
+ * | ANSI-C quoting `$'…'` | `cat $'prod\';backup.env'` |
+ * | expansion `$( … )`, `$(( … ))`, `` ` … ` `` | `cat $(printf foo \| tr o a) .env` |
+ *
+ * A substitution is an argument to the command around it, so the outer segment
+ * replaces it with an opaque token and its contents are split separately. A
+ * bare `( … )` is a command list in place, so its separators are real
+ * boundaries.
+ */
+/**
+ * Read a command substitution starting at `start` — either `$( … )` (which
+ * also covers `$(( … ))`) or `` ` … ` ``. Returns the raw text including the
+ * delimiters, the inner text, and the index of the closing delimiter.
+ *
+ * Unterminated input returns the remainder with an empty inner text, so the
+ * caller keeps it in one piece rather than splitting on something it cannot
+ * parse.
+ */
+function readSubstitution(command, start) {
+    const backtick = command[start] === "`";
+    const open = backtick ? start : start + 1;
+    let depth = 0;
+    let quote = null;
+    for (let i = open; i < command.length; i += 1) {
+        const ch = command[i];
+        const next = command[i + 1];
+        if (ch === "\\" && quote !== "'" && i + 1 < command.length) {
+            i += 1;
+            continue;
+        }
+        if (quote !== null) {
+            if ((quote === "ansi" && ch === "'") || ch === quote)
+                quote = null;
+            continue;
+        }
+        if (ch === "$" && next === "'") {
+            quote = "ansi";
+            i += 1;
+            continue;
+        }
+        if (ch === '"' || ch === "'") {
+            quote = ch;
+            continue;
+        }
+        if (backtick) {
+            if (ch === "`" && i > open) {
+                return {
+                    raw: command.slice(start, i + 1),
+                    inner: command.slice(open + 1, i),
+                    end: i,
+                };
+            }
+            continue;
+        }
+        if (ch === "(")
+            depth += 1;
+        else if (ch === ")") {
+            depth -= 1;
+            if (depth === 0) {
+                return {
+                    raw: command.slice(start, i + 1),
+                    inner: command.slice(open + 1, i),
+                    end: i,
+                };
+            }
+        }
+    }
+    // Unterminated. Hand the text after the opener back as `inner` so it is
+    // still split and checked. Returning an empty `inner` would drop everything
+    // after the opener from every segment, leaving a genuine read with nothing
+    // to match against.
+    return {
+        raw: command.slice(start),
+        inner: command.slice(open + 1),
+        end: command.length - 1,
+    };
+}
+export function splitOnUnquotedSeparators(command) {
+    const segments = [];
+    // A command substitution is an *argument* to the command around it, so the
+    // outer segment keeps it whole — otherwise `cat $(printf foo | tr o a) .env`
+    // splits and the read is approved. Its contents are still a command list of
+    // their own, so they are split separately and evaluated as extra segments.
+    const nested = [];
+    let current = "";
+    // `ansi` is `$'...'`, where a backslash escapes — unlike a plain `'...'`,
+    // where it is literal. Treating them alike lets `cat $'prod\';backup.env'`
+    // close the quote early, so the `;` splits and the read is approved.
+    let quote = null;
+    for (let i = 0; i < command.length; i += 1) {
+        const ch = command[i];
+        const next = command[i + 1];
+        // Backslash escapes the next character everywhere except inside a plain
+        // single-quoted string, where it is literal.
+        if (ch === "\\" && quote !== "'" && i + 1 < command.length) {
+            current += ch + command[i + 1];
+            i += 1;
+            continue;
+        }
+        if (quote === null) {
+            if (ch === "$" && next === "'") {
+                quote = "ansi";
+                current += ch + next;
+                i += 1;
+                continue;
+            }
+            if (ch === "$" && next === '"') {
+                quote = '"';
+                current += ch + next;
+                i += 1;
+                continue;
+            }
+            if (ch === '"' || ch === "'") {
+                quote = ch;
+                current += ch;
+                continue;
+            }
+            if ((ch === "$" && next === "(") || ch === "`") {
+                const { inner, end } = readSubstitution(command, i);
+                // The outer command sees the substitution's *result*, not its text, so
+                // it becomes an opaque token. Keeping the raw text would let a suffix
+                // mentioned inside it match against the outer command name — the same
+                // cross-command false positive, one level down.
+                current += " ";
+                if (inner.length > 0)
+                    nested.push(...splitOnUnquotedSeparators(inner));
+                i = end;
+                continue;
+            }
+            // A bare `( … )` is a command list in place, not an argument, so its
+            // separators are real boundaries and it needs no special handling.
+            if (ch === ";" || ch === "&" || ch === "|") {
+                segments.push(current);
+                current = "";
+                continue;
+            }
+            current += ch;
+            continue;
+        }
+        // Inside a quote. `ansi` ends on its own delimiter; the escape case above
+        // already consumed any escaped one.
+        if ((quote === "ansi" && ch === "'") || ch === quote) {
+            quote = null;
+        }
+        current += ch;
+    }
+    segments.push(current);
+    return [...segments, ...nested];
+}
 // ============================================================
 // Rule table
 // ============================================================
@@ -163,6 +327,17 @@ export const GUARD_RULES = [
                 return null;
             if (!hasDangerousRmRf(command))
                 return null;
+            // A delete that targets a configured protected directory must be a
+            // *terminal* DENY (R10), not a bypassable ASK — otherwise R05's ask
+            // (and its workMode bypass) shadows R10 and the protected directory is
+            // only "confirmed", never blocked. Decline here so the later,
+            // higher-severity R10 decides. R10's `rm|rmdir|unlink` match is a
+            // superset of R05's `rm -rf`, so any command deferred here is caught by
+            // R10 (no protected delete can slip through to a silent approve).
+            const protectedDirAlt = anyOfLiteral(ctx.config.protectedDirectories);
+            if (protectedDirAlt !== null && protectedDirAlt.exec(command) !== null) {
+                return null;
+            }
             if (ctx.workMode)
                 return null;
             return {
@@ -350,8 +525,27 @@ export const GUARD_RULES = [
             // Match the dangerous-read command names even when invoked by absolute
             // path (`/bin/cat`, `/usr/bin/head`, …) or via backslash-escape
             // (`\cat`). `\b` boundary keeps the suffix match strict.
-            const re = new RegExp(`(?:^|[\\s;&|(\\\\])(?:/\\S+/)?(cat|head|tail|less|more|open|echo)\\b\\s+.*(${sufAlt})\\b`);
-            const m = re.exec(command);
+            //
+            // Applied per command segment, not per physical line. A bare `.*` over
+            // the whole line treats a chain as one command, so a segment that merely
+            // mentions a protected suffix is denied — `echo "listing"; find . -name
+            // "*.env*"` reads nothing, but the reader name and the suffix share a
+            // line.
+            //
+            // The split respects shell quoting. `;`, `&`, `|` inside quotes or
+            // behind a backslash belong to a filename, not to the shell grammar;
+            // excluding those characters lexically would approve
+            // `cat 'prod;backup.env'` and `cat prod\;.env`, both of which do read a
+            // protected file.
+            const re = new RegExp(`(?:^|[\\s(\\\\])(?:/\\S+/)?(cat|head|tail|less|more|open|echo)\\b\\s+.*(${sufAlt})\\b`);
+            let m = null;
+            for (const segment of splitOnUnquotedSeparators(command)) {
+                // Probe with a leading space so a segment that begins with the reader
+                // name still satisfies the leading-character class.
+                m = re.exec(` ${segment}`);
+                if (m !== null)
+                    break;
+            }
             if (m === null)
                 return null;
             const matched = m[2] ?? m[0];

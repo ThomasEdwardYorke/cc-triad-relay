@@ -754,6 +754,50 @@ async function main() {
         }
         process.stdout.write(JSON.stringify(out) + "\n");
     }
+    else if (hookType === "pre-tool") {
+        // PreToolUse permission control: current Claude Code honours ONLY the
+        // modern `hookSpecificOutput.permissionDecision` envelope (allow | deny |
+        // ask). The legacy top-level `{ decision: "ask" | "deny" }` is silently
+        // ignored — the legacy `decision` field historically accepted only
+        // "approve" | "block", so an "ask"/"deny" verdict falls through to
+        // fail-open (the guarded action runs unprompted). Translate the ask/deny
+        // verdicts into the modern shape so the guardrail actually enforces:
+        //   ask  → permissionDecision: "ask"  (user is prompted to confirm)
+        //   deny → permissionDecision: "deny" (tool call is blocked)
+        //
+        // "approve" (and any other value, e.g. the errorToResult fail-open
+        // sentinel) is deliberately left on the classic `JSON.stringify(result)`
+        // wire shape below: that path is behaviour-preserving for safe commands
+        // (whatever Claude Code does with a legacy approve today stays unchanged)
+        // and keeps the existing fail-open regression contract intact
+        // (see __tests__/index.test.ts "classic branch (pre-tool) regression").
+        if (result.decision === "ask" || result.decision === "deny") {
+            const hso = {
+                hookEventName: "PreToolUse",
+                permissionDecision: result.decision,
+            };
+            if (typeof result.reason === "string" && result.reason.length > 0) {
+                hso["permissionDecisionReason"] = result.reason;
+            }
+            const out = { hookSpecificOutput: hso };
+            // Lift universal top-level fields if a rule ever sets them (parity with
+            // the hookSpecificOutput branch above; normally absent for ask/deny).
+            if (result.systemMessage !== undefined) {
+                out["systemMessage"] = result.systemMessage;
+            }
+            if (result.continue !== undefined)
+                out["continue"] = result.continue;
+            if (result.stopReason !== undefined)
+                out["stopReason"] = result.stopReason;
+            if (result.suppressOutput !== undefined) {
+                out["suppressOutput"] = result.suppressOutput;
+            }
+            process.stdout.write(JSON.stringify(out) + "\n");
+        }
+        else {
+            process.stdout.write(JSON.stringify(result) + "\n");
+        }
+    }
     else {
         process.stdout.write(JSON.stringify(result) + "\n");
     }

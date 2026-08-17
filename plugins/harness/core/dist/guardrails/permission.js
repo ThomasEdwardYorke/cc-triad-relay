@@ -135,9 +135,18 @@ export function formatPermissionOutput(result) {
             }
         }
         catch {
-            // パース失敗時は通常の HookResult として出力
+            // Parse failure falls through to the defer below.
         }
     }
-    return JSON.stringify(result);
+    // Defer when `systemMessage` carries no valid PermissionResponse. Returning
+    // an empty object hands the decision back to the normal permission flow —
+    // the user prompt, or whatever `permissionDecision` PreToolUse emitted.
+    //
+    // Returning `{"decision":"approve"}` here, as the previous implementation
+    // did, is read as a legacy auto-approve and swallows the `ask` PreToolUse
+    // had just raised for a dangerous delete. That is fail-open, and it is the
+    // opposite of what `evaluatePermission` is for (see the file header and the
+    // comment above each return): an unsafe command is the user's call.
+    return JSON.stringify({});
 }
 //# sourceMappingURL=permission.js.map

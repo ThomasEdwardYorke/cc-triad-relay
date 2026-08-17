@@ -10,6 +10,7 @@
  * empty, so the distribution is entirely project-agnostic by default.
  */
 import type { GuardRule, HookResult, RuleContext } from "../types.js";
+export declare function splitOnUnquotedSeparators(command: string): string[];
 export declare const GUARD_RULES: readonly GuardRule[];
 /**
  * Evaluate all rules in order. Return the first non-null result, or

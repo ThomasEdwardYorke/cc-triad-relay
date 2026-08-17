@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-17
+
 ### Added
 
 - **`parallel-sessions-template.sh stop --rollback`** — adds an explicit rollback path for Model B parallel sessions. Default `stop` remains tmux-only, while `stop --rollback [session] [slug...]` delegates to cleanup, removes generated worktrees, deletes only launcher-recorded generated `feature/*-<slug>` branches discovered from those worktrees before removal, filters explicit and tmux-gone fallback worktrees by recorded session marker, handles missing explicit worktrees as no-op cleanup, and keeps dry-run rollback previews explicit-scope-only without live tmux or destructive git state.
@@ -13,6 +15,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **PreToolUse `ask` / `deny` verdicts now actually enforce (fail-open fix)** — the hook emitted the legacy top-level `{ decision }` envelope, which current Claude Code silently ignores for PreToolUse: the legacy field historically accepted only `approve` / `block`, so an `ask` or `deny` verdict fell through and the guarded tool call ran unprompted. Every deny-class guardrail (force push, protected env var names, protected file reads) was advisory in practice. `ask` / `deny` are now translated into the modern `hookSpecificOutput.permissionDecision` shape. `approve` deliberately stays on the classic wire shape so the existing fail-open regression contract is unchanged.
+- **`PermissionRequest` defers instead of auto-approving** — when the payload carried no valid `PermissionResponse`, the handler returned `{"decision":"approve"}`, which Claude Code treats as a legacy auto-approve. That swallowed the `ask` a PreToolUse rule had just raised for a dangerous delete. It now returns `{}`, deferring to the normal permission flow.
+- **R05 no longer shadows R10** — a delete targeting a configured protected directory was answered by R05's bypassable `ask` (and skipped entirely in work mode) before R10 could issue its terminal `deny`. R05 now declines when the command matches `protectedDirectories`, letting the higher-severity rule decide. R10's `rm|rmdir|unlink` match is a superset of R05's `rm -rf`, so nothing deferred here can slip through to a silent approve.
+- **R13 no longer matches across command separators** — the protected-file rule joined a reader command name (`cat`/`head`/`tail`/`less`/`more`/`open`/`echo`) to a protected suffix with `.*`, so it treated one physical line as a single command. A chained segment that merely mentioned a protected suffix was denied even when nothing read it — for example `echo "listing"; find . -name "*.env*"`. The rule now splits the command on separators that are actually shell grammar and applies the matcher per segment. Quoted and backslash-escaped separators stay inside the segment, so `cat 'prod;backup.env'` and `cat prod\;.env` still deny; an unterminated quote yields a single segment, which is the conservative direction for a deny rule.
+- **`harness.config.schema.json` declares `contextBudget`, `configChange` and `repoKind`** — all three are real `HarnessConfig` sections that `loadConfig()` accepts, but none were declared in the shipped schema. Because the schema is `additionalProperties: false`, a config using any of them was rejected by schema validation while working perfectly at runtime, so editors and CI disagreed with the loader. A parity test now derives the expected key set from `DEFAULT_CONFIG` instead of a hand-written list, so the next added section fails until it is declared.
 - **`session-manager` idle visibility** — running sessions now expose `WARN-idle` after 10 minutes and `FAIL-idle` after 30 minutes without activity, using parsed stream-json event timestamps first and git commit timestamps as a fallback when no event stream exists. Errored completion results (`is_error: true` / `error_*` subtype) surface as `error` instead of being hidden as `unknown`, and timestampless log lines use stable file mtime fallback instead of resetting activity on every dashboard refresh.
 
 ## [0.4.0-rc.2] - 2026-04-28
@@ -26,7 +33,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **`session-handoff` skill S-18 threshold wording** — `commands/session-handoff.md` row for S-18 had `3 件超過` / `5 件超過` which contradicted the `WARN (3+) / FAIL (5+)` severity column (`超過` strictly means "more than"). Reworded to `3 件以上 (count >= 3)` / `5 件以上 (count >= 5)` so the description matches the test boundary. content-integrity test regex for the threshold wording broadened to accept `件超 / 件以上 / 件+ / ≥ / >= / count >=` equivalence so future spec wording adjustments do not produce false fails.
 
-## [Unreleased — pre-rc.2 staging area]
 
 ### Added
 
@@ -207,8 +213,9 @@ Additional hardening driven by Codex second-opinion (pre-merge) review:
 - Added explicit guidance on log sensitivity in `docs/en/security.md`.
 - `.gitignore` template excludes `.claude/logs/`, `.claude/state/`, `.claude/worktrees/`.
 
-[Unreleased]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.4.0-rc.2...HEAD
-[0.4.0-rc.2]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.4.0-rc.1...v0.4.0-rc.2
+[Unreleased]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.4.0-rc.2...v0.4.0
+[0.4.0-rc.2]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.4.0-rc.2
 [0.4.0-rc.1]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.4.0-rc.1
 [0.3.3]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.3.3
 [0.3.2]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.3.2
